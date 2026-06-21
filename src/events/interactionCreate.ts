@@ -1,29 +1,59 @@
 import { ButtonInteraction, Interaction, TextChannel } from 'discord.js';
 import { execute as executeGameNight } from '../commands/gamenight';
+import {
+  execute as executeGame,
+  handleGameSelect,
+  handleGameSelectWithExp,
+  handleExpansionSelect,
+  handleManualBtn,
+  handleManualGameSubmit,
+  handleGameJoin,
+  handleGameLeave,
+} from '../commands/game';
 import { findGameNight, upsertGameNight } from '../utils/storage';
 import { buildGameNightEmbed, buildGameNightButtons } from '../utils/embeds';
 
 export async function handleInteraction(interaction: Interaction): Promise<void> {
   try {
     if (interaction.isChatInputCommand()) {
-      if (interaction.commandName === 'event') {
-        await executeGameNight(interaction);
+      if (interaction.commandName === 'event') await executeGameNight(interaction);
+      else if (interaction.commandName === 'game') await executeGame(interaction);
+
+    } else if (interaction.isStringSelectMenu()) {
+      if (interaction.customId === 'game_select') {
+        await handleGameSelect(interaction);
+      } else if (interaction.customId === 'game_select_exp') {
+        await handleGameSelectWithExp(interaction);
+      } else if (interaction.customId.startsWith('game_exp_')) {
+        await handleExpansionSelect(interaction, interaction.customId.slice('game_exp_'.length));
       }
+
+    } else if (interaction.isModalSubmit()) {
+      if (interaction.customId === 'game_manual') {
+        await handleManualGameSubmit(interaction);
+      }
+
     } else if (interaction.isButton()) {
-      const parts = interaction.customId.split('_');
-      if (parts[0] === 'rsvp' && parts.length === 3) {
-        await handleRsvp(interaction, parts[1] as 'yes' | 'maybe' | 'no', parts[2]);
+      const id = interaction.customId;
+      if (id.startsWith('game_manual_')) {
+        await handleManualBtn(interaction);
+      } else {
+        const parts = id.split('_');
+        if (parts[0] === 'rsvp' && parts.length === 3) {
+          await handleRsvp(interaction, parts[1] as 'yes' | 'maybe' | 'no', parts[2]);
+        } else if (parts[0] === 'game' && parts[1] === 'join' && parts[2]) {
+          await handleGameJoin(interaction, parts[2]);
+        } else if (parts[0] === 'game' && parts[1] === 'leave' && parts[2]) {
+          await handleGameLeave(interaction, parts[2]);
+        }
       }
     }
   } catch (err) {
     console.error('Interaction error:', err);
     const reply = { content: 'Something went wrong. Please try again.', ephemeral: true };
     if (interaction.isRepliable()) {
-      if (interaction.replied || interaction.deferred) {
-        await interaction.followUp(reply);
-      } else {
-        await interaction.reply(reply);
-      }
+      if (interaction.replied || interaction.deferred) await interaction.followUp(reply);
+      else await interaction.reply(reply);
     }
   }
 }
@@ -34,23 +64,18 @@ async function handleRsvp(
   gnId: string,
 ): Promise<void> {
   const gn = findGameNight(gnId);
-
   if (!gn || gn.cancelled) {
     await interaction.reply({ content: 'This event is no longer active.', ephemeral: true });
     return;
   }
 
   const userId = interaction.user.id;
-
-  // Remove from all lists, then add to the chosen one
   gn.rsvps.yes = gn.rsvps.yes.filter(id => id !== userId);
   gn.rsvps.maybe = gn.rsvps.maybe.filter(id => id !== userId);
   gn.rsvps.no = gn.rsvps.no.filter(id => id !== userId);
   gn.rsvps[type].push(userId);
-
   upsertGameNight(gn);
 
-  // Grant or revoke access to the private event channel
   if (gn.eventChannelId) {
     try {
       const eventChannel = await interaction.client.channels.fetch(gn.eventChannelId) as TextChannel;
@@ -62,15 +87,13 @@ async function handleRsvp(
     } catch { /* channel may not exist */ }
   }
 
-  // Resolve display names for updated embed
   const nameMap: Record<string, string> = {};
-  const guild = interaction.guild;
-  if (guild) {
+  if (interaction.guild) {
     const allIds = [...gn.rsvps.yes, ...gn.rsvps.maybe, ...gn.rsvps.no];
     await Promise.all(
       allIds.map(async id => {
         try {
-          const member = await guild.members.fetch(id);
+          const member = await interaction.guild!.members.fetch(id);
           nameMap[id] = member.displayName;
         } catch { /* fall back to mention */ }
       })
