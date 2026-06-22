@@ -1,5 +1,8 @@
 import { ButtonInteraction, Interaction, TextChannel } from 'discord.js';
 import { execute as executeGameNight } from '../commands/gamenight';
+import { execute as executeWelcome } from '../commands/welcome';
+import { execute as executeGameTags, handleAutocomplete as handleGameTagsAutocomplete } from '../commands/gametags';
+import { execute as executeMyRoles, handleMyRolesSelect } from '../commands/myroles';
 import {
   execute as executeGame,
   handleGameSelect,
@@ -15,12 +18,20 @@ import { buildGameNightEmbed, buildGameNightButtons } from '../utils/embeds';
 
 export async function handleInteraction(interaction: Interaction): Promise<void> {
   try {
-    if (interaction.isChatInputCommand()) {
+    if (interaction.isAutocomplete()) {
+      if (interaction.commandName === 'gametags') await handleGameTagsAutocomplete(interaction);
+
+    } else if (interaction.isChatInputCommand()) {
       if (interaction.commandName === 'event') await executeGameNight(interaction);
       else if (interaction.commandName === 'game') await executeGame(interaction);
+      else if (interaction.commandName === 'welcome') await executeWelcome(interaction);
+      else if (interaction.commandName === 'gametags') await executeGameTags(interaction);
+      else if (interaction.commandName === 'myroles') await executeMyRoles(interaction);
 
     } else if (interaction.isStringSelectMenu()) {
-      if (interaction.customId === 'game_select') {
+      if (interaction.customId === 'myroles_select') {
+        await handleMyRolesSelect(interaction);
+      } else if (interaction.customId === 'game_select') {
         await handleGameSelect(interaction);
       } else if (interaction.customId === 'game_select_exp') {
         await handleGameSelectWithExp(interaction);

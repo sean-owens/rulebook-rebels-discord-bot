@@ -8,10 +8,12 @@ import {
   handleScheduledEventUserAdd,
   handleScheduledEventUserRemove,
 } from './events/scheduledEvents';
+import { handleGuildMemberAdd } from './events/guildMemberAdd';
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildScheduledEvents,
   ],
 });
@@ -22,5 +24,6 @@ client.on('guildScheduledEventDelete', handleScheduledEventDelete);
 client.on('guildScheduledEventUpdate', handleScheduledEventUpdate);
 client.on('guildScheduledEventUserAdd', handleScheduledEventUserAdd);
 client.on('guildScheduledEventUserRemove', handleScheduledEventUserRemove);
+client.on('guildMemberAdd', handleGuildMemberAdd);
 
 client.login(process.env.DISCORD_TOKEN);

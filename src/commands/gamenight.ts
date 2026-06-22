@@ -309,15 +309,15 @@ async function handleConfig(interaction: ChatInputCommandInteraction): Promise<v
   if (announcements !== null) patch.announcementsChannelId = announcements.id;
 
   if (Object.keys(patch).length === 0) {
-    const current = getGuildConfig(interaction.guildId!);
+    const c = getGuildConfig(interaction.guildId!);
     await interaction.reply({
       content: [
-        '**Current event defaults:**',
-        `> Start time: ${current.defaultTime || '*not set*'}`,
-        `> End time: ${current.defaultEndTime || '*not set*'}`,
-        `> Location: ${current.defaultLocation || '*not set*'}`,
-        `> Description: ${current.defaultDescription || '*not set*'}`,
-        `> Announcements channel: ${current.announcementsChannelId ? `<#${current.announcementsChannelId}>` : '*not set*'}`,
+        '**Event defaults:**',
+        `> Start time: ${c.defaultTime || '*not set*'}`,
+        `> End time: ${c.defaultEndTime || '*not set*'}`,
+        `> Location: ${c.defaultLocation || '*not set*'}`,
+        `> Description: ${c.defaultDescription || '*not set*'}`,
+        `> Announcements channel: ${c.announcementsChannelId ? `<#${c.announcementsChannelId}>` : '*not set*'}`,
       ].join('\n'),
       ephemeral: true,
     });

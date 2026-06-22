@@ -10,6 +10,9 @@ export interface GuildConfig {
   defaultEndTime: string;
   defaultDescription: string;
   announcementsChannelId: string;
+  welcomeChannelId: string;
+  rulesChannelId: string;
+  facebookGroupUrl: string;
 }
 
 type ConfigStore = Record<string, GuildConfig>;
@@ -25,7 +28,7 @@ function save(store: ConfigStore): void {
 }
 
 export function getGuildConfig(guildId: string): GuildConfig {
-  return load()[guildId] ?? { defaultLocation: '', defaultTime: '', defaultEndTime: '', defaultDescription: '', announcementsChannelId: '' };
+  return load()[guildId] ?? { defaultLocation: '', defaultTime: '', defaultEndTime: '', defaultDescription: '', announcementsChannelId: '', welcomeChannelId: '', rulesChannelId: '', facebookGroupUrl: '' };
 }
 
 export function updateGuildConfig(guildId: string, patch: Partial<GuildConfig>): GuildConfig {
