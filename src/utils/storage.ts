@@ -1,8 +1,6 @@
-import fs from 'fs';
-import path from 'path';
+import { readJson, writeJson } from './db';
 
-const DATA_DIR = path.join(process.cwd(), 'data');
-const FILE = path.join(DATA_DIR, 'gamenights.json');
+const FILE = 'gamenights.json';
 
 export interface GameNight {
   id: string;
@@ -32,21 +30,12 @@ export interface GameNight {
   openChannel?: boolean;
 }
 
-function ensureDataDir(): void {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
-}
-
 export function loadGameNights(): GameNight[] {
-  ensureDataDir();
-  if (!fs.existsSync(FILE)) return [];
-  return JSON.parse(fs.readFileSync(FILE, 'utf-8')) as GameNight[];
+  return readJson<GameNight[]>(FILE, []);
 }
 
 export function saveGameNights(gamenights: GameNight[]): void {
-  ensureDataDir();
-  fs.writeFileSync(FILE, JSON.stringify(gamenights, null, 2));
+  writeJson(FILE, gamenights);
 }
 
 export function findGameNight(id: string): GameNight | undefined {
@@ -60,10 +49,7 @@ export function findGameNightByDiscordEventId(discordEventId: string): GameNight
 export function upsertGameNight(gamenight: GameNight): void {
   const all = loadGameNights();
   const idx = all.findIndex(g => g.id === gamenight.id);
-  if (idx >= 0) {
-    all[idx] = gamenight;
-  } else {
-    all.push(gamenight);
-  }
+  if (idx >= 0) all[idx] = gamenight;
+  else all.push(gamenight);
   saveGameNights(all);
 }

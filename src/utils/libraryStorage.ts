@@ -1,10 +1,9 @@
-import fs from 'fs';
-import path from 'path';
+import { randomUUID } from 'crypto';
+import { readJson, writeJson } from './db';
 
-const DATA_DIR = path.join(process.cwd(), 'data');
-const LIBRARY_FILE = path.join(DATA_DIR, 'library.json');
-const REQUESTS_FILE = path.join(DATA_DIR, 'library_requests.json');
-const GAME_INFO_FILE = path.join(DATA_DIR, 'game_info.json');
+const LIBRARY_FILE = 'library.json';
+const REQUESTS_FILE = 'library_requests.json';
+const GAME_INFO_FILE = 'game_info.json';
 
 export interface LibraryEntry {
   userId: string;
@@ -22,21 +21,12 @@ export interface GameRequest {
   copiesNeeded?: number;
 }
 
-function ensureDataDir(): void {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
-}
-
 export function loadLibrary(): LibraryEntry[] {
-  ensureDataDir();
-  if (!fs.existsSync(LIBRARY_FILE)) return [];
-  return JSON.parse(fs.readFileSync(LIBRARY_FILE, 'utf-8')) as LibraryEntry[];
+  return readJson<LibraryEntry[]>(LIBRARY_FILE, []);
 }
 
 function saveLibrary(entries: LibraryEntry[]): void {
-  ensureDataDir();
-  fs.writeFileSync(LIBRARY_FILE, JSON.stringify(entries, null, 2));
+  writeJson(LIBRARY_FILE, entries);
 }
 
 export function addGame(userId: string, gameName: string, objectid?: string): 'added' | 'duplicate' {
@@ -95,14 +85,11 @@ export function getGamesByUser(userId: string): LibraryEntry[] {
 }
 
 export function loadRequests(): GameRequest[] {
-  ensureDataDir();
-  if (!fs.existsSync(REQUESTS_FILE)) return [];
-  return JSON.parse(fs.readFileSync(REQUESTS_FILE, 'utf-8')) as GameRequest[];
+  return readJson<GameRequest[]>(REQUESTS_FILE, []);
 }
 
 function saveRequests(requests: GameRequest[]): void {
-  ensureDataDir();
-  fs.writeFileSync(REQUESTS_FILE, JSON.stringify(requests, null, 2));
+  writeJson(REQUESTS_FILE, requests);
 }
 
 export function addRequest(eventId: string, gameName: string, requestedBy: string): 'added' | 'duplicate' {
@@ -111,7 +98,6 @@ export function addRequest(eventId: string, gameName: string, requestedBy: strin
     r => r.eventId === eventId && r.gameName.toLowerCase() === gameName.toLowerCase()
   );
   if (exists) return 'duplicate';
-  const { randomUUID } = require('crypto');
   requests.push({ id: randomUUID(), eventId, gameName, requestedBy, createdAt: new Date().toISOString() });
   saveRequests(requests);
   return 'added';
@@ -192,14 +178,11 @@ export interface GameInfo {
 }
 
 export function loadGameInfos(): GameInfo[] {
-  ensureDataDir();
-  if (!fs.existsSync(GAME_INFO_FILE)) return [];
-  return JSON.parse(fs.readFileSync(GAME_INFO_FILE, 'utf-8')) as GameInfo[];
+  return readJson<GameInfo[]>(GAME_INFO_FILE, []);
 }
 
 function saveGameInfos(infos: GameInfo[]): void {
-  ensureDataDir();
-  fs.writeFileSync(GAME_INFO_FILE, JSON.stringify(infos, null, 2));
+  writeJson(GAME_INFO_FILE, infos);
 }
 
 export function getGameInfo(gameName: string): GameInfo | undefined {

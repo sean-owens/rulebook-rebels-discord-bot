@@ -100,17 +100,67 @@ function findGameNightForInteraction(userId: string, channelId: string | null): 
   return undefined;
 }
 
+// ── BGG search helper ─────────────────────────────────────────────────────────
+
+interface BGGSearchReply {
+  content: string;
+  components: ActionRowBuilder<StringSelectMenuBuilder | ButtonBuilder>[];
+}
+
+async function buildBGGSearchReply(
+  title: string,
+  withExpansions: boolean,
+  fromLibraryDismiss = false,
+): Promise<BGGSearchReply> {
+  let results: BGGSearchResult[] = [];
+  let bggFailed = false;
+  try { results = await searchBGG(title); } catch { bggFailed = true; }
+
+  if (results.length === 0) {
+    const content = fromLibraryDismiss
+      ? `No BGG results for **"${title}"**. Enter details manually:`
+      : bggFailed
+        ? `Couldn't reach the game database. Enter the details manually:`
+        : `No results found for **"${title}"**. Enter the details manually:`;
+    return { content, components: [manualEntryButton(title)] };
+  }
+
+  const options = results.map(r =>
+    new StringSelectMenuOptionBuilder()
+      .setLabel(r.name.slice(0, 100))
+      .setValue(r.id)
+      .setDescription(r.yearPublished ? `Published ${r.yearPublished}` : 'Year unknown')
+  );
+  options.push(
+    new StringSelectMenuOptionBuilder()
+      .setLabel('None of these — enter details manually')
+      .setValue(MANUAL_VALUE)
+      .setDescription('Fill in player count, duration, and a link yourself')
+  );
+
+  const select = new StringSelectMenuBuilder()
+    .setCustomId(withExpansions ? 'game_select_exp' : 'game_select')
+    .setPlaceholder('Choose the correct game...')
+    .addOptions(options);
+
+  const prefix = fromLibraryDismiss ? '' : `**"${title}"** wasn't found in the group library. `;
+  return {
+    content: `${prefix}Found **${results.length}** BGG result(s) — pick the one you mean:`,
+    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
+  };
+}
+
+// ── Suggest ───────────────────────────────────────────────────────────────────
+
 async function handleSuggest(interaction: ChatInputCommandInteraction): Promise<void> {
   const title = interaction.options.getString('title', true);
   const withExpansions = interaction.options.getBoolean('with_expansions') ?? false;
 
-  // Check if we're inside an event channel
   const gameNight = loadGameNights().find(
     gn => gn.eventChannelId === interaction.channelId && !gn.cancelled && !gn.archived
   );
 
   if (!gameNight) {
-    // Outside an event channel — let the user pick which event to suggest for
     const now = new Date();
     const upcoming = loadGameNights()
       .filter(gn => !gn.cancelled && !gn.archived && gn.eventChannelId && new Date(gn.startTimeISO) > now)
@@ -176,54 +226,11 @@ async function handleSuggest(interaction: ChatInputCommandInteraction): Promise<
     return;
   }
 
-  // Not in library — search BGG
   await interaction.deferReply({ ephemeral: true });
-
-  let results: BGGSearchResult[] = [];
-  let bggFailed = false;
-  try {
-    results = await searchBGG(title);
-  } catch {
-    bggFailed = true;
-  }
-
-  if (results.length === 0) {
-    await interaction.editReply({
-      content: bggFailed
-        ? `Couldn't reach the game database. Enter the details manually:`
-        : `No results found for **"${title}"**. Enter the details manually:`,
-      components: [manualEntryButton(title)],
-    });
-    return;
-  }
-
-  const options = results.map(r =>
-    new StringSelectMenuOptionBuilder()
-      .setLabel(r.name.slice(0, 100))
-      .setValue(r.id)
-      .setDescription(r.yearPublished ? `Published ${r.yearPublished}` : 'Year unknown')
-  );
-
-  options.push(
-    new StringSelectMenuOptionBuilder()
-      .setLabel('None of these — enter details manually')
-      .setValue(MANUAL_VALUE)
-      .setDescription('Fill in player count, duration, and a link yourself')
-  );
-
-  const customId = withExpansions ? 'game_select_exp' : 'game_select';
-  const select = new StringSelectMenuBuilder()
-    .setCustomId(customId)
-    .setPlaceholder('Choose the correct game...')
-    .addOptions(options);
-
-  await interaction.editReply({
-    content: `**"${title}"** wasn't found in the group library. Found **${results.length}** BGG result(s) — pick the one you mean:`,
-    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
-  });
+  await interaction.editReply(await buildBGGSearchReply(title, withExpansions));
 }
 
-// ── Event picker: continues suggest flow after user picks which event ────────
+// ── Event picker: continues suggest flow after user picks which event ─────────
 
 export async function handleEventSelect(interaction: StringSelectMenuInteraction): Promise<void> {
   const eventId = interaction.values[0];
@@ -241,7 +248,6 @@ export async function handleEventSelect(interaction: StringSelectMenuInteraction
   const title = pending?.title ?? '';
   const withExpansions = pending?.withExpansions ?? false;
 
-  // Library exact match
   const libraryMatches = findGamesByName(title);
   if (libraryMatches.length > 0) {
     const info = getGameInfo(title);
@@ -249,7 +255,6 @@ export async function handleEventSelect(interaction: StringSelectMenuInteraction
     return;
   }
 
-  // Library partial match
   const partials = findGameNamesByPartial(title);
   if (partials.length > 0 && partials.length <= 25) {
     const options = partials.map(name =>
@@ -273,44 +278,8 @@ export async function handleEventSelect(interaction: StringSelectMenuInteraction
     return;
   }
 
-  // Not in library — search BGG
   await interaction.deferUpdate();
-
-  let results: BGGSearchResult[] = [];
-  let bggFailed = false;
-  try { results = await searchBGG(title); } catch { bggFailed = true; }
-
-  if (results.length === 0) {
-    await interaction.editReply({
-      content: bggFailed
-        ? `Couldn't reach the game database. Enter the details manually:`
-        : `No results found for **"${title}"**. Enter the details manually:`,
-      components: [manualEntryButton(title)],
-    });
-    return;
-  }
-
-  const bggOptions = results.map(r =>
-    new StringSelectMenuOptionBuilder()
-      .setLabel(r.name.slice(0, 100))
-      .setValue(r.id)
-      .setDescription(r.yearPublished ? `Published ${r.yearPublished}` : 'Year unknown')
-  );
-  bggOptions.push(
-    new StringSelectMenuOptionBuilder()
-      .setLabel('None of these — enter details manually')
-      .setValue(MANUAL_VALUE)
-      .setDescription('Fill in player count, duration, and a link yourself')
-  );
-  const customId = withExpansions ? 'game_select_exp' : 'game_select';
-  const select = new StringSelectMenuBuilder()
-    .setCustomId(customId)
-    .setPlaceholder('Choose the correct game...')
-    .addOptions(bggOptions);
-  await interaction.editReply({
-    content: `**"${title}"** wasn't found in the group library. Found **${results.length}** BGG result(s) — pick the one you mean:`,
-    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
-  });
+  await interaction.editReply(await buildBGGSearchReply(title, withExpansions));
 }
 
 function buildTagPickerComponents(gameId: string) {
@@ -346,7 +315,7 @@ function bringGameRow(): ActionRowBuilder<ButtonBuilder> {
   );
 }
 
-// ── List scheduled games ─────────────────────────────────────────────────────
+// ── List scheduled games ──────────────────────────────────────────────────────
 
 async function handleGameList(interaction: ChatInputCommandInteraction): Promise<void> {
   const games = findGamesByChannel(interaction.channelId!);
@@ -401,14 +370,12 @@ async function handleGameCancel(interaction: ChatInputCommandInteraction): Promi
     return;
   }
 
-  // Delete the original message
   try {
     const channel = await interaction.client.channels.fetch(match.channelId) as TextChannel;
     const msg = await channel.messages.fetch(match.messageId);
     await msg.delete();
   } catch { /* message may already be deleted */ }
 
-  // Remove from storage
   const remaining = loadGames().filter(g => g.id !== match.id);
   saveGames(remaining);
   try { await updateGameListPin(interaction.client, match.eventId); } catch { /* channel may not be accessible */ }
@@ -416,7 +383,7 @@ async function handleGameCancel(interaction: ChatInputCommandInteraction): Promi
   await interaction.reply({ content: `**${match.title}** has been removed from the lineup.`, ephemeral: true });
 }
 
-// ── Library match: post directly ────────────────────────────────────────────
+// ── Library match: post directly ──────────────────────────────────────────────
 
 async function postLibraryGame(
   interaction: ChatInputCommandInteraction | StringSelectMenuInteraction,
@@ -512,7 +479,7 @@ async function postLibraryGame(
   }
 }
 
-// ── Library partial-match select ─────────────────────────────────────────────
+// ── Library partial-match select ──────────────────────────────────────────────
 
 export async function handleLibrarySuggestSelect(interaction: StringSelectMenuInteraction): Promise<void> {
   const value = interaction.values[0];
@@ -527,40 +494,8 @@ export async function handleLibrarySuggestSelect(interaction: StringSelectMenuIn
     pendingLibrarySuggest.delete(interaction.user.id);
     const title = pending?.title ?? '';
     const withExpansions = pending?.withExpansions ?? false;
-
     await interaction.deferUpdate();
-    let results: BGGSearchResult[] = [];
-    try { results = await searchBGG(title); } catch { /* fall through */ }
-
-    if (results.length === 0) {
-      await interaction.editReply({
-        content: `No BGG results for **"${title}"**. Enter details manually:`,
-        components: [manualEntryButton(title)],
-      });
-      return;
-    }
-
-    const options = results.map(r =>
-      new StringSelectMenuOptionBuilder()
-        .setLabel(r.name.slice(0, 100))
-        .setValue(r.id)
-        .setDescription(r.yearPublished ? `Published ${r.yearPublished}` : 'Year unknown')
-    );
-    options.push(
-      new StringSelectMenuOptionBuilder()
-        .setLabel('None of these — enter details manually')
-        .setValue(MANUAL_VALUE)
-        .setDescription('Fill in player count, duration, and a link yourself')
-    );
-    const customId = withExpansions ? 'game_select_exp' : 'game_select';
-    const select = new StringSelectMenuBuilder()
-      .setCustomId(customId)
-      .setPlaceholder('Choose the correct game...')
-      .addOptions(options);
-    await interaction.editReply({
-      content: `Found **${results.length}** BGG result(s) — pick the one you mean:`,
-      components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
-    });
+    await interaction.editReply(await buildBGGSearchReply(title, withExpansions, true));
     return;
   }
 
@@ -570,7 +505,7 @@ export async function handleLibrarySuggestSelect(interaction: StringSelectMenuIn
   await postLibraryGame(interaction, gameNight, value, info ?? null, libraryMatches.map(e => e.userId));
 }
 
-// ── Select: no expansions ────────────────────────────────────────────────────
+// ── Select: no expansions ─────────────────────────────────────────────────────
 
 export async function handleGameSelect(interaction: StringSelectMenuInteraction): Promise<void> {
   const bggId = interaction.values[0];
@@ -599,7 +534,7 @@ export async function handleGameSelect(interaction: StringSelectMenuInteraction)
   await postBGGGame(interaction, gameNight, bggGame, []);
 }
 
-// ── Select: with expansions ──────────────────────────────────────────────────
+// ── Select: with expansions ───────────────────────────────────────────────────
 
 export async function handleGameSelectWithExp(interaction: StringSelectMenuInteraction): Promise<void> {
   const bggId = interaction.values[0];
@@ -649,7 +584,7 @@ export async function handleGameSelectWithExp(interaction: StringSelectMenuInter
   });
 }
 
-// ── Select: expansions confirmed ─────────────────────────────────────────────
+// ── Select: expansions confirmed ──────────────────────────────────────────────
 
 export async function handleExpansionSelect(
   interaction: StringSelectMenuInteraction,
@@ -675,14 +610,14 @@ export async function handleExpansionSelect(
   await postBGGGame(interaction, gameNight, bggGame, selectedExpansions);
 }
 
-// ── Manual entry button → show modal ────────────────────────────────────────
+// ── Manual entry button → show modal ─────────────────────────────────────────
 
 export async function handleManualBtn(interaction: ButtonInteraction): Promise<void> {
   const prefill = decodeURIComponent(interaction.customId.slice('game_manual_'.length));
   await showManualEntryModal(interaction, prefill);
 }
 
-// ── Modal submission ─────────────────────────────────────────────────────────
+// ── Modal submission ──────────────────────────────────────────────────────────
 
 export async function handleManualGameSubmit(interaction: ModalSubmitInteraction): Promise<void> {
   const active = loadGameNights().filter(gn => !gn.cancelled && !gn.archived);
@@ -753,7 +688,6 @@ export async function handleManualGameSubmit(interaction: ModalSubmitInteraction
   try { await updateGameListPin(interaction.client, gameNight.id); } catch { /* channel may not be accessible */ }
   pendingEventContext.delete(interaction.user.id);
 
-  // Tag picker step — bring prompt follows after tag selection or skip
   pendingBrings.set(interaction.user.id, { gameName: title });
   await interaction.editReply({
     content: `**${title}** has been added! Optionally tag the game type to help players find it:`,
@@ -761,7 +695,7 @@ export async function handleManualGameSubmit(interaction: ModalSubmitInteraction
   });
 }
 
-// ── Button: Join / Leave ─────────────────────────────────────────────────────
+// ── Button: Join / Leave ──────────────────────────────────────────────────────
 
 export async function handleGameJoin(interaction: ButtonInteraction, gameId: string): Promise<void> {
   const { findGame, upsertGame: save } = await import('../utils/gameStorage');
@@ -811,7 +745,7 @@ export async function handleGameLeave(interaction: ButtonInteraction, gameId: st
   });
 }
 
-// ── Waitlist ─────────────────────────────────────────────────────────────────
+// ── Waitlist ──────────────────────────────────────────────────────────────────
 
 export async function handleWaitlistJoin(interaction: ButtonInteraction, gameId: string): Promise<void> {
   const { findGame, upsertGame: save } = await import('../utils/gameStorage');
@@ -881,7 +815,7 @@ export async function handleWaitlistLeave(interaction: ButtonInteraction, gameId
   });
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function manualEntryButton(title: string): ActionRowBuilder<ButtonBuilder> {
   const encoded = encodeURIComponent(title).slice(0, 80);
@@ -1031,7 +965,7 @@ async function postBGGGame(
   }
 }
 
-// ── Tag picker handlers (for manual game flow) ──────────────────────────────
+// ── Tag picker handlers ───────────────────────────────────────────────────────
 
 export async function handleGameTagSelect(
   interaction: StringSelectMenuInteraction,
@@ -1054,7 +988,6 @@ export async function handleGameTagSelect(
       expansions: existingInfo?.expansions,
       updatedAt: new Date().toISOString(),
     });
-    // Update the posted game card to reflect the new tags
     try {
       const cardChannel = await interaction.client.channels.fetch(game.channelId) as TextChannel;
       const cardMsg = await cardChannel.messages.fetch(game.messageId);

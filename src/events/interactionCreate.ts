@@ -39,44 +39,33 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
       else if (interaction.commandName === 'library') await executeLibrary(interaction);
 
     } else if (interaction.isStringSelectMenu()) {
-      if (interaction.customId === 'game_event_select') {
-        await handleEventSelect(interaction);
-      } else if (interaction.customId === 'library_suggest_select') {
-        await handleLibrarySuggestSelect(interaction);
-      } else if (interaction.customId === 'library_view_select') {
-        await handleLibraryViewSelect(interaction);
-      } else if (interaction.customId === 'library_request_select') {
-        await handleLibraryRequestSelect(interaction);
-      } else if (interaction.customId === 'library_unrequest_event_select') {
-        await handleUnrequestEventSelect(interaction);
-      } else if (interaction.customId.startsWith('library_unrequest_select_')) {
-        await handleUnrequestSelect(interaction, interaction.customId.slice('library_unrequest_select_'.length));
-      } else if (interaction.customId === 'game_select') {
-        await handleGameSelect(interaction);
-      } else if (interaction.customId === 'game_select_exp') {
-        await handleGameSelectWithExp(interaction);
-      } else if (interaction.customId.startsWith('game_exp_')) {
-        await handleExpansionSelect(interaction, interaction.customId.slice('game_exp_'.length));
-      } else if (interaction.customId.startsWith('game_tags_')) {
-        await handleGameTagSelect(interaction, interaction.customId.slice('game_tags_'.length));
-      }
+      const id = interaction.customId;
+      if (id === 'game_event_select') await handleEventSelect(interaction);
+      else if (id === 'library_suggest_select') await handleLibrarySuggestSelect(interaction);
+      else if (id === 'library_view_select') await handleLibraryViewSelect(interaction);
+      else if (id === 'library_request_select') await handleLibraryRequestSelect(interaction);
+      else if (id === 'library_unrequest_event_select') await handleUnrequestEventSelect(interaction);
+      else if (id.startsWith('library_unrequest_select_')) await handleUnrequestSelect(interaction, id.slice('library_unrequest_select_'.length));
+      else if (id === 'game_select') await handleGameSelect(interaction);
+      else if (id === 'game_select_exp') await handleGameSelectWithExp(interaction);
+      else if (id.startsWith('game_exp_')) await handleExpansionSelect(interaction, id.slice('game_exp_'.length));
+      else if (id.startsWith('game_tags_')) await handleGameTagSelect(interaction, id.slice('game_tags_'.length));
 
     } else if (interaction.isModalSubmit()) {
-      if (interaction.customId === 'game_manual') {
-        await handleManualGameSubmit(interaction);
-      } else if (interaction.customId === 'library_edit_modal') {
-        await handleEditModal(interaction);
-      }
+      if (interaction.customId === 'game_manual') await handleManualGameSubmit(interaction);
+      else if (interaction.customId === 'library_edit_modal') await handleEditModal(interaction);
 
     } else if (interaction.isButton()) {
       const id = interaction.customId;
-      if (id.startsWith('myroles_tag_')) {
-        const parts = id.split('_');
-        await handleMyRolesTag(interaction, parseInt(parts[2], 10) || 0, parts[3]);
+      if (id === 'myroles_submit') {
+        await handleMyRolesSubmit(interaction);
+      } else if (id.startsWith('myroles_tag_')) {
+        // Format: myroles_tag_<page>_<roleId>
+        const rest = id.slice('myroles_tag_'.length);
+        const sep = rest.indexOf('_');
+        await handleMyRolesTag(interaction, parseInt(rest.slice(0, sep), 10) || 0, rest.slice(sep + 1));
       } else if (id.startsWith('myroles_page_')) {
         await handleMyRolesPage(interaction, parseInt(id.slice('myroles_page_'.length), 10) || 0);
-      } else if (id === 'myroles_submit') {
-        await handleMyRolesSubmit(interaction);
       } else if (id === 'library_add_confirm') {
         await handleAddConfirm(interaction);
       } else if (id === 'library_add_cancel') {
@@ -91,19 +80,19 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handleBringCancel(interaction);
       } else if (id.startsWith('game_manual_')) {
         await handleManualBtn(interaction);
-      } else {
-        const parts = id.split('_');
-        if (parts[0] === 'rsvp' && parts.length === 3) {
-          await handleRsvp(interaction, parts[1] as 'yes' | 'maybe' | 'no', parts[2]);
-        } else if (parts[0] === 'game' && parts[1] === 'join' && parts[2]) {
-          await handleGameJoin(interaction, parts[2]);
-        } else if (parts[0] === 'game' && parts[1] === 'leave' && parts[2]) {
-          await handleGameLeave(interaction, parts[2]);
-        } else if (parts[0] === 'game' && parts[1] === 'waitlist' && parts[2] === 'join' && parts[3]) {
-          await handleWaitlistJoin(interaction, parts[3]);
-        } else if (parts[0] === 'game' && parts[1] === 'waitlist' && parts[2] === 'leave' && parts[3]) {
-          await handleWaitlistLeave(interaction, parts[3]);
-        }
+      } else if (id.startsWith('rsvp_')) {
+        // Format: rsvp_<type>_<gnId>
+        const rest = id.slice('rsvp_'.length);
+        const sep = rest.indexOf('_');
+        await handleRsvp(interaction, rest.slice(0, sep) as 'yes' | 'maybe' | 'no', rest.slice(sep + 1));
+      } else if (id.startsWith('game_join_')) {
+        await handleGameJoin(interaction, id.slice('game_join_'.length));
+      } else if (id.startsWith('game_leave_')) {
+        await handleGameLeave(interaction, id.slice('game_leave_'.length));
+      } else if (id.startsWith('game_waitlist_join_')) {
+        await handleWaitlistJoin(interaction, id.slice('game_waitlist_join_'.length));
+      } else if (id.startsWith('game_waitlist_leave_')) {
+        await handleWaitlistLeave(interaction, id.slice('game_waitlist_leave_'.length));
       }
     }
   } catch (err) {

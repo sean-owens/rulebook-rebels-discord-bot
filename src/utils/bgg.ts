@@ -1,4 +1,3 @@
-import https from 'https';
 import { XMLParser } from 'fast-xml-parser';
 
 export interface BGGSearchResult {
@@ -27,7 +26,7 @@ export interface BGGGame {
 }
 
 // Maps lowercase BGG mechanic/category names to our curated tag vocabulary
-const BGG_TO_TAG: Record<string, string> = {
+export const BGG_TO_TAG: Record<string, string> = {
   'cooperative game': 'Co-op',
   'semi-cooperative game': 'Semi-Co-op',
   'team-based game': 'Team vs Team',
@@ -61,34 +60,19 @@ const BGG_TO_TAG: Record<string, string> = {
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
 
 function bggHeaders(): Record<string, string> {
-  const cookie = process.env.BGG_SESSION_COOKIE;
   const headers: Record<string, string> = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'application/xml, text/xml, */*',
   };
+  const cookie = process.env.BGG_SESSION_COOKIE;
   if (cookie) headers['Cookie'] = cookie;
   return headers;
 }
 
-function fetchXML(url: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    https.get(url, { headers: bggHeaders() }, res => {
-      if (res.statusCode === 401 || res.statusCode === 403) {
-        res.resume();
-        reject(new Error(`BGG returned ${res.statusCode} — session cookie may be missing or expired`));
-        return;
-      }
-      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        resolve(fetchXML(res.headers.location));
-        res.resume();
-        return;
-      }
-      let data = '';
-      res.on('data', chunk => (data += chunk));
-      res.on('end', () => resolve(data));
-      res.on('error', reject);
-    }).on('error', reject);
-  });
+async function fetchXML(url: string): Promise<string> {
+  const res = await fetch(url, { headers: bggHeaders() });
+  if (!res.ok) throw new Error(`BGG returned ${res.status} for ${url}`);
+  return res.text();
 }
 
 export async function searchBGG(query: string): Promise<BGGSearchResult[]> {

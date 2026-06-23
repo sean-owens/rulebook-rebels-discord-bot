@@ -1,8 +1,6 @@
-import fs from 'fs';
-import path from 'path';
+import { readJson, writeJson } from './db';
 
-const DATA_DIR = path.join(process.cwd(), 'data');
-const FILE = path.join(DATA_DIR, 'games.json');
+const FILE = 'games.json';
 
 export interface GameExpansion {
   id: string;
@@ -32,19 +30,12 @@ export interface GameSuggestion {
   createdBy: string;
 }
 
-function ensureDataDir(): void {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-}
-
 export function loadGames(): GameSuggestion[] {
-  ensureDataDir();
-  if (!fs.existsSync(FILE)) return [];
-  return JSON.parse(fs.readFileSync(FILE, 'utf-8')) as GameSuggestion[];
+  return readJson<GameSuggestion[]>(FILE, []);
 }
 
 export function saveGames(games: GameSuggestion[]): void {
-  ensureDataDir();
-  fs.writeFileSync(FILE, JSON.stringify(games, null, 2));
+  writeJson(FILE, games);
 }
 
 export function findGame(id: string): GameSuggestion | undefined {

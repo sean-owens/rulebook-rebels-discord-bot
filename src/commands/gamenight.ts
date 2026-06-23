@@ -103,9 +103,7 @@ const MONTH_NAMES: Record<string, number> = {
   nov: 10, november: 10, dec: 11, december: 11,
 };
 
-function parseDateTime(dateStr: string, timeStr: string): Date {
-  console.log(`parseDateTime date="${dateStr}" time="${timeStr}"`);
-
+export function parseDateTime(dateStr: string, timeStr: string): Date {
   // Parse time without regex — strip am/pm, split on colon
   const t = timeStr.trim().toLowerCase().replace(/\s/g, '');
   const isPM = t.endsWith('pm');
@@ -128,7 +126,6 @@ function parseDateTime(dateStr: string, timeStr: string): Date {
     else if (/^\d{1,2}$/.test(part)) day = parseInt(part, 10);
     else if (/^\d{4}$/.test(part)) year = parseInt(part, 10);
   }
-  console.log(`Parsed month=${month} day=${day} year=${year} hours=${hours} minutes=${minutes}`);
   if (month === -1 || day === -1) throw new Error(`Invalid date: "${dateStr}"`);
 
   return new Date(year, month, day, hours, minutes, 0, 0);
@@ -153,8 +150,6 @@ async function handleCreate(interaction: ChatInputCommandInteraction): Promise<v
   const defaults = getGuildConfig(guild.id);
 
   const me = await guild.members.fetchMe();
-  console.log('Bot permissions:', me.permissions.toArray());
-
   const rawTime = interaction.options.getString('time', true);
   const rawEndTime = interaction.options.getString('end_time') ?? defaults.defaultEndTime;
   const location = interaction.options.getString('location') ?? (defaults.defaultLocation || 'TBD');

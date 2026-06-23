@@ -1,8 +1,6 @@
-import fs from 'fs';
-import path from 'path';
+import { readJson, writeJson } from './db';
 
-const DATA_DIR = path.join(process.cwd(), 'data');
-const FILE = path.join(DATA_DIR, 'config.json');
+const FILE = 'config.json';
 
 export interface GuildConfig {
   defaultLocation: string;
@@ -16,25 +14,27 @@ export interface GuildConfig {
   openEventChannels: boolean;
 }
 
+const DEFAULT_CONFIG: GuildConfig = {
+  defaultLocation: '',
+  defaultTime: '',
+  defaultEndTime: '',
+  defaultDescription: '',
+  announcementsChannelId: '',
+  welcomeChannelId: '',
+  rulesChannelId: '',
+  facebookGroupUrl: '',
+  openEventChannels: false,
+};
+
 type ConfigStore = Record<string, GuildConfig>;
 
-function load(): ConfigStore {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  if (!fs.existsSync(FILE)) return {};
-  return JSON.parse(fs.readFileSync(FILE, 'utf-8')) as ConfigStore;
-}
-
-function save(store: ConfigStore): void {
-  fs.writeFileSync(FILE, JSON.stringify(store, null, 2));
-}
-
 export function getGuildConfig(guildId: string): GuildConfig {
-  return load()[guildId] ?? { defaultLocation: '', defaultTime: '', defaultEndTime: '', defaultDescription: '', announcementsChannelId: '', welcomeChannelId: '', rulesChannelId: '', facebookGroupUrl: '', openEventChannels: false };
+  return readJson<ConfigStore>(FILE, {})[guildId] ?? { ...DEFAULT_CONFIG };
 }
 
 export function updateGuildConfig(guildId: string, patch: Partial<GuildConfig>): GuildConfig {
-  const store = load();
+  const store = readJson<ConfigStore>(FILE, {});
   store[guildId] = { ...getGuildConfig(guildId), ...patch };
-  save(store);
+  writeJson(FILE, store);
   return store[guildId];
 }
