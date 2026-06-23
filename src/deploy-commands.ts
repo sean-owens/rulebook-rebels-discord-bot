@@ -6,6 +6,7 @@ import { data as welcomeCommand } from './commands/welcome';
 import { data as gametagsCommand } from './commands/gametags';
 import { data as myrolesCommand } from './commands/myroles';
 import { data as libraryCommand } from './commands/library';
+import { data as helpCommand } from './commands/help';
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.DISCORD_CLIENT_ID;
@@ -16,7 +17,7 @@ if (!token || !clientId) {
   process.exit(1);
 }
 
-const commands = [gamenightCommand.toJSON(), gameCommand.toJSON(), welcomeCommand.toJSON(), gametagsCommand.toJSON(), myrolesCommand.toJSON(), libraryCommand.toJSON()];
+const commands = [gamenightCommand.toJSON(), gameCommand.toJSON(), welcomeCommand.toJSON(), gametagsCommand.toJSON(), myrolesCommand.toJSON(), libraryCommand.toJSON(), helpCommand.toJSON()];
 const rest = new REST().setToken(token);
 
 (async () => {

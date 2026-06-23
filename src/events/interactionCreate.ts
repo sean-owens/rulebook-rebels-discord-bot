@@ -1,4 +1,5 @@
 import { ButtonInteraction, Interaction, TextChannel } from 'discord.js';
+import { execute as executeHelp } from '../commands/help';
 import { execute as executeGameNight } from '../commands/gamenight';
 import { execute as executeWelcome } from '../commands/welcome';
 import { execute as executeGameTags, handleAutocomplete as handleGameTagsAutocomplete } from '../commands/gametags';
@@ -31,7 +32,8 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
       if (interaction.commandName === 'gametags') await handleGameTagsAutocomplete(interaction);
 
     } else if (interaction.isChatInputCommand()) {
-      if (interaction.commandName === 'event') await executeGameNight(interaction);
+      if (interaction.commandName === 'help') await executeHelp(interaction);
+      else if (interaction.commandName === 'event') await executeGameNight(interaction);
       else if (interaction.commandName === 'game') await executeGame(interaction);
       else if (interaction.commandName === 'welcome') await executeWelcome(interaction);
       else if (interaction.commandName === 'gametags') await executeGameTags(interaction);
