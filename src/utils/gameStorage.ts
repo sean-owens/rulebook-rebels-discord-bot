@@ -24,8 +24,10 @@ export interface GameSuggestion {
   minPlaytime: number;
   maxPlaytime: number;
   suggestedStartTime: string | null;
+  tags?: string[];
   expansions: GameExpansion[];
   seats: string[];
+  waitlist: string[];
   createdAt: string;
   createdBy: string;
 }

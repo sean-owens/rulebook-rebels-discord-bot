@@ -19,6 +19,7 @@ export interface GameRequest {
   gameName: string;
   requestedBy: string;
   createdAt: string;
+  copiesNeeded?: number;
 }
 
 function ensureDataDir(): void {
@@ -120,13 +121,72 @@ export function getRequestsForEvent(eventId: string): GameRequest[] {
   return loadRequests().filter(r => r.eventId === eventId);
 }
 
+export function removeRequests(requestIds: string[]): number {
+  const requests = loadRequests();
+  const remaining = requests.filter(r => !requestIds.includes(r.id));
+  saveRequests(remaining);
+  return requests.length - remaining.length;
+}
+
+export function removeAllRequestsForEvent(eventId: string, userId?: string): number {
+  const requests = loadRequests();
+  const remaining = requests.filter(r => {
+    if (r.eventId !== eventId) return true;
+    if (userId) return r.requestedBy !== userId;
+    return false;
+  });
+  saveRequests(remaining);
+  return requests.length - remaining.length;
+}
+
+export function updateRequestCopies(eventId: string, gameName: string, copies: number): void {
+  const requests = loadRequests();
+  const idx = requests.findIndex(
+    r => r.eventId === eventId && r.gameName.toLowerCase() === gameName.toLowerCase()
+  );
+  if (idx >= 0) {
+    requests[idx].copiesNeeded = copies;
+    saveRequests(requests);
+  }
+}
+
+export const GAME_TAGS = [
+  'Co-op',
+  'Competitive',
+  'Semi-Co-op',
+  'Team vs Team',
+  'Solo Friendly',
+  'Deck Building',
+  'Engine Building',
+  'Worker Placement',
+  'Area Control',
+  'Tile Placement',
+  'Drafting',
+  'Auction',
+  'Trick Taking',
+  'Roll & Write',
+  'Push Your Luck',
+  'Hand Management',
+  'Social Deduction',
+  'Hidden Roles',
+  'Bluffing',
+  'Party',
+  'Abstract',
+  'Economic',
+  'Dungeon Crawler',
+  'Legacy',
+  'Gateway / Family',
+] as const;
+
+export type GameTag = typeof GAME_TAGS[number];
+
 export interface GameInfo {
   gameName: string;
   objectid?: string;
   minPlayers?: number;
   maxPlayers?: number;
   playTime?: number;
-  gameType?: string;
+  tags?: string[];
   expansions?: string[];
   updatedAt: string;
 }

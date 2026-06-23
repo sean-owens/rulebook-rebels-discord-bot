@@ -2,8 +2,8 @@ import { ButtonInteraction, Interaction, TextChannel } from 'discord.js';
 import { execute as executeGameNight } from '../commands/gamenight';
 import { execute as executeWelcome } from '../commands/welcome';
 import { execute as executeGameTags, handleAutocomplete as handleGameTagsAutocomplete } from '../commands/gametags';
-import { execute as executeMyRoles, handleMyRolesSelect } from '../commands/myroles';
-import { execute as executeLibrary, handleAddConfirm, handleAddCancel, handleEditModal, handleLibraryViewSelect, handleLibraryRequestSelect } from '../commands/library';
+import { execute as executeMyRoles, handleMyRolesTag, handleMyRolesPage, handleMyRolesSubmit } from '../commands/myroles';
+import { execute as executeLibrary, handleAddConfirm, handleAddCancel, handleEditModal, handleLibraryViewSelect, handleLibraryRequestSelect, handleUnrequestEventSelect, handleUnrequestSelect, handleUnrequestAll } from '../commands/library';
 import {
   execute as executeGame,
   handleGameSelect,
@@ -16,6 +16,11 @@ import {
   handleBringConfirm,
   handleBringCancel,
   handleLibrarySuggestSelect,
+  handleWaitlistJoin,
+  handleWaitlistLeave,
+  handleEventSelect,
+  handleGameTagSelect,
+  handleGameTagSkip,
 } from '../commands/game';
 import { findGameNight, upsertGameNight } from '../utils/storage';
 import { buildGameNightEmbed, buildGameNightButtons } from '../utils/embeds';
@@ -34,20 +39,26 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
       else if (interaction.commandName === 'library') await executeLibrary(interaction);
 
     } else if (interaction.isStringSelectMenu()) {
-      if (interaction.customId === 'myroles_select') {
-        await handleMyRolesSelect(interaction);
+      if (interaction.customId === 'game_event_select') {
+        await handleEventSelect(interaction);
       } else if (interaction.customId === 'library_suggest_select') {
         await handleLibrarySuggestSelect(interaction);
       } else if (interaction.customId === 'library_view_select') {
         await handleLibraryViewSelect(interaction);
       } else if (interaction.customId === 'library_request_select') {
         await handleLibraryRequestSelect(interaction);
+      } else if (interaction.customId === 'library_unrequest_event_select') {
+        await handleUnrequestEventSelect(interaction);
+      } else if (interaction.customId.startsWith('library_unrequest_select_')) {
+        await handleUnrequestSelect(interaction, interaction.customId.slice('library_unrequest_select_'.length));
       } else if (interaction.customId === 'game_select') {
         await handleGameSelect(interaction);
       } else if (interaction.customId === 'game_select_exp') {
         await handleGameSelectWithExp(interaction);
       } else if (interaction.customId.startsWith('game_exp_')) {
         await handleExpansionSelect(interaction, interaction.customId.slice('game_exp_'.length));
+      } else if (interaction.customId.startsWith('game_tags_')) {
+        await handleGameTagSelect(interaction, interaction.customId.slice('game_tags_'.length));
       }
 
     } else if (interaction.isModalSubmit()) {
@@ -59,10 +70,21 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
 
     } else if (interaction.isButton()) {
       const id = interaction.customId;
-      if (id === 'library_add_confirm') {
+      if (id.startsWith('myroles_tag_')) {
+        const parts = id.split('_');
+        await handleMyRolesTag(interaction, parseInt(parts[2], 10) || 0, parts[3]);
+      } else if (id.startsWith('myroles_page_')) {
+        await handleMyRolesPage(interaction, parseInt(id.slice('myroles_page_'.length), 10) || 0);
+      } else if (id === 'myroles_submit') {
+        await handleMyRolesSubmit(interaction);
+      } else if (id === 'library_add_confirm') {
         await handleAddConfirm(interaction);
       } else if (id === 'library_add_cancel') {
         await handleAddCancel(interaction);
+      } else if (id.startsWith('library_unrequest_all_')) {
+        await handleUnrequestAll(interaction, id.slice('library_unrequest_all_'.length));
+      } else if (id.startsWith('game_tags_skip_')) {
+        await handleGameTagSkip(interaction, id.slice('game_tags_skip_'.length));
       } else if (id === 'game_bring_confirm') {
         await handleBringConfirm(interaction);
       } else if (id === 'game_bring_cancel') {
@@ -77,6 +99,10 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
           await handleGameJoin(interaction, parts[2]);
         } else if (parts[0] === 'game' && parts[1] === 'leave' && parts[2]) {
           await handleGameLeave(interaction, parts[2]);
+        } else if (parts[0] === 'game' && parts[1] === 'waitlist' && parts[2] === 'join' && parts[3]) {
+          await handleWaitlistJoin(interaction, parts[3]);
+        } else if (parts[0] === 'game' && parts[1] === 'waitlist' && parts[2] === 'leave' && parts[3]) {
+          await handleWaitlistLeave(interaction, parts[3]);
         }
       }
     }
@@ -110,7 +136,7 @@ async function handleRsvp(
   gn.rsvps[type].push(userId);
   upsertGameNight(gn);
 
-  if (gn.eventChannelId) {
+  if (gn.eventChannelId && !gn.openChannel) {
     try {
       const eventChannel = await interaction.client.channels.fetch(gn.eventChannelId) as TextChannel;
       if (type === 'yes' || type === 'maybe') {

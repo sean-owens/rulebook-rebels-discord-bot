@@ -1,4 +1,5 @@
 import { AutocompleteInteraction, ChatInputCommandInteraction, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
+import { GAME_TAGS } from '../utils/libraryStorage';
 
 const COLOR_PALETTE = [
   { name: 'Red',         value: '#e74c3c' },
@@ -43,6 +44,9 @@ export const data = new SlashCommandBuilder()
   )
   .addSubcommand(sub =>
     sub.setName('list').setDescription('List all current game genre tags')
+  )
+  .addSubcommand(sub =>
+    sub.setName('sync').setDescription('Create server roles for all built-in game tags at once (skips existing)')
   );
 
 export async function handleAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
@@ -65,6 +69,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   if (sub === 'add') await handleAdd(interaction);
   else if (sub === 'remove') await handleRemove(interaction);
   else if (sub === 'list') await handleList(interaction);
+  else if (sub === 'sync') await handleSync(interaction);
 }
 
 async function handleAdd(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -112,6 +117,48 @@ async function handleRemove(interaction: ChatInputCommandInteraction): Promise<v
 
   removeGameRole(interaction.guildId!, tag.roleId);
   await interaction.editReply(`Tag **${name}** removed.`);
+}
+
+async function handleSync(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+
+  const existing = getGameRoles(interaction.guildId!);
+  const existingNames = new Set(existing.map(r => r.name.toLowerCase()));
+
+  const toCreate = GAME_TAGS.filter(tag => !existingNames.has(tag.toLowerCase()));
+
+  if (toCreate.length === 0) {
+    await interaction.editReply(`All ${GAME_TAGS.length} game tag roles already exist.`);
+    return;
+  }
+
+  let created = 0;
+  const failed: string[] = [];
+
+  for (let i = 0; i < toCreate.length; i++) {
+    const tag = toCreate[i];
+    const color = parseInt(COLOR_PALETTE[i % COLOR_PALETTE.length].value.replace('#', ''), 16);
+    try {
+      const discordRole = await interaction.guild!.roles.create({
+        name: tag,
+        color,
+        mentionable: false,
+        reason: `Game tag sync by ${interaction.user.tag}`,
+      });
+      addGameRole(interaction.guildId!, { roleId: discordRole.id, name: tag });
+      created++;
+    } catch {
+      failed.push(tag);
+    }
+  }
+
+  const skipped = GAME_TAGS.length - toCreate.length;
+  const parts: string[] = [];
+  if (created > 0) parts.push(`**${created}** role${created !== 1 ? 's' : ''} created`);
+  if (skipped > 0) parts.push(`**${skipped}** already existed`);
+  if (failed.length > 0) parts.push(`**${failed.length}** failed: ${failed.join(', ')}`);
+
+  await interaction.editReply(`Sync complete — ${parts.join(', ')}. Members can assign these with \`/myroles\`.`);
 }
 
 async function handleList(interaction: ChatInputCommandInteraction): Promise<void> {

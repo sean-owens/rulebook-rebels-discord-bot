@@ -27,6 +27,9 @@ export interface GameNight {
   cancelled: boolean;
   archived: boolean;
   createdAt: string;
+  requestPinMessageId?: string;
+  gameListPinMessageId?: string;
+  openChannel?: boolean;
 }
 
 function ensureDataDir(): void {

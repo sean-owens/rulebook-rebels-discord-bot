@@ -23,7 +23,40 @@ export interface BGGGame {
   maxPlaytime: number;
   thumbnail: string | null;
   expansions: BGGExpansion[];
+  tags: string[];
 }
+
+// Maps lowercase BGG mechanic/category names to our curated tag vocabulary
+const BGG_TO_TAG: Record<string, string> = {
+  'cooperative game': 'Co-op',
+  'semi-cooperative game': 'Semi-Co-op',
+  'team-based game': 'Team vs Team',
+  'solo / solitaire game': 'Solo Friendly',
+  'deck, bag, and pool building': 'Deck Building',
+  'engine building': 'Engine Building',
+  'worker placement': 'Worker Placement',
+  'worker placement with dice workers': 'Worker Placement',
+  'area majority / influence': 'Area Control',
+  'territory building': 'Area Control',
+  'tile placement': 'Tile Placement',
+  'card drafting': 'Drafting',
+  'auction/bidding': 'Auction',
+  'auction: english': 'Auction',
+  'auction: sealed bid': 'Auction',
+  'trick-taking': 'Trick Taking',
+  'push your luck': 'Push Your Luck',
+  'roll and write': 'Roll & Write',
+  'hand management': 'Hand Management',
+  'social deduction': 'Social Deduction',
+  'hidden roles': 'Hidden Roles',
+  'bluffing': 'Bluffing',
+  'abstract strategy': 'Abstract',
+  'economic': 'Economic',
+  'party game': 'Party',
+  'dungeon crawler': 'Dungeon Crawler',
+  'legacy game': 'Legacy',
+  'family game': 'Gateway / Family',
+};
 
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
 
@@ -116,6 +149,17 @@ export async function getBGGGame(id: string): Promise<BGGGame> {
     .map(l => ({ id: String(l['@_id']), name: String(l['@_value']) }))
     .slice(0, 25);
 
+  // Tags: map BGG categories and mechanics to our curated vocabulary
+  const seen = new Set<string>();
+  const tags: string[] = [];
+  for (const link of links) {
+    const type: string = link['@_type'] ?? '';
+    if (type !== 'boardgamecategory' && type !== 'boardgamemechanic') continue;
+    const mapped = BGG_TO_TAG[String(link['@_value'] ?? '').toLowerCase()];
+    if (mapped && !seen.has(mapped)) { seen.add(mapped); tags.push(mapped); }
+    if (tags.length >= 5) break;
+  }
+
   return {
     id,
     name: primaryName,
@@ -127,5 +171,6 @@ export async function getBGGGame(id: string): Promise<BGGGame> {
     maxPlaytime: Number(item.maxplaytime?.['@_value'] ?? 60),
     thumbnail: item.thumbnail ?? null,
     expansions,
+    tags,
   };
 }

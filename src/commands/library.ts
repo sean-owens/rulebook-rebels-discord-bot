@@ -12,7 +12,6 @@ import {
   StringSelectMenuBuilder,
   StringSelectMenuInteraction,
   StringSelectMenuOptionBuilder,
-  TextChannel,
   TextInputBuilder,
   TextInputStyle,
 } from 'discord.js';
@@ -29,8 +28,12 @@ import {
   GameInfo,
   addRequest,
   getRequestsForEvent,
+  removeRequests,
+  removeAllRequestsForEvent,
+  GameRequest,
 } from '../utils/libraryStorage';
 import { loadGameNights } from '../utils/storage';
+import { updateRequestPin } from '../utils/requestPin';
 
 const HEADER_PATTERNS = new Set(['game', 'name', 'game name', 'title', 'board game', 'boardgame']);
 
@@ -105,7 +108,212 @@ export const data = new SlashCommandBuilder()
       .addUserOption(opt =>
         opt.setName('user').setDescription('Admin only: clear a specific user\'s library entries').setRequired(false)
       )
+  )
+  .addSubcommand(sub =>
+    sub.setName('bring').setDescription('See which of your games have been requested for the next event')
+  )
+  .addSubcommand(sub =>
+    sub.setName('unrequest').setDescription('Remove games from the request list for an event')
   );
+
+function buildBringLines(requests: ReturnType<typeof getRequestsForEvent>, userId: string): string[] {
+  return requests
+    .filter(req => findGamesByName(req.gameName).some(e => e.userId === userId))
+    .map(req => {
+      const copies = req.copiesNeeded ?? 1;
+      return copies > 1 ? `• **${req.gameName}** *(${copies} copies needed)*` : `• **${req.gameName}**`;
+    });
+}
+
+async function handleBring(interaction: ChatInputCommandInteraction): Promise<void> {
+  const now = new Date();
+  const upcoming = loadGameNights()
+    .filter(gn => !gn.cancelled && !gn.archived && new Date(gn.startTimeISO) > now)
+    .sort((a, b) => new Date(a.startTimeISO).getTime() - new Date(b.startTimeISO).getTime());
+
+  // In an event channel — scope to that event only
+  const channelEvent = upcoming.find(gn => gn.eventChannelId === interaction.channelId);
+  if (channelEvent) {
+    const lines = buildBringLines(getRequestsForEvent(channelEvent.id), interaction.user.id);
+    if (lines.length === 0) {
+      await interaction.reply({
+        content: `None of your games have been requested for this event (${channelEvent.date}).`,
+        ephemeral: true,
+      });
+      return;
+    }
+    const embed = new EmbedBuilder()
+      .setTitle(`Your Games to Bring — ${channelEvent.date}`)
+      .setColor(0x5865f2)
+      .setDescription(lines.join('\n'))
+      .setFooter({ text: `${lines.length} game${lines.length !== 1 ? 's' : ''} requested` });
+    await interaction.reply({ embeds: [embed], ephemeral: true });
+    return;
+  }
+
+  // Outside an event channel — show all upcoming events grouped by date
+  if (upcoming.length === 0) {
+    await interaction.reply({ content: "There are no upcoming events.", ephemeral: true });
+    return;
+  }
+
+  const embed = new EmbedBuilder().setTitle('Your Games to Bring').setColor(0x5865f2);
+  let hasAny = false;
+
+  for (const gn of upcoming) {
+    const lines = buildBringLines(getRequestsForEvent(gn.id), interaction.user.id);
+    if (lines.length === 0) continue;
+    embed.addFields({ name: gn.date, value: lines.join('\n') });
+    hasAny = true;
+  }
+
+  if (!hasAny) {
+    await interaction.reply({
+      content: "None of your games have been requested for any upcoming events.",
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.reply({ embeds: [embed], ephemeral: true });
+}
+
+async function buildUnrequestUI(
+  requests: GameRequest[],
+  eventId: string,
+  isMod: boolean,
+  guild: import('discord.js').Guild | null,
+): Promise<{ content: string; components: ActionRowBuilder<StringSelectMenuBuilder | ButtonBuilder>[] }> {
+  const nameMap: Record<string, string> = {};
+  if (isMod && guild) {
+    const uniqueIds = [...new Set(requests.map(r => r.requestedBy))];
+    await Promise.all(uniqueIds.map(async uid => {
+      try { nameMap[uid] = (await guild.members.fetch(uid)).displayName; } catch { nameMap[uid] = uid; }
+    }));
+  }
+
+  const options = requests.slice(0, 25).map(r => {
+    const label = isMod
+      ? `${r.gameName} — ${nameMap[r.requestedBy] ?? r.requestedBy}`.slice(0, 100)
+      : r.gameName.slice(0, 100);
+    return new StringSelectMenuOptionBuilder().setLabel(label).setValue(r.id);
+  });
+
+  const select = new StringSelectMenuBuilder()
+    .setCustomId(`library_unrequest_select_${eventId}`)
+    .setPlaceholder('Pick games to remove...')
+    .setMinValues(1)
+    .setMaxValues(options.length)
+    .addOptions(options);
+
+  const removeAllBtn = new ButtonBuilder()
+    .setCustomId(`library_unrequest_all_${eventId}`)
+    .setLabel(isMod ? 'Remove All' : 'Remove All Mine')
+    .setStyle(ButtonStyle.Danger);
+
+  const content = isMod
+    ? `**${requests.length}** game${requests.length !== 1 ? 's' : ''} requested for this event — pick which to remove:`
+    : `You've requested **${requests.length}** game${requests.length !== 1 ? 's' : ''} — pick which to remove:`;
+
+  return {
+    content,
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(removeAllBtn),
+    ],
+  };
+}
+
+async function handleUnrequest(interaction: ChatInputCommandInteraction): Promise<void> {
+  const isMod = interaction.memberPermissions?.has(PermissionFlagsBits.ManageMessages) ?? false;
+  const now = new Date();
+  const upcoming = loadGameNights()
+    .filter(gn => !gn.cancelled && !gn.archived && new Date(gn.startTimeISO) > now)
+    .sort((a, b) => new Date(a.startTimeISO).getTime() - new Date(b.startTimeISO).getTime());
+
+  const channelEvent = upcoming.find(gn => gn.eventChannelId === interaction.channelId);
+
+  if (!channelEvent) {
+    if (upcoming.length === 0) {
+      await interaction.reply({ content: 'There are no upcoming events.', ephemeral: true });
+      return;
+    }
+    const options = upcoming.map(gn =>
+      new StringSelectMenuOptionBuilder()
+        .setLabel(gn.date.slice(0, 100))
+        .setValue(gn.id)
+        .setDescription(`${gn.time} @ ${gn.location || 'TBD'}`.slice(0, 100))
+    );
+    const select = new StringSelectMenuBuilder()
+      .setCustomId('library_unrequest_event_select')
+      .setPlaceholder('Choose an event...')
+      .addOptions(options);
+    await interaction.reply({
+      content: 'Which event do you want to manage requests for?',
+      ephemeral: true,
+      components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
+    });
+    return;
+  }
+
+  const allRequests = getRequestsForEvent(channelEvent.id);
+  const visible = isMod ? allRequests : allRequests.filter(r => r.requestedBy === interaction.user.id);
+
+  if (visible.length === 0) {
+    await interaction.reply({
+      content: isMod ? 'No games have been requested for this event.' : "You haven't requested any games for this event.",
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const ui = await buildUnrequestUI(visible, channelEvent.id, isMod, interaction.guild);
+  await interaction.reply({ ...ui, ephemeral: true });
+}
+
+export async function handleUnrequestEventSelect(interaction: StringSelectMenuInteraction): Promise<void> {
+  const eventId = interaction.values[0];
+  const isMod = interaction.memberPermissions?.has(PermissionFlagsBits.ManageMessages) ?? false;
+  const allRequests = getRequestsForEvent(eventId);
+  const visible = isMod ? allRequests : allRequests.filter(r => r.requestedBy === interaction.user.id);
+
+  if (visible.length === 0) {
+    await interaction.update({
+      content: isMod ? 'No games have been requested for this event.' : "You haven't requested any games for this event.",
+      components: [],
+    });
+    return;
+  }
+
+  const ui = await buildUnrequestUI(visible, eventId, isMod, interaction.guild);
+  await interaction.update(ui);
+}
+
+export async function handleUnrequestSelect(interaction: StringSelectMenuInteraction, eventId: string): Promise<void> {
+  const removed = removeRequests(interaction.values);
+  try { await updateRequestPin(interaction.client, eventId); } catch { /* ok */ }
+  await interaction.update({
+    content: `Removed **${removed}** game request${removed !== 1 ? 's' : ''} from the list.`,
+    components: [],
+  });
+}
+
+export async function handleUnrequestAll(interaction: ButtonInteraction, eventId: string): Promise<void> {
+  const isMod = interaction.memberPermissions?.has(PermissionFlagsBits.ManageMessages) ?? false;
+  const removed = removeAllRequestsForEvent(eventId, isMod ? undefined : interaction.user.id);
+  try { await updateRequestPin(interaction.client, eventId); } catch { /* ok */ }
+
+  let msg: string;
+  if (removed === 0) {
+    msg = isMod ? 'There were no requests to clear.' : 'You had no requests to remove.';
+  } else if (isMod) {
+    msg = `Cleared all **${removed}** request${removed !== 1 ? 's' : ''} for this event.`;
+  } else {
+    msg = `Removed all **${removed}** of your request${removed !== 1 ? 's' : ''} for this event.`;
+  }
+
+  await interaction.update({ content: msg, components: [] });
+}
 
 async function handleClear(interaction: ChatInputCommandInteraction): Promise<void> {
   const targetUser = interaction.options.getUser('user');
@@ -141,6 +349,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   else if (sub === 'view') await handleView(interaction);
   else if (sub === 'edit') await handleEdit(interaction);
   else if (sub === 'clear') await handleClear(interaction);
+  else if (sub === 'bring') await handleBring(interaction);
+  else if (sub === 'unrequest') await handleUnrequest(interaction);
 }
 
 async function handleList(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -242,8 +452,8 @@ function buildGameViewEmbed(gameName: string, userId: string): EmbedBuilder | nu
   if (info?.playTime != null) {
     embed.addFields({ name: 'Play Time', value: `${info.playTime} min`, inline: true });
   }
-  if (info?.gameType) {
-    embed.addFields({ name: 'Type', value: info.gameType, inline: true });
+  if (info?.tags?.length) {
+    embed.addFields({ name: 'Tags', value: info.tags.join(' • ') });
   }
   if (info?.expansions?.length) {
     embed.addFields({ name: 'Expansions', value: info.expansions.join('\n') });
@@ -510,22 +720,9 @@ async function handleRequest(interaction: ChatInputCommandInteraction): Promise<
     content: `<@${interaction.user.id}> requested **${canonicalName}** for the next event (${event.date}). Owner${owners.length > 1 ? 's' : ''}: ${owners.join(', ')}`,
   });
 
-  // Post in the event channel if it exists
-  if (event.eventChannelId) {
-    try {
-      const eventChannel = await interaction.client.channels.fetch(event.eventChannelId) as TextChannel;
-      const allRequests = getRequestsForEvent(event.id);
-      const requestLines = allRequests.map(r => `• **${r.gameName}** (requested by <@${r.requestedBy}>)`).join('\n');
-
-      const embed = new EmbedBuilder()
-        .setTitle('Requested Games')
-        .setColor(0x5865f2)
-        .setDescription(requestLines)
-        .setFooter({ text: 'Request games with /library request <game>' });
-
-      await eventChannel.send({ embeds: [embed] });
-    } catch { /* event channel may not be accessible */ }
-  }
+  try {
+    await updateRequestPin(interaction.client, event.id);
+  } catch { /* channel may not be accessible */ }
 }
 
 export async function handleLibraryRequestSelect(interaction: StringSelectMenuInteraction): Promise<void> {
@@ -579,19 +776,9 @@ export async function handleLibraryRequestSelect(interaction: StringSelectMenuIn
     ephemeral: false,
   });
 
-  if (event.eventChannelId) {
-    try {
-      const eventChannel = await interaction.client.channels.fetch(event.eventChannelId) as TextChannel;
-      const allRequests = getRequestsForEvent(event.id);
-      const requestLines = allRequests.map(r => `• **${r.gameName}** (requested by <@${r.requestedBy}>)`).join('\n');
-      const embed = new EmbedBuilder()
-        .setTitle('Requested Games')
-        .setColor(0x5865f2)
-        .setDescription(requestLines)
-        .setFooter({ text: 'Request games with /library request <game>' });
-      await eventChannel.send({ embeds: [embed] });
-    } catch { /* event channel may not be accessible */ }
-  }
+  try {
+    await updateRequestPin(interaction.client, event.id);
+  } catch { /* channel may not be accessible */ }
 }
 
 function parseCsvLine(line: string): string[] {
@@ -682,7 +869,7 @@ async function handleImport(interaction: ChatInputCommandInteraction): Promise<v
         minPlayers: existing?.minPlayers ?? minPlayers,
         maxPlayers: existing?.maxPlayers ?? maxPlayers,
         playTime: existing?.playTime ?? playTime,
-        gameType: existing?.gameType,
+        tags: existing?.tags,
         expansions: existing?.expansions,
         updatedAt: new Date().toISOString(),
       });
@@ -757,11 +944,12 @@ async function handleEdit(interaction: ChatInputCommandInteraction): Promise<voi
     ),
     new ActionRowBuilder<TextInputBuilder>().addComponents(
       new TextInputBuilder()
-        .setCustomId('gametype')
-        .setLabel('Game type (e.g. strategy, party, co-op)')
+        .setCustomId('tags')
+        .setLabel('Tags (e.g. Co-op, Deck Building, Party)')
         .setStyle(TextInputStyle.Short)
+        .setPlaceholder('Co-op, Deck Building, Worker Placement, Party...')
         .setRequired(false)
-        .setValue(existing?.gameType ?? '')
+        .setValue(existing?.tags?.join(', ') ?? '')
     ),
     new ActionRowBuilder<TextInputBuilder>().addComponents(
       new TextInputBuilder()
@@ -786,7 +974,7 @@ export async function handleEditModal(interaction: ModalSubmitInteraction): Prom
 
   const playersRaw = interaction.fields.getTextInputValue('players').trim();
   const playtimeRaw = interaction.fields.getTextInputValue('playtime').trim();
-  const gameType = interaction.fields.getTextInputValue('gametype').trim() || undefined;
+  const tagsRaw = interaction.fields.getTextInputValue('tags').trim();
   const expansionsRaw = interaction.fields.getTextInputValue('expansions').trim();
 
   const existing = getGameInfo(gameName);
@@ -801,6 +989,9 @@ export async function handleEditModal(interaction: ModalSubmitInteraction): Prom
   }
 
   const playTime = playtimeRaw ? parseInt(playtimeRaw, 10) || existing?.playTime : existing?.playTime;
+  const tags = tagsRaw
+    ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean)
+    : existing?.tags;
   const expansions = expansionsRaw
     ? expansionsRaw.split(',').map(e => e.trim()).filter(Boolean)
     : existing?.expansions;
@@ -811,7 +1002,7 @@ export async function handleEditModal(interaction: ModalSubmitInteraction): Prom
     minPlayers,
     maxPlayers,
     playTime,
-    gameType,
+    tags,
     expansions,
     updatedAt: new Date().toISOString(),
   };

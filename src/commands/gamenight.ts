@@ -13,7 +13,7 @@ import { randomUUID } from 'crypto';
 import { loadGameNights, findGameNight, upsertGameNight, GameNight } from '../utils/storage';
 import { buildGameNightEmbed, buildGameNightButtons } from '../utils/embeds';
 import { cleanupCancelledNight } from './cancelHelper';
-import { getGuildConfig, updateGuildConfig } from '../utils/config';
+import { getGuildConfig, updateGuildConfig, GuildConfig } from '../utils/config';
 import { archiveEventChannel } from '../utils/archive';
 import { updateAnnouncementPin } from '../utils/pins';
 
@@ -64,6 +64,9 @@ export const data = new SlashCommandBuilder()
       )
       .addChannelOption(opt =>
         opt.setName('announcements').setDescription('Channel where RSVP embeds are posted').setRequired(false)
+      )
+      .addBooleanOption(opt =>
+        opt.setName('open_channels').setDescription('Allow everyone to see event channels (true = open, false = RSVP only)').setRequired(false)
       )
   )
   .addSubcommand(sub =>
@@ -225,13 +228,20 @@ async function handleCreate(interaction: ChatInputCommandInteraction): Promise<v
     }) as TextChannel;
     eventChannelId = eventChannel.id;
 
-    // Set bot access first so it retains access after @everyone is denied
+    // Bot always needs explicit access so it can manage the channel
     await eventChannel.permissionOverwrites.create(me, { ViewChannel: true, SendMessages: true, ManageMessages: true });
-    await eventChannel.permissionOverwrites.create(guild.roles.everyone, { ViewChannel: false });
-    await eventChannel.permissionOverwrites.create(interaction.user, { ViewChannel: true });
+
+    if (!defaults.openEventChannels) {
+      // Private mode: hide from everyone, then grant access per RSVP
+      await eventChannel.permissionOverwrites.create(guild.roles.everyone, { ViewChannel: false });
+      await eventChannel.permissionOverwrites.create(interaction.user, { ViewChannel: true });
+    }
 
     const announcementsRef = defaults.announcementsChannelId ? `<#${defaults.announcementsChannelId}>` : 'the announcements channel';
-    await eventChannel.send(`Welcome to the **${date}** Monthly Gaming Event! RSVP in ${announcementsRef} to join this channel.`);
+    const welcomeMsg = defaults.openEventChannels
+      ? `Welcome to the **${date}** Monthly Gaming Event! Everyone is welcome — RSVP in ${announcementsRef} so we know you're coming.`
+      : `Welcome to the **${date}** Monthly Gaming Event! RSVP in ${announcementsRef} to join this channel.`;
+    await eventChannel.send(welcomeMsg);
   } catch (err) {
     console.error('Could not create or lock event channel:', err);
   }
@@ -257,6 +267,7 @@ async function handleCreate(interaction: ChatInputCommandInteraction): Promise<v
     cancelled: false,
     archived: false,
     createdAt: new Date().toISOString(),
+    openChannel: defaults.openEventChannels ?? false,
   };
 
   // Post RSVP embed — in announcements channel if configured, else command channel
@@ -317,18 +328,20 @@ async function handleConfig(interaction: ChatInputCommandInteraction): Promise<v
     return;
   }
 
-  const patch: Record<string, string> = {};
+  const patch: Partial<GuildConfig> = {};
   const location = interaction.options.getString('location');
   const time = interaction.options.getString('time');
   const endTime = interaction.options.getString('end_time');
   const description = interaction.options.getString('description');
   const announcements = interaction.options.getChannel('announcements');
+  const openChannels = interaction.options.getBoolean('open_channels');
 
   if (location !== null) patch.defaultLocation = location;
   if (time !== null) patch.defaultTime = time;
   if (endTime !== null) patch.defaultEndTime = endTime;
   if (description !== null) patch.defaultDescription = description;
   if (announcements !== null) patch.announcementsChannelId = announcements.id;
+  if (openChannels !== null) patch.openEventChannels = openChannels;
 
   if (Object.keys(patch).length === 0) {
     const c = getGuildConfig(interaction.guildId!);
@@ -340,6 +353,7 @@ async function handleConfig(interaction: ChatInputCommandInteraction): Promise<v
         `> Location: ${c.defaultLocation || '*not set*'}`,
         `> Description: ${c.defaultDescription || '*not set*'}`,
         `> Announcements channel: ${c.announcementsChannelId ? `<#${c.announcementsChannelId}>` : '*not set*'}`,
+        `> Event channel access: ${c.openEventChannels ? 'Open to everyone' : 'RSVP only'}`,
       ].join('\n'),
       ephemeral: true,
     });
@@ -355,6 +369,7 @@ async function handleConfig(interaction: ChatInputCommandInteraction): Promise<v
       `> Location: ${updated.defaultLocation || '*not set*'}`,
       `> Description: ${updated.defaultDescription || '*not set*'}`,
       `> Announcements channel: ${updated.announcementsChannelId ? `<#${updated.announcementsChannelId}>` : '*not set*'}`,
+      `> Event channel access: ${updated.openEventChannels ? 'Open to everyone' : 'RSVP only'}`,
     ].join('\n'),
     ephemeral: true,
   });
