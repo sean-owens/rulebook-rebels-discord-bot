@@ -10,10 +10,9 @@ export function buildGameEmbed(game: GameSuggestion, nameMap: Record<string, str
 
   const seatCount = game.seats.length;
   const totalSeats = game.maxPlayers;
-  const seatLines: string[] = [];
-  for (let i = 0; i < totalSeats; i++) {
-    seatLines.push(i < seatCount ? `${i + 1}. ${getName(game.seats[i])}` : `${i + 1}. *(open)*`);
-  }
+  const seatLines: string[] = game.seats.map((id, i) => `${i + 1}. ${getName(id)}`);
+  const openCount = totalSeats - seatCount;
+  if (openCount > 0) seatLines.push(`*(${openCount} open slot${openCount !== 1 ? 's' : ''})*`);
 
   const playerInfo = game.minPlayers === game.maxPlayers
     ? `${game.minPlayers}`
@@ -25,7 +24,7 @@ export function buildGameEmbed(game: GameSuggestion, nameMap: Record<string, str
 
   const embed = new EmbedBuilder()
     .setTitle(game.title)
-    .setURL(game.bggLink)
+    .setURL(game.bggLink || null)
     .setColor(0xe8a838)
     .addFields(
       { name: 'Players', value: `${playerInfo} (best with **${game.suggestedPlayers}**)`, inline: true },
@@ -45,7 +44,7 @@ export function buildGameEmbed(game: GameSuggestion, nameMap: Record<string, str
 
   embed.addFields({
     name: `Seats (${seatCount}/${totalSeats})`,
-    value: seatLines.join('\n'),
+    value: seatLines.join('\n') || '*(no seats defined)*',
   });
 
   embed.setFooter({ text: `Game ID: ${game.id} • Data from BoardGameGeek` });

@@ -1,4 +1,4 @@
-import { Client, TextChannel } from 'discord.js';
+import { Client, ChannelType, TextChannel } from 'discord.js';
 import { loadGameNights } from './storage';
 import { getGuildConfig } from './config';
 
@@ -8,7 +8,9 @@ export async function updateAnnouncementPin(client: Client, guildId: string): Pr
 
   let channel: TextChannel;
   try {
-    channel = await client.channels.fetch(config.announcementsChannelId) as TextChannel;
+    const fetched = await client.channels.fetch(config.announcementsChannelId);
+    if (!fetched || fetched.type === ChannelType.GuildForum) return; // forum threads manage their own pins
+    channel = fetched as TextChannel;
   } catch {
     return;
   }

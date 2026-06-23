@@ -3,6 +3,7 @@ import { execute as executeGameNight } from '../commands/gamenight';
 import { execute as executeWelcome } from '../commands/welcome';
 import { execute as executeGameTags, handleAutocomplete as handleGameTagsAutocomplete } from '../commands/gametags';
 import { execute as executeMyRoles, handleMyRolesSelect } from '../commands/myroles';
+import { execute as executeLibrary, handleAddConfirm, handleAddCancel, handleEditModal, handleLibraryViewSelect, handleLibraryRequestSelect } from '../commands/library';
 import {
   execute as executeGame,
   handleGameSelect,
@@ -12,6 +13,9 @@ import {
   handleManualGameSubmit,
   handleGameJoin,
   handleGameLeave,
+  handleBringConfirm,
+  handleBringCancel,
+  handleLibrarySuggestSelect,
 } from '../commands/game';
 import { findGameNight, upsertGameNight } from '../utils/storage';
 import { buildGameNightEmbed, buildGameNightButtons } from '../utils/embeds';
@@ -27,10 +31,17 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
       else if (interaction.commandName === 'welcome') await executeWelcome(interaction);
       else if (interaction.commandName === 'gametags') await executeGameTags(interaction);
       else if (interaction.commandName === 'myroles') await executeMyRoles(interaction);
+      else if (interaction.commandName === 'library') await executeLibrary(interaction);
 
     } else if (interaction.isStringSelectMenu()) {
       if (interaction.customId === 'myroles_select') {
         await handleMyRolesSelect(interaction);
+      } else if (interaction.customId === 'library_suggest_select') {
+        await handleLibrarySuggestSelect(interaction);
+      } else if (interaction.customId === 'library_view_select') {
+        await handleLibraryViewSelect(interaction);
+      } else if (interaction.customId === 'library_request_select') {
+        await handleLibraryRequestSelect(interaction);
       } else if (interaction.customId === 'game_select') {
         await handleGameSelect(interaction);
       } else if (interaction.customId === 'game_select_exp') {
@@ -42,11 +53,21 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
     } else if (interaction.isModalSubmit()) {
       if (interaction.customId === 'game_manual') {
         await handleManualGameSubmit(interaction);
+      } else if (interaction.customId === 'library_edit_modal') {
+        await handleEditModal(interaction);
       }
 
     } else if (interaction.isButton()) {
       const id = interaction.customId;
-      if (id.startsWith('game_manual_')) {
+      if (id === 'library_add_confirm') {
+        await handleAddConfirm(interaction);
+      } else if (id === 'library_add_cancel') {
+        await handleAddCancel(interaction);
+      } else if (id === 'game_bring_confirm') {
+        await handleBringConfirm(interaction);
+      } else if (id === 'game_bring_cancel') {
+        await handleBringCancel(interaction);
+      } else if (id.startsWith('game_manual_')) {
         await handleManualBtn(interaction);
       } else {
         const parts = id.split('_');
@@ -61,11 +82,13 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
     }
   } catch (err) {
     console.error('Interaction error:', err);
-    const reply = { content: 'Something went wrong. Please try again.', ephemeral: true };
-    if (interaction.isRepliable()) {
-      if (interaction.replied || interaction.deferred) await interaction.followUp(reply);
-      else await interaction.reply(reply);
-    }
+    try {
+      const reply = { content: 'Something went wrong. Please try again.', ephemeral: true };
+      if (interaction.isRepliable()) {
+        if (interaction.replied || interaction.deferred) await interaction.followUp(reply);
+        else await interaction.reply(reply);
+      }
+    } catch { /* interaction expired — nothing to do */ }
   }
 }
 

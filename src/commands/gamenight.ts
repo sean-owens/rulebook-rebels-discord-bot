@@ -3,6 +3,7 @@ import {
   SlashCommandBuilder,
   PermissionFlagsBits,
   ChannelType,
+  ForumChannel,
   TextChannel,
   GuildScheduledEventEntityType,
   GuildScheduledEventPrivacyLevel,
@@ -260,32 +261,53 @@ async function handleCreate(interaction: ChatInputCommandInteraction): Promise<v
 
   // Post RSVP embed — in announcements channel if configured, else command channel
   let announcementMsg: Message | null = null;
+  let announcementMention = '';
   const targetChannelId = defaults.announcementsChannelId || interaction.channelId;
 
   try {
-    const targetChannel = await guild.channels.fetch(targetChannelId) as TextChannel;
-    announcementMsg = await targetChannel.send({
-      content: '@everyone',
-      embeds: [buildGameNightEmbed(gn, {})],
-      components: [buildGameNightButtons(id)],
-    });
-    gn.messageId = announcementMsg.id;
-    gn.channelId = targetChannelId;
+    const targetChannel = await guild.channels.fetch(targetChannelId);
+
+    if (targetChannel?.type === ChannelType.GuildForum) {
+      // Forum channel: each event becomes a thread post members can comment on
+      const forumChannel = targetChannel as ForumChannel;
+      const threadName = `Monthly Gaming Event · ${date} · ${time}`.slice(0, 100);
+      const thread = await forumChannel.threads.create({
+        name: threadName,
+        message: {
+          content: '@everyone',
+          embeds: [buildGameNightEmbed(gn, {})],
+          components: [buildGameNightButtons(id)],
+        },
+      });
+      gn.messageId = thread.id; // thread ID === starter message ID in Discord
+      gn.channelId = targetChannelId;
+      announcementMention = `<#${thread.id}>`;
+    } else {
+      // Text channel: existing behaviour
+      const textChannel = targetChannel as TextChannel;
+      announcementMsg = await textChannel.send({
+        content: '@everyone',
+        embeds: [buildGameNightEmbed(gn, {})],
+        components: [buildGameNightButtons(id)],
+      });
+      gn.messageId = announcementMsg.id;
+      gn.channelId = targetChannelId;
+      announcementMention = `<#${targetChannelId}>`;
+    }
   } catch (err) {
     console.warn('Could not post RSVP embed:', err);
   }
 
   upsertGameNight(gn);
 
-  // Pin the new event, unpin the previous bot pin
+  // Pin the new event (text channels only — forum threads don't use channel pins)
   if (announcementMsg) {
     await updateAnnouncementPin(guild.client, guild.id).catch(err =>
       console.warn('Could not pin announcement:', err)
     );
   }
 
-  const channelMention = `<#${gn.channelId}>`;
-  await interaction.editReply(`Event created for **${date}** at **${time}**! RSVP embed posted in ${channelMention}.`);
+  await interaction.editReply(`Event created for **${date}** at **${time}**! RSVP embed posted in ${announcementMention || `<#${gn.channelId}>`}.`);
 }
 
 async function handleConfig(interaction: ChatInputCommandInteraction): Promise<void> {

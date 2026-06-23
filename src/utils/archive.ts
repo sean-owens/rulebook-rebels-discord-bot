@@ -38,13 +38,22 @@ export async function archiveEventChannel(client: Client, gn: GameNight): Promis
 
   await channel.send('*This event has concluded. The channel is now archived and read-only.*');
 
-  // Remove the RSVP embed from the announcements channel
+  // Clean up the announcement — delete the text message or archive the forum thread
   if (gn.messageId && gn.channelId) {
     try {
-      const announcementChannel = await client.channels.fetch(gn.channelId) as TextChannel;
-      const msg = await announcementChannel.messages.fetch(gn.messageId);
-      await msg.delete();
-    } catch { /* already deleted */ }
+      const announcementChannel = await client.channels.fetch(gn.channelId);
+      if (announcementChannel?.type === ChannelType.GuildForum) {
+        const thread = await client.channels.fetch(gn.messageId);
+        if (thread?.isThread()) {
+          await thread.send('*This event has concluded. The thread is now archived.*');
+          await thread.setLocked(true);
+          await thread.setArchived(true);
+        }
+      } else {
+        const msg = await (announcementChannel as TextChannel).messages.fetch(gn.messageId);
+        await msg.delete();
+      }
+    } catch { /* already deleted/archived */ }
   }
 
   gn.archived = true;
