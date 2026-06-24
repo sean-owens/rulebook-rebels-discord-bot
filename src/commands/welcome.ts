@@ -23,6 +23,14 @@ export const data = new SlashCommandBuilder()
     sub
       .setName('test')
       .setDescription('Preview the welcome message as if you just joined (admin only)')
+  )
+  .addSubcommand(sub =>
+    sub
+      .setName('greet')
+      .setDescription('Manually send the welcome message to a specific member (admin only)')
+      .addUserOption(opt =>
+        opt.setName('member').setDescription('The member to welcome').setRequired(true)
+      )
   );
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -35,6 +43,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   const sub = interaction.options.getSubcommand();
   if (sub === 'config') await handleConfig(interaction);
   else if (sub === 'test') await handleTest(interaction);
+  else if (sub === 'greet') await handleGreet(interaction);
 }
 
 async function handleConfig(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -80,4 +89,12 @@ async function handleTest(interaction: ChatInputCommandInteraction): Promise<voi
   const member = await interaction.guild!.members.fetch(interaction.user.id);
   await handleGuildMemberAdd(member);
   await interaction.editReply('Welcome message sent! Check the welcome channel and your DMs.');
+}
+
+async function handleGreet(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+  const user = interaction.options.getUser('member', true);
+  const member = await interaction.guild!.members.fetch(user.id);
+  await handleGuildMemberAdd(member);
+  await interaction.editReply(`Welcome message sent to ${member}!`);
 }

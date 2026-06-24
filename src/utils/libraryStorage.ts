@@ -173,7 +173,8 @@ export interface GameInfo {
   maxPlayers?: number;
   playTime?: number;
   tags?: string[];
-  expansions?: string[];
+  expansions?: string[];      // owner-noted expansions they personally own
+  bggExpansions?: string[];   // full expansion list from BGG
   updatedAt: string;
 }
 

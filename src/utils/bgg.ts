@@ -27,8 +27,8 @@ export interface BGGGame {
 
 // Maps lowercase BGG mechanic/category names to our curated tag vocabulary
 export const BGG_TO_TAG: Record<string, string> = {
-  'cooperative game': 'Co-op',
-  'semi-cooperative game': 'Semi-Co-op',
+  'cooperative game': 'Cooperative',
+  'semi-cooperative game': 'Semi-Cooperative',
   'team-based game': 'Team vs Team',
   'solo / solitaire game': 'Solo Friendly',
   'deck, bag, and pool building': 'Deck Building',
@@ -50,11 +50,13 @@ export const BGG_TO_TAG: Record<string, string> = {
   'hidden roles': 'Hidden Roles',
   'bluffing': 'Bluffing',
   'abstract strategy': 'Abstract',
+  'strategy': 'Strategy',
   'economic': 'Economic',
   'party game': 'Party',
   'dungeon crawler': 'Dungeon Crawler',
   'legacy game': 'Legacy',
   'family game': 'Gateway / Family',
+  'miniatures': 'Miniatures'
 };
 
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });

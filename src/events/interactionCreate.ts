@@ -3,7 +3,7 @@ import { execute as executeHelp } from '../commands/help';
 import { execute as executeGameNight } from '../commands/gamenight';
 import { execute as executeWelcome } from '../commands/welcome';
 import { execute as executeGameTags, handleAutocomplete as handleGameTagsAutocomplete } from '../commands/gametags';
-import { execute as executeMyRoles, handleMyRolesTag, handleMyRolesPage, handleMyRolesSubmit } from '../commands/myroles';
+import { execute as executeMyRoles, handleMyRolesTag, handleMyRolesDiff, handleMyRolesNext, handleMyRolesBackDiff, handleMyRolesPage, handleMyRolesSubmit } from '../commands/myroles';
 import { execute as executeLibrary, handleAddConfirm, handleAddCancel, handleEditModal, handleLibraryViewSelect, handleLibraryRequestSelect, handleUnrequestEventSelect, handleUnrequestSelect, handleUnrequestAll } from '../commands/library';
 import {
   execute as executeGame,
@@ -66,6 +66,13 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         const rest = id.slice('myroles_tag_'.length);
         const sep = rest.indexOf('_');
         await handleMyRolesTag(interaction, parseInt(rest.slice(0, sep), 10) || 0, rest.slice(sep + 1));
+      } else if (id.startsWith('myroles_diff_')) {
+        // Format: myroles_diff_<roleId>
+        await handleMyRolesDiff(interaction, id.slice('myroles_diff_'.length));
+      } else if (id === 'myroles_next') {
+        await handleMyRolesNext(interaction);
+      } else if (id === 'myroles_back_diff') {
+        await handleMyRolesBackDiff(interaction);
       } else if (id.startsWith('myroles_page_')) {
         await handleMyRolesPage(interaction, parseInt(id.slice('myroles_page_'.length), 10) || 0);
       } else if (id === 'library_add_confirm') {

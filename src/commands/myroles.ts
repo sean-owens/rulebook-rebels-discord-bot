@@ -9,40 +9,103 @@ import {
 } from 'discord.js';
 import { getGameRoles, GameRole } from '../utils/gameRoles';
 
-const PAGE_SIZE = 20; // 4 rows × 5 tag buttons, leaving row 5 for nav + submit
+const GENRE_PAGE_SIZE = 20; // 4 rows of genre buttons, row 5 for controls
+const MAX_GENRE_TAGS = 5;
 
-// Pending selections: userId → set of roleIds the user has toggled ON
 const pendingSelections = new Map<string, Set<string>>();
 
 export const data = new SlashCommandBuilder()
   .setName('myroles')
-  .setDescription('Set your game genre preferences');
+  .setDescription('Set your game genre preferences and difficulty level');
 
-function buildRolesPage(
-  tags: GameRole[],
+function splitTags(tags: GameRole[]): { genreTags: GameRole[]; difficultyTags: GameRole[] } {
+  return {
+    genreTags: tags.filter(t => t.type !== 'difficulty'),
+    difficultyTags: tags.filter(t => t.type === 'difficulty'),
+  };
+}
+
+function buildDifficultyStep(
+  difficultyTags: GameRole[],
   selected: Set<string>,
-  page: number,
 ): { embeds: EmbedBuilder[]; components: ActionRowBuilder<ButtonBuilder>[] } {
-  const totalPages = Math.ceil(tags.length / PAGE_SIZE);
-  const pageRoles = tags.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const selectedDiff = difficultyTags.filter(t => selected.has(t.roleId));
 
-  // Tag toggle buttons — up to 4 rows of 5
-  const tagRows: ActionRowBuilder<ButtonBuilder>[] = [];
-  for (let i = 0; i < pageRoles.length; i += 5) {
-    tagRows.push(
+  const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+
+  if (difficultyTags.length > 0) {
+    rows.push(
       new ActionRowBuilder<ButtonBuilder>().addComponents(
-        pageRoles.slice(i, i + 5).map(t =>
+        difficultyTags.map(t =>
           new ButtonBuilder()
-            .setCustomId(`myroles_tag_${page}_${t.roleId}`)
-            .setLabel(t.name)
-            .setStyle(selected.has(t.roleId) ? ButtonStyle.Success : ButtonStyle.Secondary)
+            .setCustomId(`myroles_diff_${t.roleId}`)
+            .setLabel(`⚖️ ${t.name}`)
+            .setStyle(selected.has(t.roleId) ? ButtonStyle.Success : ButtonStyle.Primary)
         )
       )
     );
   }
 
-  // Row 5: nav buttons (if multi-page) + Submit
-  const controlRow: ButtonBuilder[] = [];
+  rows.push(
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId('myroles_next')
+        .setLabel('Next: Pick Genres →')
+        .setStyle(ButtonStyle.Secondary)
+    )
+  );
+
+  const embed = new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle('Your Game Preferences — Step 1 of 2')
+    .setDescription('How complex do you like your games? Pick a difficulty level that fits your style best.')
+    .addFields({
+      name: 'Selected Difficulty',
+      value: selectedDiff.length > 0 ? selectedDiff.map(t => `<@&${t.roleId}>`).join(' ') : '*None — skip if you have no preference*',
+    });
+
+  return { embeds: [embed], components: rows };
+}
+
+function buildGenreStep(
+  genreTags: GameRole[],
+  difficultyTags: GameRole[],
+  selected: Set<string>,
+  page: number,
+): { embeds: EmbedBuilder[]; components: ActionRowBuilder<ButtonBuilder>[] } {
+  const totalPages = Math.ceil(genreTags.length / GENRE_PAGE_SIZE);
+  const pageRoles = genreTags.slice(page * GENRE_PAGE_SIZE, (page + 1) * GENRE_PAGE_SIZE);
+
+  const selectedDiff = difficultyTags.filter(t => selected.has(t.roleId));
+  const selectedGenre = genreTags.filter(t => selected.has(t.roleId));
+  const selectedGenreCount = selectedGenre.length;
+  const atLimit = selectedGenreCount >= MAX_GENRE_TAGS;
+
+  const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+
+  // Genre tag rows (up to 4 rows × 5 buttons)
+  for (let i = 0; i < pageRoles.length; i += 5) {
+    rows.push(
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        pageRoles.slice(i, i + 5).map(t => {
+          const isSelected = selected.has(t.roleId);
+          return new ButtonBuilder()
+            .setCustomId(`myroles_tag_${page}_${t.roleId}`)
+            .setLabel(t.name)
+            .setStyle(isSelected ? ButtonStyle.Success : ButtonStyle.Secondary)
+            .setDisabled(atLimit && !isSelected);
+        })
+      )
+    );
+  }
+
+  // Control row: back to difficulty, pagination, save
+  const controlRow: ButtonBuilder[] = [
+    new ButtonBuilder()
+      .setCustomId('myroles_back_diff')
+      .setLabel('← Difficulty')
+      .setStyle(ButtonStyle.Secondary),
+  ];
   if (totalPages > 1 && page > 0) {
     controlRow.push(
       new ButtonBuilder()
@@ -65,27 +128,47 @@ function buildRolesPage(
       .setLabel('Save')
       .setStyle(ButtonStyle.Primary)
   );
-  tagRows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(...controlRow));
+  rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(...controlRow));
 
-  const currentSelected = tags.filter(t => selected.has(t.roleId));
   const pageNote = totalPages > 1 ? ` — page ${page + 1}/${totalPages}` : '';
+  const genreLabel = `Genres (${selectedGenreCount}/${MAX_GENRE_TAGS})${atLimit ? ' — limit reached' : ''}`;
 
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
-    .setTitle(`Your Game Preferences${pageNote}`)
-    .setDescription('Toggle your game types, then hit **Save** when you\'re done.')
-    .addFields({
-      name: 'Selected',
-      value: currentSelected.length > 0 ? currentSelected.map(t => `<@&${t.roleId}>`).join(' ') : '*None selected*',
-    });
+    .setTitle(`Your Game Preferences — Step 2 of 2${pageNote}`)
+    .setDescription('Pick up to **5 genre tags** that best describe the types of games you enjoy most.')
+    .addFields(
+      {
+        name: 'Difficulty',
+        value: selectedDiff.length > 0 ? selectedDiff.map(t => `<@&${t.roleId}>`).join(' ') : '*None selected*',
+        inline: true,
+      },
+      {
+        name: genreLabel,
+        value: selectedGenre.length > 0 ? selectedGenre.map(t => `<@&${t.roleId}>`).join(' ') : '*None selected*',
+        inline: true,
+      },
+    );
 
-  return { embeds: [embed], components: tagRows };
+  return { embeds: [embed], components: rows };
+}
+
+async function initPending(interaction: ButtonInteraction, allTags: GameRole[]): Promise<Set<string>> {
+  if (!pendingSelections.has(interaction.user.id)) {
+    const member = await interaction.guild!.members.fetch(interaction.user.id);
+    const tagRoleIds = new Set(allTags.map(t => t.roleId));
+    pendingSelections.set(
+      interaction.user.id,
+      new Set([...member.roles.cache.keys()].filter(id => tagRoleIds.has(id))),
+    );
+  }
+  return pendingSelections.get(interaction.user.id)!;
 }
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
-  const tags = getGameRoles(interaction.guildId!);
+  const allTags = getGameRoles(interaction.guildId!);
 
-  if (tags.length === 0) {
+  if (allTags.length === 0) {
     await interaction.reply({
       content: 'No game tags have been set up yet. Ask an admin to run `/gametags sync`.',
       ephemeral: true,
@@ -93,12 +176,52 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     return;
   }
 
+  const { difficultyTags } = splitTags(allTags);
   const member = await interaction.guild!.members.fetch(interaction.user.id);
-  const tagRoleIds = new Set(tags.map(t => t.roleId));
+  const tagRoleIds = new Set(allTags.map(t => t.roleId));
   const selected = new Set([...member.roles.cache.keys()].filter(id => tagRoleIds.has(id)));
   pendingSelections.set(interaction.user.id, selected);
 
-  await interaction.reply({ ...buildRolesPage(tags, selected, 0), ephemeral: true });
+  if (difficultyTags.length > 0) {
+    await interaction.reply({ ...buildDifficultyStep(difficultyTags, selected), ephemeral: true });
+  } else {
+    const { genreTags } = splitTags(allTags);
+    await interaction.reply({ ...buildGenreStep(genreTags, [], selected, 0), ephemeral: true });
+  }
+}
+
+export async function handleMyRolesDiff(
+  interaction: ButtonInteraction,
+  roleId: string,
+): Promise<void> {
+  await interaction.deferUpdate();
+  const allTags = getGameRoles(interaction.guildId!);
+  const { difficultyTags } = splitTags(allTags);
+  const selected = await initPending(interaction, allTags);
+
+  const wasSelected = selected.has(roleId);
+  for (const diff of difficultyTags) selected.delete(diff.roleId);
+  if (!wasSelected) selected.add(roleId);
+
+  await interaction.editReply(buildDifficultyStep(difficultyTags, selected));
+}
+
+export async function handleMyRolesNext(interaction: ButtonInteraction): Promise<void> {
+  await interaction.deferUpdate();
+  const allTags = getGameRoles(interaction.guildId!);
+  const { genreTags, difficultyTags } = splitTags(allTags);
+  const selected = await initPending(interaction, allTags);
+
+  await interaction.editReply(buildGenreStep(genreTags, difficultyTags, selected, 0));
+}
+
+export async function handleMyRolesBackDiff(interaction: ButtonInteraction): Promise<void> {
+  await interaction.deferUpdate();
+  const allTags = getGameRoles(interaction.guildId!);
+  const { difficultyTags } = splitTags(allTags);
+  const selected = await initPending(interaction, allTags);
+
+  await interaction.editReply(buildDifficultyStep(difficultyTags, selected));
 }
 
 export async function handleMyRolesTag(
@@ -107,23 +230,18 @@ export async function handleMyRolesTag(
   roleId: string,
 ): Promise<void> {
   await interaction.deferUpdate();
-  const tags = getGameRoles(interaction.guildId!);
+  const allTags = getGameRoles(interaction.guildId!);
+  const { genreTags, difficultyTags } = splitTags(allTags);
+  const selected = await initPending(interaction, allTags);
 
-  // Initialise pending state if bot restarted mid-session
-  if (!pendingSelections.has(interaction.user.id)) {
-    const member = await interaction.guild!.members.fetch(interaction.user.id);
-    const tagRoleIds = new Set(tags.map(t => t.roleId));
-    pendingSelections.set(
-      interaction.user.id,
-      new Set([...member.roles.cache.keys()].filter(id => tagRoleIds.has(id))),
-    );
+  if (selected.has(roleId)) {
+    selected.delete(roleId);
+  } else {
+    const currentGenreCount = genreTags.filter(t => selected.has(t.roleId)).length;
+    if (currentGenreCount < MAX_GENRE_TAGS) selected.add(roleId);
   }
 
-  const selected = pendingSelections.get(interaction.user.id)!;
-  if (selected.has(roleId)) selected.delete(roleId);
-  else selected.add(roleId);
-
-  await interaction.editReply(buildRolesPage(tags, selected, page));
+  await interaction.editReply(buildGenreStep(genreTags, difficultyTags, selected, page));
 }
 
 export async function handleMyRolesPage(
@@ -131,47 +249,50 @@ export async function handleMyRolesPage(
   page: number,
 ): Promise<void> {
   await interaction.deferUpdate();
-  const tags = getGameRoles(interaction.guildId!);
+  const allTags = getGameRoles(interaction.guildId!);
+  const { genreTags, difficultyTags } = splitTags(allTags);
+  const selected = await initPending(interaction, allTags);
 
-  if (!pendingSelections.has(interaction.user.id)) {
-    const member = await interaction.guild!.members.fetch(interaction.user.id);
-    const tagRoleIds = new Set(tags.map(t => t.roleId));
-    pendingSelections.set(
-      interaction.user.id,
-      new Set([...member.roles.cache.keys()].filter(id => tagRoleIds.has(id))),
-    );
-  }
-
-  const selected = pendingSelections.get(interaction.user.id)!;
-  await interaction.editReply(buildRolesPage(tags, selected, page));
+  await interaction.editReply(buildGenreStep(genreTags, difficultyTags, selected, page));
 }
 
 export async function handleMyRolesSubmit(interaction: ButtonInteraction): Promise<void> {
   await interaction.deferUpdate();
 
-  const tags = getGameRoles(interaction.guildId!);
+  const allTags = getGameRoles(interaction.guildId!);
+  const { genreTags, difficultyTags } = splitTags(allTags);
   const member = await interaction.guild!.members.fetch(interaction.user.id);
 
   const selected = pendingSelections.get(interaction.user.id)
-    ?? new Set([...member.roles.cache.keys()].filter(id => tags.some(t => t.roleId === id)));
+    ?? new Set([...member.roles.cache.keys()].filter(id => allTags.some(t => t.roleId === id)));
   pendingSelections.delete(interaction.user.id);
 
-  const toAdd = tags.filter(t => selected.has(t.roleId) && !member.roles.cache.has(t.roleId));
-  const toRemove = tags.filter(t => !selected.has(t.roleId) && member.roles.cache.has(t.roleId));
+  const toAdd = allTags.filter(t => selected.has(t.roleId) && !member.roles.cache.has(t.roleId));
+  const toRemove = allTags.filter(t => !selected.has(t.roleId) && member.roles.cache.has(t.roleId));
 
   await Promise.all([
     ...toAdd.map(t => member.roles.add(t.roleId)),
     ...toRemove.map(t => member.roles.remove(t.roleId)),
   ]);
 
-  const newTags = tags.filter(t => selected.has(t.roleId));
+  const selectedDiff = difficultyTags.filter(t => selected.has(t.roleId));
+  const selectedGenre = genreTags.filter(t => selected.has(t.roleId));
+
   const embed = new EmbedBuilder()
     .setColor(0x57f287)
     .setTitle('Game Preferences Saved!')
-    .addFields({
-      name: 'Your tags',
-      value: newTags.length > 0 ? newTags.map(t => `<@&${t.roleId}>`).join(' ') : '*None selected*',
-    });
+    .addFields(
+      {
+        name: 'Difficulty',
+        value: selectedDiff.length > 0 ? selectedDiff.map(t => `<@&${t.roleId}>`).join(' ') : '*None selected*',
+        inline: true,
+      },
+      {
+        name: 'Genres',
+        value: selectedGenre.length > 0 ? selectedGenre.map(t => `<@&${t.roleId}>`).join(' ') : '*None selected*',
+        inline: true,
+      },
+    );
 
   await interaction.editReply({ embeds: [embed], components: [] });
 }

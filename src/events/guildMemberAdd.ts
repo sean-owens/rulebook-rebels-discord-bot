@@ -25,7 +25,7 @@ export async function handleGuildMemberAdd(member: GuildMember): Promise<void> {
 
       fields.push({
         name: '🎭 Game Preferences',
-        value: `Use \`/myroles\` to tag yourself with the types of games you enjoy — like Strategy, Trick-Taking, Euro, and more!`,
+        value: `Use \`/myroles\` to set your preferred complexity level and tag the game genres you enjoy most!`,
       });
 
       if (config.facebookGroupUrl) {

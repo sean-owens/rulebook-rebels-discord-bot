@@ -34,6 +34,7 @@ import {
 } from '../utils/libraryStorage';
 import { loadGameNights } from '../utils/storage';
 import { updateRequestPin } from '../utils/requestPin';
+import { getBGGGame } from '../utils/bgg';
 
 const HEADER_PATTERNS = new Set(['game', 'name', 'game name', 'title', 'board game', 'boardgame']);
 
@@ -422,6 +423,25 @@ async function handleList(interaction: ChatInputCommandInteraction): Promise<voi
   await interaction.reply({ embeds, ephemeral: true });
 }
 
+async function enrichFromBGG(canonical: string): Promise<void> {
+  const info = getGameInfo(canonical);
+  if (!info?.objectid || (info.tags?.length && info.bggExpansions !== undefined)) return;
+  try {
+    const bggGame = await getBGGGame(info.objectid);
+    upsertGameInfo({
+      ...info,
+      minPlayers: info.minPlayers ?? bggGame.minPlayers,
+      maxPlayers: info.maxPlayers ?? bggGame.maxPlayers,
+      playTime: info.playTime ?? bggGame.maxPlaytime,
+      tags: bggGame.tags.length > 0 ? bggGame.tags : info.tags,
+      bggExpansions: bggGame.expansions.map(e => e.name),
+      updatedAt: new Date().toISOString(),
+    });
+  } catch {
+    // BGG unavailable — show game without enrichment
+  }
+}
+
 function buildGameViewEmbed(gameName: string, userId: string): EmbedBuilder | null {
   const matches = findGamesByName(gameName);
   if (matches.length === 0) return null;
@@ -455,7 +475,17 @@ function buildGameViewEmbed(gameName: string, userId: string): EmbedBuilder | nu
   if (info?.tags?.length) {
     embed.addFields({ name: 'Tags', value: info.tags.join(' • ') });
   }
-  if (info?.expansions?.length) {
+  if (info?.bggExpansions?.length) {
+    const ownedLower = new Set((info.expansions ?? []).map(e => e.toLowerCase()));
+    const lines = info.bggExpansions.map(name =>
+      ownedLower.has(name.toLowerCase()) ? `✅ ${name}` : name
+    );
+    const value = lines.join('\n');
+    embed.addFields({
+      name: 'Expansions',
+      value: value.length > 1024 ? value.slice(0, 1021) + '…' : value,
+    });
+  } else if (info?.expansions?.length) {
     embed.addFields({ name: 'Expansions', value: info.expansions.join('\n') });
   }
   if (objectid) {
@@ -498,27 +528,28 @@ function buildPartialMatchSelect(
 async function handleView(interaction: ChatInputCommandInteraction): Promise<void> {
   const gameName = interaction.options.getString('game', true).trim();
 
+  await interaction.deferReply({ ephemeral: true });
+  await enrichFromBGG(gameName);
+
   const embed = buildGameViewEmbed(gameName, interaction.user.id);
   if (embed) {
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await interaction.editReply({ embeds: [embed] });
     return;
   }
 
   const partials = findGameNamesByPartial(gameName);
   if (partials.length > 0 && partials.length <= 25) {
-    await interaction.reply({
+    await interaction.editReply({
       content: `**"${gameName}"** wasn't an exact match — did you mean one of these?`,
-      ephemeral: true,
       components: [buildPartialMatchSelect(partials, 'library_view_select', 'Pick a game to view...')],
     });
     return;
   }
 
-  await interaction.reply({
+  await interaction.editReply({
     content: partials.length > 25
       ? `Too many matches for **"${gameName}"** — try a more specific name.`
       : `**${gameName}** wasn't found in the library. Check the full list with \`/library list\`.`,
-    ephemeral: true,
   });
 }
 
@@ -530,12 +561,14 @@ export async function handleLibraryViewSelect(interaction: StringSelectMenuInter
     return;
   }
 
+  await interaction.deferUpdate();
+  await enrichFromBGG(gameName);
   const embed = buildGameViewEmbed(gameName, interaction.user.id);
   if (!embed) {
-    await interaction.update({ content: 'That game is no longer in the library.', components: [] });
+    await interaction.editReply({ content: 'That game is no longer in the library.', components: [] });
     return;
   }
-  await interaction.update({ content: '', embeds: [embed], components: [] });
+  await interaction.editReply({ content: '', embeds: [embed], components: [] });
 }
 
 async function handleMine(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -954,10 +987,15 @@ async function handleEdit(interaction: ChatInputCommandInteraction): Promise<voi
     new ActionRowBuilder<TextInputBuilder>().addComponents(
       new TextInputBuilder()
         .setCustomId('expansions')
-        .setLabel('Expansions (comma-separated)')
+        .setLabel('Expansions You Own (comma-separated)')
         .setStyle(TextInputStyle.Paragraph)
         .setRequired(false)
         .setValue(existing?.expansions?.join(', ') ?? '')
+        .setPlaceholder(
+          existing?.bggExpansions?.length
+            ? `BGG has: ${existing.bggExpansions.slice(0, 3).join(', ')}${existing.bggExpansions.length > 3 ? '…' : ''}`
+            : 'Seafarers, Cities & Knights…'
+        )
     ),
   );
 
