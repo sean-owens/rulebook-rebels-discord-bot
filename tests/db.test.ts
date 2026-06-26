@@ -3,6 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { readJson, writeJson } from '../src/utils/db';
+import { getGuildConfig, updateGuildConfig } from '../src/utils/config';
 
 describe('db', () => {
   let tmpDir: string;
@@ -67,5 +68,53 @@ describe('db', () => {
     writeJson('b.json', { label: 'B' });
     expect(readJson('a.json', null)).toEqual({ label: 'A' });
     expect(readJson('b.json', null)).toEqual({ label: 'B' });
+  });
+});
+
+// ── GuildConfig ──────────────────────────────────────────────────────────────
+
+describe('guildConfig', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('returns default config when guild has no saved config', () => {
+    const cfg = getGuildConfig('guild-1');
+    expect(cfg.defaultLocation).toBe('');
+    expect(cfg.openEventChannels).toBe(false);
+  });
+
+  it('saves and retrieves a config value for a guild', () => {
+    updateGuildConfig('guild-1', { defaultLocation: 'Library Room 1' });
+    expect(getGuildConfig('guild-1').defaultLocation).toBe('Library Room 1');
+  });
+
+  it('merges partial updates without overwriting unset fields', () => {
+    updateGuildConfig('guild-1', { defaultLocation: 'Library Room 1' });
+    updateGuildConfig('guild-1', { defaultTime: '7:00 PM' });
+    const cfg = getGuildConfig('guild-1');
+    expect(cfg.defaultLocation).toBe('Library Room 1');
+    expect(cfg.defaultTime).toBe('7:00 PM');
+  });
+
+  it('isolates config between different guilds', () => {
+    updateGuildConfig('guild-1', { defaultLocation: 'Venue A' });
+    updateGuildConfig('guild-2', { defaultLocation: 'Venue B' });
+    expect(getGuildConfig('guild-1').defaultLocation).toBe('Venue A');
+    expect(getGuildConfig('guild-2').defaultLocation).toBe('Venue B');
+  });
+
+  it('returns updated config from updateGuildConfig', () => {
+    const result = updateGuildConfig('guild-1', { openEventChannels: true });
+    expect(result.openEventChannels).toBe(true);
   });
 });

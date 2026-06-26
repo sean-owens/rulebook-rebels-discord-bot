@@ -12,6 +12,8 @@ export interface GuildConfig {
   rulesChannelId: string;
   facebookGroupUrl: string;
   openEventChannels: boolean;
+  eventCategoryName: string;
+  archiveCategoryName: string;
 }
 
 const DEFAULT_CONFIG: GuildConfig = {
@@ -24,6 +26,8 @@ const DEFAULT_CONFIG: GuildConfig = {
   rulesChannelId: '',
   facebookGroupUrl: '',
   openEventChannels: false,
+  eventCategoryName: 'Monthly Events',
+  archiveCategoryName: 'Archive',
 };
 
 type ConfigStore = Record<string, GuildConfig>;

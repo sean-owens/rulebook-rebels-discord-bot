@@ -1,10 +1,10 @@
 import { Client, EmbedBuilder, TextChannel } from 'discord.js';
-import { GameNight, loadGameNights, upsertGameNight } from './storage';
-import { getRequestsForEvent, loadLibrary, GameRequest } from './libraryStorage';
+import { loadGameNights, upsertGameNight } from './storage';
+import { getRequestsForEvent, loadLibraryForGuild, GameRequest } from './libraryStorage';
 import { findGamesByChannel, GameSuggestion } from './gameStorage';
 
-export function buildRequestEmbed(requests: GameRequest[], nameMap: Record<string, string> = {}): EmbedBuilder {
-  const library = loadLibrary();
+export function buildRequestEmbed(guildId: string, requests: GameRequest[], nameMap: Record<string, string> = {}): EmbedBuilder {
+  const library = loadLibraryForGuild(guildId);
 
   // Group by owner — a game with multiple owners appears under each
   const ownerMap = new Map<string, string[]>();
@@ -12,7 +12,10 @@ export function buildRequestEmbed(requests: GameRequest[], nameMap: Record<strin
 
   for (const req of requests) {
     const copies = req.copiesNeeded ?? 1;
-    const label = copies > 1 ? `${req.gameName} *(${copies} copies needed)*` : req.gameName;
+    const confirmed = req.confirmedBy ? ' ✅' : '';
+    const label = copies > 1
+      ? `${req.gameName} *(${copies} copies needed)*${confirmed}`
+      : `${req.gameName}${confirmed}`;
     const owners = [...new Set(
       library
         .filter(e => e.gameName.toLowerCase() === req.gameName.toLowerCase())
@@ -34,7 +37,7 @@ export function buildRequestEmbed(requests: GameRequest[], nameMap: Record<strin
   const embed = new EmbedBuilder()
     .setTitle('Games to Bring')
     .setColor(0x5865f2)
-    .setFooter({ text: 'Request games with /library request <game>' });
+    .setFooter({ text: 'Request games with /library request <game> • Confirm with /library bring game:<name>' });
 
   for (const [userId, games] of ownerMap) {
     const displayName = nameMap[userId] ?? `User ${userId.slice(0, 6)}…`;
@@ -106,7 +109,7 @@ export async function updateRequestPin(client: Client, eventId: string): Promise
   if (requests.length === 0 && !gameNight.requestPinMessageId) return;
 
   // Resolve display names for all library owners of the requested games
-  const library = loadLibrary();
+  const library = loadLibraryForGuild(gameNight.guildId);
   const ownerIds = [...new Set(requests.flatMap(r =>
     library.filter(e => e.gameName.toLowerCase() === r.gameName.toLowerCase()).map(e => e.userId)
   ))];
@@ -122,7 +125,7 @@ export async function updateRequestPin(client: Client, eventId: string): Promise
     }));
   } catch { /* guild unavailable — names fall back inside buildRequestEmbed */ }
 
-  const embed = buildRequestEmbed(requests, nameMap);
+  const embed = buildRequestEmbed(gameNight.guildId, requests, nameMap);
 
   let channel: TextChannel;
   try {

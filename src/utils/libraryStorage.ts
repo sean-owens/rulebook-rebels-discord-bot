@@ -6,6 +6,7 @@ const REQUESTS_FILE = 'library_requests.json';
 const GAME_INFO_FILE = 'game_info.json';
 
 export interface LibraryEntry {
+  guildId: string;
   userId: string;
   gameName: string;
   objectid?: string;
@@ -19,6 +20,7 @@ export interface GameRequest {
   requestedBy: string;
   createdAt: string;
   copiesNeeded?: number;
+  confirmedBy?: string;
 }
 
 export function loadLibrary(): LibraryEntry[] {
@@ -29,32 +31,41 @@ function saveLibrary(entries: LibraryEntry[]): void {
   writeJson(LIBRARY_FILE, entries);
 }
 
-export function addGame(userId: string, gameName: string, objectid?: string): 'added' | 'duplicate' {
+export function loadLibraryForGuild(guildId: string): LibraryEntry[] {
+  return loadLibrary().filter(e => e.guildId === guildId);
+}
+
+export function addGame(guildId: string, userId: string, gameName: string, objectid?: string): 'added' | 'duplicate' {
   const entries = loadLibrary();
   const exists = entries.some(e => {
-    if (e.userId !== userId) return false;
+    if (e.guildId !== guildId || e.userId !== userId) return false;
     if (objectid && e.objectid === objectid) return true;
     return e.gameName.toLowerCase() === gameName.toLowerCase();
   });
   if (exists) return 'duplicate';
-  const entry: LibraryEntry = { userId, gameName, addedAt: new Date().toISOString() };
+  const entry: LibraryEntry = { guildId, userId, gameName, addedAt: new Date().toISOString() };
   if (objectid) entry.objectid = objectid;
   entries.push(entry);
   saveLibrary(entries);
   return 'added';
 }
 
-export function findGamesByName(gameName: string): LibraryEntry[] {
-  return loadLibrary().filter(e => e.gameName.toLowerCase() === gameName.toLowerCase());
+export function findGamesByName(guildId: string, gameName: string): LibraryEntry[] {
+  return loadLibrary().filter(e => e.guildId === guildId && e.gameName.toLowerCase() === gameName.toLowerCase());
 }
 
-export function findGameNamesByPartial(term: string): string[] {
-  const lower = term.toLowerCase();
+function normalizeName(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+export function findGameNamesByPartial(guildId: string, term: string): string[] {
+  const normalizedTerm = normalizeName(term);
   const seen = new Set<string>();
   const names: string[] = [];
-  for (const e of loadLibrary()) {
+  for (const e of loadLibrary().filter(e => e.guildId === guildId)) {
     const key = e.gameName.toLowerCase();
-    if (key.includes(lower) && !seen.has(key)) {
+    const normalizedKey = normalizeName(e.gameName);
+    if ((key.includes(term.toLowerCase()) || normalizedKey.includes(normalizedTerm)) && !seen.has(key)) {
       seen.add(key);
       names.push(e.gameName);
     }
@@ -62,17 +73,17 @@ export function findGameNamesByPartial(term: string): string[] {
   return names.sort((a, b) => a.localeCompare(b));
 }
 
-export function clearUserLibrary(userId: string): number {
+export function clearUserLibrary(guildId: string, userId: string): number {
   const entries = loadLibrary();
-  const remaining = entries.filter(e => e.userId !== userId);
+  const remaining = entries.filter(e => !(e.guildId === guildId && e.userId === userId));
   saveLibrary(remaining);
   return entries.length - remaining.length;
 }
 
-export function removeGame(userId: string, gameName: string): 'removed' | 'not_found' {
+export function removeGame(guildId: string, userId: string, gameName: string): 'removed' | 'not_found' {
   const entries = loadLibrary();
   const idx = entries.findIndex(
-    e => e.userId === userId && e.gameName.toLowerCase() === gameName.toLowerCase()
+    e => e.guildId === guildId && e.userId === userId && e.gameName.toLowerCase() === gameName.toLowerCase()
   );
   if (idx === -1) return 'not_found';
   entries.splice(idx, 1);
@@ -80,8 +91,8 @@ export function removeGame(userId: string, gameName: string): 'removed' | 'not_f
   return 'removed';
 }
 
-export function getGamesByUser(userId: string): LibraryEntry[] {
-  return loadLibrary().filter(e => e.userId === userId);
+export function getGamesByUser(guildId: string, userId: string): LibraryEntry[] {
+  return loadLibrary().filter(e => e.guildId === guildId && e.userId === userId);
 }
 
 export function loadRequests(): GameRequest[] {
@@ -136,6 +147,28 @@ export function updateRequestCopies(eventId: string, gameName: string, copies: n
   }
 }
 
+export function confirmBring(
+  guildId: string,
+  eventId: string,
+  gameName: string,
+  userId: string,
+): 'confirmed' | 'not_requested' | 'not_owner' {
+  const requests = loadRequests();
+  const idx = requests.findIndex(
+    r => r.eventId === eventId && r.gameName.toLowerCase() === gameName.toLowerCase()
+  );
+  if (idx === -1) return 'not_requested';
+
+  const owns = loadLibrary().some(
+    e => e.guildId === guildId && e.userId === userId && e.gameName.toLowerCase() === gameName.toLowerCase()
+  );
+  if (!owns) return 'not_owner';
+
+  requests[idx].confirmedBy = userId;
+  saveRequests(requests);
+  return 'confirmed';
+}
+
 export const GAME_TAGS = [
   'Co-op',
   'Competitive',
@@ -166,12 +199,17 @@ export const GAME_TAGS = [
 
 export type GameTag = typeof GAME_TAGS[number];
 
+export type Complexity = 'Light' | 'Medium' | 'Heavy';
+
 export interface GameInfo {
   gameName: string;
   objectid?: string;
   minPlayers?: number;
   maxPlayers?: number;
+  bestPlayers?: number;       // BGG community "best at" player count
   playTime?: number;
+  weight?: number;            // BGG average weight (1–5 complexity scale)
+  complexity?: Complexity;    // derived from weight: Light ≤2.0, Medium ≤3.5, Heavy >3.5
   tags?: string[];
   expansions?: string[];      // owner-noted expansions they personally own
   bggExpansions?: string[];   // full expansion list from BGG

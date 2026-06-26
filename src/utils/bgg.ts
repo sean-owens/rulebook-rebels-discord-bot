@@ -20,15 +20,22 @@ export interface BGGGame {
   suggestedPlayers: number;
   minPlaytime: number;
   maxPlaytime: number;
+  weight: number | null;
   thumbnail: string | null;
   expansions: BGGExpansion[];
   tags: string[];
 }
 
+export function weightTag(weight: number): 'Light' | 'Medium' | 'Heavy' {
+  if (weight <= 2.0) return 'Light';
+  if (weight <= 3.5) return 'Medium';
+  return 'Heavy';
+}
+
 // Maps lowercase BGG mechanic/category names to our curated tag vocabulary
 export const BGG_TO_TAG: Record<string, string> = {
-  'cooperative game': 'Cooperative',
-  'semi-cooperative game': 'Semi-Cooperative',
+  'cooperative game': 'Co-op',
+  'semi-cooperative game': 'Semi-Co-op',
   'team-based game': 'Team vs Team',
   'solo / solitaire game': 'Solo Friendly',
   'deck, bag, and pool building': 'Deck Building',
@@ -146,6 +153,9 @@ export async function getBGGGame(id: string): Promise<BGGGame> {
     if (tags.length >= 5) break;
   }
 
+  const rawWeight = item.statistics?.ratings?.averageweight?.['@_value'];
+  const weight = rawWeight != null && Number(rawWeight) > 0 ? Number(rawWeight) : null;
+
   return {
     id,
     name: primaryName,
@@ -155,6 +165,7 @@ export async function getBGGGame(id: string): Promise<BGGGame> {
     suggestedPlayers,
     minPlaytime: Number(item.minplaytime?.['@_value'] ?? 30),
     maxPlaytime: Number(item.maxplaytime?.['@_value'] ?? 60),
+    weight,
     thumbnail: item.thumbnail ?? null,
     expansions,
     tags,

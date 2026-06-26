@@ -4,7 +4,7 @@ import { execute as executeGameNight } from '../commands/gamenight';
 import { execute as executeWelcome } from '../commands/welcome';
 import { execute as executeGameTags, handleAutocomplete as handleGameTagsAutocomplete } from '../commands/gametags';
 import { execute as executeMyRoles, handleMyRolesTag, handleMyRolesDiff, handleMyRolesNext, handleMyRolesBackDiff, handleMyRolesPage, handleMyRolesSubmit } from '../commands/myroles';
-import { execute as executeLibrary, handleAddConfirm, handleAddCancel, handleEditModal, handleLibraryViewSelect, handleLibraryRequestSelect, handleUnrequestEventSelect, handleUnrequestSelect, handleUnrequestAll } from '../commands/library';
+import { execute as executeLibrary, handleAddConfirm, handleAddCancel, handleEditModal, handleLibraryViewSelect, handleLibraryRequestSelect, handleUnrequestEventSelect, handleUnrequestSelect, handleUnrequestAll, handleLibraryListNav } from '../commands/library';
 import {
   execute as executeGame,
   handleGameSelect,
@@ -75,6 +75,10 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handleMyRolesBackDiff(interaction);
       } else if (id.startsWith('myroles_page_')) {
         await handleMyRolesPage(interaction, parseInt(id.slice('myroles_page_'.length), 10) || 0);
+      } else if (id === 'library_list_prev') {
+        await handleLibraryListNav(interaction, 'prev');
+      } else if (id === 'library_list_next') {
+        await handleLibraryListNav(interaction, 'next');
       } else if (id === 'library_add_confirm') {
         await handleAddConfirm(interaction);
       } else if (id === 'library_add_cancel') {

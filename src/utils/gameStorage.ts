@@ -46,6 +46,14 @@ export function findGamesByChannel(channelId: string): GameSuggestion[] {
   return loadGames().filter(g => g.channelId === channelId);
 }
 
+export function findGamesByEvent(eventId: string): GameSuggestion[] {
+  return loadGames().filter(g => g.eventId === eventId);
+}
+
+export function removeGamesByEvent(eventId: string): void {
+  saveGames(loadGames().filter(g => g.eventId !== eventId));
+}
+
 export function upsertGame(game: GameSuggestion): void {
   const all = loadGames();
   const idx = all.findIndex(g => g.id === game.id);

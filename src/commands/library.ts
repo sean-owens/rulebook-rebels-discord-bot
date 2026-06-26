@@ -16,7 +16,7 @@ import {
   TextInputStyle,
 } from 'discord.js';
 import {
-  loadLibrary,
+  loadLibraryForGuild,
   addGame,
   removeGame,
   clearUserLibrary,
@@ -24,17 +24,22 @@ import {
   findGamesByName,
   findGameNamesByPartial,
   getGameInfo,
+  loadGameInfos,
   upsertGameInfo,
   GameInfo,
+  GAME_TAGS,
+  Complexity,
   addRequest,
   getRequestsForEvent,
   removeRequests,
   removeAllRequestsForEvent,
+  confirmBring,
   GameRequest,
 } from '../utils/libraryStorage';
 import { loadGameNights } from '../utils/storage';
+import { getGameRoles } from '../utils/gameRoles';
 import { updateRequestPin } from '../utils/requestPin';
-import { getBGGGame } from '../utils/bgg';
+import { getBGGGame, weightTag } from '../utils/bgg';
 
 const HEADER_PATTERNS = new Set(['game', 'name', 'game name', 'title', 'board game', 'boardgame']);
 
@@ -111,31 +116,147 @@ export const data = new SlashCommandBuilder()
       )
   )
   .addSubcommand(sub =>
-    sub.setName('bring').setDescription('See which of your games have been requested for the next event')
+    sub
+      .setName('bring')
+      .setDescription('See which of your games are requested — or confirm you\'re bringing one')
+      .addStringOption(opt =>
+        opt.setName('game').setDescription('Confirm you will bring this game to the event').setRequired(false)
+      )
   )
   .addSubcommand(sub =>
     sub.setName('unrequest').setDescription('Remove games from the request list for an event')
+  )
+  .addSubcommand(sub =>
+    sub
+      .setName('random')
+      .setDescription('Pick 3 random games from the library, optionally filtered by tag')
+      .addStringOption(opt =>
+        opt.setName('tag').setDescription('Game type or mechanic').setRequired(false)
+          .addChoices(...GAME_TAGS.map(t => ({ name: t, value: t })))
+      )
+      .addStringOption(opt =>
+        opt.setName('tag2').setDescription('Additional tag (OR logic)').setRequired(false)
+          .addChoices(...GAME_TAGS.map(t => ({ name: t, value: t })))
+      )
+      .addStringOption(opt =>
+        opt.setName('tag3').setDescription('Additional tag (OR logic)').setRequired(false)
+          .addChoices(...GAME_TAGS.map(t => ({ name: t, value: t })))
+      )
+      .addStringOption(opt =>
+        opt.setName('complexity').setDescription('Game complexity (from BGG weight)').setRequired(false)
+          .addChoices(
+            { name: 'Light', value: 'Light' },
+            { name: 'Medium', value: 'Medium' },
+            { name: 'Heavy', value: 'Heavy' },
+          )
+      )
+  )
+  .addSubcommand(sub =>
+    sub
+      .setName('search')
+      .setDescription('Find games by player count, tag, or play time (all filters optional but at least one required)')
+      .addStringOption(opt =>
+        opt.setName('players').setDescription('Number of players — separate multiple with , or / (e.g. 2,4)').setRequired(false)
+      )
+      .addStringOption(opt =>
+        opt.setName('tag').setDescription('Game type or mechanic').setRequired(false)
+          .addChoices(...GAME_TAGS.map(t => ({ name: t, value: t })))
+      )
+      .addStringOption(opt =>
+        opt.setName('tag2').setDescription('Additional tag (OR logic — game needs any one of the tags)').setRequired(false)
+          .addChoices(...GAME_TAGS.map(t => ({ name: t, value: t })))
+      )
+      .addStringOption(opt =>
+        opt.setName('tag3').setDescription('Additional tag (OR logic — game needs any one of the tags)').setRequired(false)
+          .addChoices(...GAME_TAGS.map(t => ({ name: t, value: t })))
+      )
+      .addStringOption(opt =>
+        opt.setName('duration').setDescription('Target play time in minutes (±15 min) — separate multiple with , or / (e.g. 60,90)').setRequired(false)
+      )
+      .addIntegerOption(opt =>
+        opt.setName('min_duration').setDescription('Minimum play time in minutes').setRequired(false).setMinValue(1)
+      )
+      .addIntegerOption(opt =>
+        opt.setName('max_duration').setDescription('Maximum play time in minutes').setRequired(false).setMinValue(1)
+      )
+      .addStringOption(opt =>
+        opt.setName('complexity').setDescription('Game complexity (from BGG weight)').setRequired(false)
+          .addChoices(
+            { name: 'Light', value: 'Light' },
+            { name: 'Medium', value: 'Medium' },
+            { name: 'Heavy', value: 'Heavy' },
+          )
+      )
   );
 
-function buildBringLines(requests: ReturnType<typeof getRequestsForEvent>, userId: string): string[] {
+function buildBringLines(guildId: string, requests: ReturnType<typeof getRequestsForEvent>, userId: string): string[] {
   return requests
-    .filter(req => findGamesByName(req.gameName).some(e => e.userId === userId))
+    .filter(req => findGamesByName(guildId, req.gameName).some(e => e.userId === userId))
     .map(req => {
       const copies = req.copiesNeeded ?? 1;
-      return copies > 1 ? `• **${req.gameName}** *(${copies} copies needed)*` : `• **${req.gameName}**`;
+      const confirmed = req.confirmedBy === userId ? ' ✅ confirmed' : '';
+      const copiesNote = copies > 1 ? ` *(${copies} copies needed)*` : '';
+      return `• **${req.gameName}**${copiesNote}${confirmed}`;
     });
 }
 
 async function handleBring(interaction: ChatInputCommandInteraction): Promise<void> {
+  const gameName = interaction.options.getString('game')?.trim();
   const now = new Date();
   const upcoming = loadGameNights()
     .filter(gn => !gn.cancelled && !gn.archived && new Date(gn.startTimeISO) > now)
     .sort((a, b) => new Date(a.startTimeISO).getTime() - new Date(b.startTimeISO).getTime());
 
-  // In an event channel — scope to that event only
   const channelEvent = upcoming.find(gn => gn.eventChannelId === interaction.channelId);
+
+  // ── Confirm mode: /library bring game:<name> ─────────────────────────────
+  if (gameName) {
+    if (upcoming.length === 0) {
+      await interaction.reply({ content: "There are no upcoming events.", ephemeral: true });
+      return;
+    }
+
+    const event = channelEvent ?? upcoming[0];
+
+    // Support partial/punctuation-tolerant lookup
+    const requests = getRequestsForEvent(event.id);
+    const match = requests.find(r => r.gameName.toLowerCase() === gameName.toLowerCase())
+      ?? requests.find(r => {
+        const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+        return normalize(r.gameName).includes(normalize(gameName));
+      });
+
+    if (!match) {
+      await interaction.reply({
+        content: `**${gameName}** hasn't been requested for the event on ${event.date}. Check the request pin or use \`/library request\` first.`,
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const result = confirmBring(interaction.guildId!, event.id, match.gameName, interaction.user.id);
+
+    if (result === 'not_owner') {
+      await interaction.reply({
+        content: `You can only confirm bring for games you own. **${match.gameName}** isn't in your library.`,
+        ephemeral: true,
+      });
+      return;
+    }
+
+    // result === 'confirmed'
+    await interaction.reply({
+      content: `✅ Got it — you're confirmed to bring **${match.gameName}** to the event on ${event.date}!`,
+      ephemeral: true,
+    });
+
+    try { await updateRequestPin(interaction.client, event.id); } catch { /* channel may not be accessible */ }
+    return;
+  }
+
+  // ── View mode: /library bring (no game param) ────────────────────────────
   if (channelEvent) {
-    const lines = buildBringLines(getRequestsForEvent(channelEvent.id), interaction.user.id);
+    const lines = buildBringLines(interaction.guildId!, getRequestsForEvent(channelEvent.id), interaction.user.id);
     if (lines.length === 0) {
       await interaction.reply({
         content: `None of your games have been requested for this event (${channelEvent.date}).`,
@@ -147,12 +268,11 @@ async function handleBring(interaction: ChatInputCommandInteraction): Promise<vo
       .setTitle(`Your Games to Bring — ${channelEvent.date}`)
       .setColor(0x5865f2)
       .setDescription(lines.join('\n'))
-      .setFooter({ text: `${lines.length} game${lines.length !== 1 ? 's' : ''} requested` });
+      .setFooter({ text: 'Confirm with /library bring game:<name>' });
     await interaction.reply({ embeds: [embed], ephemeral: true });
     return;
   }
 
-  // Outside an event channel — show all upcoming events grouped by date
   if (upcoming.length === 0) {
     await interaction.reply({ content: "There are no upcoming events.", ephemeral: true });
     return;
@@ -162,7 +282,7 @@ async function handleBring(interaction: ChatInputCommandInteraction): Promise<vo
   let hasAny = false;
 
   for (const gn of upcoming) {
-    const lines = buildBringLines(getRequestsForEvent(gn.id), interaction.user.id);
+    const lines = buildBringLines(interaction.guildId!, getRequestsForEvent(gn.id), interaction.user.id);
     if (lines.length === 0) continue;
     embed.addFields({ name: gn.date, value: lines.join('\n') });
     hasAny = true;
@@ -176,6 +296,7 @@ async function handleBring(interaction: ChatInputCommandInteraction): Promise<vo
     return;
   }
 
+  embed.setFooter({ text: 'Confirm with /library bring game:<name>' });
   await interaction.reply({ embeds: [embed], ephemeral: true });
 }
 
@@ -328,7 +449,7 @@ async function handleClear(interaction: ChatInputCommandInteraction): Promise<vo
 
   const userId = targetUser?.id ?? interaction.user.id;
   const displayName = targetUser ? `<@${userId}>` : 'your';
-  const count = clearUserLibrary(userId);
+  const count = clearUserLibrary(interaction.guildId!, userId);
 
   await interaction.reply({
     content: count > 0
@@ -352,10 +473,63 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   else if (sub === 'clear') await handleClear(interaction);
   else if (sub === 'bring') await handleBring(interaction);
   else if (sub === 'unrequest') await handleUnrequest(interaction);
+  else if (sub === 'search') await handleSearch(interaction);
+  else if (sub === 'random') await handleRandom(interaction);
 }
 
+interface ListSession {
+  pages: string[];
+  totalGames: number;
+  ownerCount: number;
+  pageIndex: number;
+}
+const listSessions = new Map<string, ListSession>();
+
+const COMPLEXITY_ICON: Record<string, string> = { Light: '🟢', Medium: '🟡', Heavy: '🔴' };
+
+function buildListEmbed(pages: string[], pageIdx: number, totalGames: number, ownerCount: number): EmbedBuilder {
+  return new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle('Group Game Library')
+    .setDescription(
+      `${totalGames} game${totalGames !== 1 ? 's' : ''} across ${ownerCount} member${ownerCount !== 1 ? 's' : ''}\n🟢 Light  🟡 Medium  🔴 Heavy`
+    )
+    .addFields({ name: '​', value: pages[pageIdx] })
+    .setFooter({
+      text: pages.length > 1
+        ? `Page ${pageIdx + 1} of ${pages.length} • /library request <game> to request a game`
+        : '/library request <game> to request a game',
+    });
+}
+
+function buildListButtons(pageIdx: number, totalPages: number): ActionRowBuilder<ButtonBuilder>[] {
+  if (totalPages <= 1) return [];
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId('library_list_prev')
+        .setLabel('← Previous')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(pageIdx === 0),
+      new ButtonBuilder()
+        .setCustomId('library_list_page')
+        .setLabel(`Page ${pageIdx + 1} of ${totalPages}`)
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true),
+      new ButtonBuilder()
+        .setCustomId('library_list_next')
+        .setLabel('Next →')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(pageIdx === totalPages - 1),
+    ),
+  ];
+}
+
+// Each page holds up to this many characters — safely under Discord's 1024-char field limit.
+const LIST_PAGE_CHARS = 1000;
+
 async function handleList(interaction: ChatInputCommandInteraction): Promise<void> {
-  const entries = loadLibrary();
+  const entries = loadLibraryForGuild(interaction.guildId!);
 
   if (entries.length === 0) {
     await interaction.reply({
@@ -365,74 +539,76 @@ async function handleList(interaction: ChatInputCommandInteraction): Promise<voi
     return;
   }
 
+  const infos = loadGameInfos();
+
   // Group entries by normalized game name, preserving original casing from first entry
   const gameMap = new Map<string, { displayName: string; owners: string[] }>();
   for (const entry of entries) {
     const key = entry.gameName.toLowerCase();
-    if (!gameMap.has(key)) {
-      gameMap.set(key, { displayName: entry.gameName, owners: [] });
-    }
+    if (!gameMap.has(key)) gameMap.set(key, { displayName: entry.gameName, owners: [] });
     gameMap.get(key)!.owners.push(`<@${entry.userId}>`);
   }
 
-  const sorted = [...gameMap.values()].sort((a, b) =>
-    a.displayName.localeCompare(b.displayName)
-  );
-
+  const sorted = [...gameMap.values()].sort((a, b) => a.displayName.localeCompare(b.displayName));
   const ownerCount = new Set(entries.map(e => e.userId)).size;
-  const lines = sorted.map(g => `**${g.displayName}** — ${g.owners.join(', ')}`);
 
-  // Chunk lines into groups that fit within a single embed's field limit (~900 chars each)
-  const chunks: string[] = [];
+  // Build pages by character budget so each page is always a single embed field.
+  const pages: string[] = [];
   let current = '';
-  for (const line of lines) {
-    if (current && current.length + line.length + 1 > 900) {
-      chunks.push(current);
+  for (const g of sorted) {
+    const info = infos.find(inf => inf.gameName.toLowerCase() === g.displayName.toLowerCase());
+    const icon = info?.complexity ? `${COMPLEXITY_ICON[info.complexity]} ` : '';
+    const line = `${icon}**${g.displayName}** — ${g.owners.join(', ')}`;
+    if (current && current.length + line.length + 1 > LIST_PAGE_CHARS) {
+      pages.push(current);
       current = '';
     }
     current += (current ? '\n' : '') + line;
   }
-  if (current) chunks.push(current);
+  if (current) pages.push(current);
 
-  // Discord caps total embed chars per message at 6000; budget ~5500 leaving room for metadata
-  const CHAR_BUDGET = 5500;
-  const embeds: EmbedBuilder[] = [];
-  let totalChars = 'Group Game Library'.length + `${sorted.length} games across ${ownerCount} members`.length;
-  let truncated = false;
+  listSessions.set(interaction.user.id, { pages, totalGames: sorted.length, ownerCount, pageIndex: 0 });
 
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i];
-    if (totalChars + chunk.length + 1 > CHAR_BUDGET) { truncated = true; break; }
-    totalChars += chunk.length + 1;
-    const e = new EmbedBuilder().setColor(0x5865f2).addFields({ name: '​', value: chunk });
-    if (i === 0) {
-      e.setTitle('Group Game Library')
-       .setDescription(`${sorted.length} game${sorted.length !== 1 ? 's' : ''} across ${ownerCount} member${ownerCount !== 1 ? 's' : ''}`);
-    }
-    embeds.push(e);
+  await interaction.reply({
+    embeds: [buildListEmbed(pages, 0, sorted.length, ownerCount)],
+    components: buildListButtons(0, pages.length),
+    ephemeral: true,
+  });
+}
+
+export async function handleLibraryListNav(interaction: ButtonInteraction, direction: 'prev' | 'next'): Promise<void> {
+  const session = listSessions.get(interaction.user.id);
+  if (!session) {
+    await interaction.update({ content: 'This list has expired — run `/library list` again.', embeds: [], components: [] });
+    return;
   }
 
-  if (embeds.length > 0) {
-    embeds[embeds.length - 1].setFooter({
-      text: truncated
-        ? `Showing partial results — use /library mine to see your games`
-        : 'Request a game for the next event with /library request <game>',
-    });
+  const newPage = direction === 'next' ? session.pageIndex + 1 : session.pageIndex - 1;
+  if (newPage < 0 || newPage >= session.pages.length) {
+    await interaction.deferUpdate();
+    return;
   }
 
-  await interaction.reply({ embeds, ephemeral: true });
+  session.pageIndex = newPage;
+  await interaction.update({
+    embeds: [buildListEmbed(session.pages, newPage, session.totalGames, session.ownerCount)],
+    components: buildListButtons(newPage, session.pages.length),
+  });
 }
 
 async function enrichFromBGG(canonical: string): Promise<void> {
   const info = getGameInfo(canonical);
-  if (!info?.objectid || (info.tags?.length && info.bggExpansions !== undefined)) return;
+  if (!info?.objectid || (info.tags?.length && info.bggExpansions !== undefined && info.bestPlayers !== undefined && info.complexity !== undefined)) return;
   try {
     const bggGame = await getBGGGame(info.objectid);
     upsertGameInfo({
       ...info,
       minPlayers: info.minPlayers ?? bggGame.minPlayers,
       maxPlayers: info.maxPlayers ?? bggGame.maxPlayers,
+      bestPlayers: info.bestPlayers ?? (bggGame.suggestedPlayers || undefined),
       playTime: info.playTime ?? bggGame.maxPlaytime,
+      weight: info.weight ?? (bggGame.weight ?? undefined),
+      complexity: info.complexity ?? (bggGame.weight ? weightTag(bggGame.weight) : undefined),
       tags: bggGame.tags.length > 0 ? bggGame.tags : info.tags,
       bggExpansions: bggGame.expansions.map(e => e.name),
       updatedAt: new Date().toISOString(),
@@ -442,8 +618,16 @@ async function enrichFromBGG(canonical: string): Promise<void> {
   }
 }
 
-function buildGameViewEmbed(gameName: string, userId: string): EmbedBuilder | null {
-  const matches = findGamesByName(gameName);
+function resolveComplexityMention(gameName: string, guildId: string | null): string | undefined {
+  if (!guildId) return undefined;
+  const info = getGameInfo(gameName);
+  if (!info?.complexity) return undefined;
+  const role = getGameRoles(guildId).find(r => r.type === 'difficulty' && r.name.toLowerCase() === info.complexity!.toLowerCase());
+  return role ? `<@&${role.roleId}>` : info.complexity;
+}
+
+function buildGameViewEmbed(guildId: string, gameName: string, userId: string, complexityMention?: string): EmbedBuilder | null {
+  const matches = findGamesByName(guildId, gameName);
   if (matches.length === 0) return null;
 
   const canonical = matches[0].gameName;
@@ -469,8 +653,14 @@ function buildGameViewEmbed(gameName: string, userId: string): EmbedBuilder | nu
   if (info?.minPlayers != null && info?.maxPlayers != null) {
     embed.addFields({ name: 'Players', value: `${info.minPlayers}–${info.maxPlayers}`, inline: true });
   }
+  if (info?.bestPlayers != null) {
+    embed.addFields({ name: 'Best With', value: `${info.bestPlayers}`, inline: true });
+  }
   if (info?.playTime != null) {
     embed.addFields({ name: 'Play Time', value: `${info.playTime} min`, inline: true });
+  }
+  if (info?.complexity) {
+    embed.addFields({ name: 'Complexity', value: complexityMention ?? info.complexity, inline: true });
   }
   if (info?.tags?.length) {
     embed.addFields({ name: 'Tags', value: info.tags.join(' • ') });
@@ -531,13 +721,13 @@ async function handleView(interaction: ChatInputCommandInteraction): Promise<voi
   await interaction.deferReply({ ephemeral: true });
   await enrichFromBGG(gameName);
 
-  const embed = buildGameViewEmbed(gameName, interaction.user.id);
+  const embed = buildGameViewEmbed(interaction.guildId!, gameName, interaction.user.id, resolveComplexityMention(gameName, interaction.guildId));
   if (embed) {
     await interaction.editReply({ embeds: [embed] });
     return;
   }
 
-  const partials = findGameNamesByPartial(gameName);
+  const partials = findGameNamesByPartial(interaction.guildId!, gameName);
   if (partials.length > 0 && partials.length <= 25) {
     await interaction.editReply({
       content: `**"${gameName}"** wasn't an exact match — did you mean one of these?`,
@@ -563,7 +753,7 @@ export async function handleLibraryViewSelect(interaction: StringSelectMenuInter
 
   await interaction.deferUpdate();
   await enrichFromBGG(gameName);
-  const embed = buildGameViewEmbed(gameName, interaction.user.id);
+  const embed = buildGameViewEmbed(interaction.guildId!, gameName, interaction.user.id, resolveComplexityMention(gameName, interaction.guildId));
   if (!embed) {
     await interaction.editReply({ content: 'That game is no longer in the library.', components: [] });
     return;
@@ -572,7 +762,7 @@ export async function handleLibraryViewSelect(interaction: StringSelectMenuInter
 }
 
 async function handleMine(interaction: ChatInputCommandInteraction): Promise<void> {
-  const entries = getGamesByUser(interaction.user.id);
+  const entries = getGamesByUser(interaction.guildId!, interaction.user.id);
 
   if (entries.length === 0) {
     await interaction.reply({
@@ -602,7 +792,7 @@ async function handleAdd(interaction: ChatInputCommandInteraction): Promise<void
   }
 
   // Check if user already owns this game before touching storage
-  const userGames = getGamesByUser(interaction.user.id);
+  const userGames = getGamesByUser(interaction.guildId!, interaction.user.id);
   const alreadyOwns = userGames.some(e => e.gameName.toLowerCase() === gameName.toLowerCase());
   if (alreadyOwns) {
     await interaction.reply({ content: `**${gameName}** is already in your library.`, ephemeral: true });
@@ -610,7 +800,7 @@ async function handleAdd(interaction: ChatInputCommandInteraction): Promise<void
   }
 
   // Check if anyone else in the group owns a game by this name
-  const existing = findGamesByName(gameName).filter(e => e.userId !== interaction.user.id);
+  const existing = findGamesByName(interaction.guildId!, gameName).filter(e => e.userId !== interaction.user.id);
   if (existing.length > 0) {
     const canonical = existing[0].gameName;
     const objectid = existing[0].objectid;
@@ -637,7 +827,7 @@ async function handleAdd(interaction: ChatInputCommandInteraction): Promise<void
     return;
   }
 
-  addGame(interaction.user.id, gameName);
+  addGame(interaction.guildId!, interaction.user.id, gameName);
   await interaction.reply({
     content: `Added **${gameName}** to your library. Other members can now request it for events.`,
     ephemeral: true,
@@ -651,7 +841,7 @@ export async function handleAddConfirm(interaction: ButtonInteraction): Promise<
     return;
   }
   pendingAdds.delete(interaction.user.id);
-  addGame(interaction.user.id, pending.gameName, pending.objectid);
+  addGame(interaction.guildId!, interaction.user.id, pending.gameName, pending.objectid);
   await interaction.update({
     content: `Added **${pending.gameName}** to your library. Other members can now request it for events.`,
     components: [],
@@ -665,7 +855,7 @@ export async function handleAddCancel(interaction: ButtonInteraction): Promise<v
 
 async function handleRemove(interaction: ChatInputCommandInteraction): Promise<void> {
   const gameName = interaction.options.getString('game', true).trim();
-  const result = removeGame(interaction.user.id, gameName);
+  const result = removeGame(interaction.guildId!, interaction.user.id, gameName);
 
   if (result === 'not_found') {
     await interaction.reply({
@@ -685,11 +875,11 @@ async function handleRequest(interaction: ChatInputCommandInteraction): Promise<
   const gameName = interaction.options.getString('game', true).trim();
 
   // Check the game exists in the library (someone must own it)
-  const library = loadLibrary();
+  const library = loadLibraryForGuild(interaction.guildId!);
   const matches = library.filter(e => e.gameName.toLowerCase() === gameName.toLowerCase());
 
   if (matches.length === 0) {
-    const partials = findGameNamesByPartial(gameName);
+    const partials = findGameNamesByPartial(interaction.guildId!, gameName);
     if (partials.length > 0 && partials.length <= 25) {
       await interaction.reply({
         content: `**"${gameName}"** wasn't an exact match — did you mean one of these?`,
@@ -707,7 +897,7 @@ async function handleRequest(interaction: ChatInputCommandInteraction): Promise<
     return;
   }
 
-  // Find the next upcoming event
+  // Find the target event — prefer the event channel we're currently in
   const now = new Date();
   const upcoming = loadGameNights()
     .filter(gn => !gn.cancelled && !gn.archived && new Date(gn.startTimeISO) > now)
@@ -721,7 +911,7 @@ async function handleRequest(interaction: ChatInputCommandInteraction): Promise<
     return;
   }
 
-  const event = upcoming[0];
+  const event = upcoming.find(gn => gn.eventChannelId === interaction.channelId) ?? upcoming[0];
 
   const ownerIds = matches.map(e => e.userId);
   const ownerAttending = ownerIds.some(
@@ -729,7 +919,7 @@ async function handleRequest(interaction: ChatInputCommandInteraction): Promise<
   );
   if (!ownerAttending) {
     await interaction.reply({
-      content: `None of the owners of **${matches[0].gameName}** are attending the next event, so it can't be requested.`,
+      content: `None of the owners of **${matches[0].gameName}** are attending the event on ${event.date}, so it can't be requested.`,
       ephemeral: true,
     });
     return;
@@ -739,7 +929,7 @@ async function handleRequest(interaction: ChatInputCommandInteraction): Promise<
 
   if (result === 'duplicate') {
     await interaction.reply({
-      content: `**${gameName}** has already been requested for the next event.`,
+      content: `**${gameName}** has already been requested for the event on ${event.date}.`,
       ephemeral: true,
     });
     return;
@@ -750,7 +940,7 @@ async function handleRequest(interaction: ChatInputCommandInteraction): Promise<
   const owners = matches.map(e => `<@${e.userId}>`);
 
   await interaction.reply({
-    content: `<@${interaction.user.id}> requested **${canonicalName}** for the next event (${event.date}). Owner${owners.length > 1 ? 's' : ''}: ${owners.join(', ')}`,
+    content: `<@${interaction.user.id}> requested **${canonicalName}** for the event on ${event.date}. Owner${owners.length > 1 ? 's' : ''}: ${owners.join(', ')}`,
   });
 
   try {
@@ -766,7 +956,7 @@ export async function handleLibraryRequestSelect(interaction: StringSelectMenuIn
     return;
   }
 
-  const library = loadLibrary();
+  const library = loadLibraryForGuild(interaction.guildId!);
   const matches = library.filter(e => e.gameName.toLowerCase() === gameName.toLowerCase());
 
   const now = new Date();
@@ -779,7 +969,7 @@ export async function handleLibraryRequestSelect(interaction: StringSelectMenuIn
     return;
   }
 
-  const event = upcoming[0];
+  const event = upcoming.find(gn => gn.eventChannelId === interaction.channelId) ?? upcoming[0];
 
   const ownerIds = matches.map(e => e.userId);
   const ownerAttending = ownerIds.some(
@@ -787,7 +977,7 @@ export async function handleLibraryRequestSelect(interaction: StringSelectMenuIn
   );
   if (!ownerAttending) {
     await interaction.update({
-      content: `None of the owners of **${matches[0]?.gameName ?? gameName}** are attending the next event, so it can't be requested.`,
+      content: `None of the owners of **${matches[0]?.gameName ?? gameName}** are attending the event on ${event.date}, so it can't be requested.`,
       components: [],
     });
     return;
@@ -798,14 +988,14 @@ export async function handleLibraryRequestSelect(interaction: StringSelectMenuIn
   const owners = matches.map(e => `<@${e.userId}>`);
 
   if (result === 'duplicate') {
-    await interaction.update({ content: `**${canonicalName}** has already been requested for the next event.`, components: [] });
+    await interaction.update({ content: `**${canonicalName}** has already been requested for the event on ${event.date}.`, components: [] });
     return;
   }
 
   // Dismiss the ephemeral select menu, then post a public confirmation
   await interaction.update({ content: '✓ Request submitted!', components: [] });
   await interaction.followUp({
-    content: `<@${interaction.user.id}> requested **${canonicalName}** for the next event (${event.date}). Owner${owners.length !== 1 ? 's' : ''}: ${owners.join(', ')}`,
+    content: `<@${interaction.user.id}> requested **${canonicalName}** for the event on ${event.date}. Owner${owners.length !== 1 ? 's' : ''}: ${owners.join(', ')}`,
     ephemeral: false,
   });
 
@@ -868,7 +1058,9 @@ async function handleImport(interaction: ChatInputCommandInteraction): Promise<v
   const typeIdx = isBgg ? headers.indexOf('itemtype') : -1;
   const minPlayersIdx = isBgg ? headers.indexOf('minplayers') : -1;
   const maxPlayersIdx = isBgg ? headers.indexOf('maxplayers') : -1;
+  const bestPlayersIdx = isBgg ? headers.indexOf('bggbestplayers') : -1;
   const playTimeIdx = isBgg ? headers.indexOf('playingtime') : -1;
+  const weightIdx = isBgg ? headers.indexOf('avgweight') : -1;
 
   const userId = interaction.user.id;
   let added = 0;
@@ -887,21 +1079,27 @@ async function handleImport(interaction: ChatInputCommandInteraction): Promise<v
     if (typeIdx !== -1 && fields[typeIdx] === 'expansion') { expansions++; continue; }
 
     const objectid = idIdx !== -1 ? fields[idIdx]?.trim() || undefined : undefined;
-    const result = addGame(userId, gameName, objectid);
+    const result = addGame(interaction.guildId!, userId, gameName, objectid);
     if (result === 'added') added++;
     else skipped++;
 
     if (isBgg) {
       const minPlayers = minPlayersIdx !== -1 ? parseInt(fields[minPlayersIdx], 10) || undefined : undefined;
       const maxPlayers = maxPlayersIdx !== -1 ? parseInt(fields[maxPlayersIdx], 10) || undefined : undefined;
+      const bestPlayers = bestPlayersIdx !== -1 ? parseInt(fields[bestPlayersIdx], 10) || undefined : undefined;
       const playTime = playTimeIdx !== -1 ? parseInt(fields[playTimeIdx], 10) || undefined : undefined;
+      const rawWeight = weightIdx !== -1 ? parseFloat(fields[weightIdx]) : NaN;
+      const weight = !isNaN(rawWeight) && rawWeight > 0 ? rawWeight : undefined;
       const existing = getGameInfo(gameName);
       upsertGameInfo({
         gameName,
         objectid,
         minPlayers: existing?.minPlayers ?? minPlayers,
         maxPlayers: existing?.maxPlayers ?? maxPlayers,
+        bestPlayers: existing?.bestPlayers ?? bestPlayers,
         playTime: existing?.playTime ?? playTime,
+        weight: existing?.weight ?? weight,
+        complexity: existing?.complexity ?? (weight ? weightTag(weight) : undefined),
         tags: existing?.tags,
         expansions: existing?.expansions,
         updatedAt: new Date().toISOString(),
@@ -925,7 +1123,7 @@ async function handleEdit(interaction: ChatInputCommandInteraction): Promise<voi
   const gameName = interaction.options.getString('game', true).trim();
 
   // Must be in the library (owned by someone)
-  const matches = findGamesByName(gameName);
+  const matches = findGamesByName(interaction.guildId!, gameName);
   if (matches.length === 0) {
     await interaction.reply({
       content: `**${gameName}** isn't in the group library. Only games in the library can be edited.`,
@@ -997,6 +1195,15 @@ async function handleEdit(interaction: ChatInputCommandInteraction): Promise<voi
             : 'Seafarers, Cities & Knights…'
         )
     ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId('complexity')
+        .setLabel('Complexity (Light, Medium, or Heavy)')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setValue(existing?.complexity ?? '')
+        .setPlaceholder('Light, Medium, or Heavy')
+    ),
   );
 
   await interaction.showModal(modal);
@@ -1014,6 +1221,7 @@ export async function handleEditModal(interaction: ModalSubmitInteraction): Prom
   const playtimeRaw = interaction.fields.getTextInputValue('playtime').trim();
   const tagsRaw = interaction.fields.getTextInputValue('tags').trim();
   const expansionsRaw = interaction.fields.getTextInputValue('expansions').trim();
+  const complexityRaw = interaction.fields.getTextInputValue('complexity').trim();
 
   const existing = getGameInfo(gameName);
 
@@ -1034,21 +1242,262 @@ export async function handleEditModal(interaction: ModalSubmitInteraction): Prom
     ? expansionsRaw.split(',').map(e => e.trim()).filter(Boolean)
     : existing?.expansions;
 
+  const normalizedComplexity = complexityRaw.charAt(0).toUpperCase() + complexityRaw.slice(1).toLowerCase();
+  const complexity: Complexity | undefined =
+    normalizedComplexity === 'Light' || normalizedComplexity === 'Medium' || normalizedComplexity === 'Heavy'
+      ? normalizedComplexity
+      : existing?.complexity;
+
   const info: GameInfo = {
     gameName,
     objectid: existing?.objectid,
     minPlayers,
     maxPlayers,
+    bestPlayers: existing?.bestPlayers,
     playTime,
+    weight: existing?.weight,
+    complexity,
     tags,
     expansions,
+    bggExpansions: existing?.bggExpansions,
     updatedAt: new Date().toISOString(),
   };
 
   upsertGameInfo(info);
 
+  const complexityWarning =
+    complexityRaw && normalizedComplexity !== 'Light' && normalizedComplexity !== 'Medium' && normalizedComplexity !== 'Heavy'
+      ? `\n⚠️ **"${complexityRaw}"** isn't a valid complexity — use Light, Medium, or Heavy. The previous value was kept.`
+      : '';
+
   await interaction.reply({
-    content: `Updated details for **${gameName}**.`,
+    content: `Updated details for **${gameName}**.${complexityWarning}`,
     ephemeral: true,
   });
+}
+
+async function handleRandom(interaction: ChatInputCommandInteraction): Promise<void> {
+  const tags = [
+    interaction.options.getString('tag'),
+    interaction.options.getString('tag2'),
+    interaction.options.getString('tag3'),
+  ].filter((t): t is string => t !== null);
+  const complexity = interaction.options.getString('complexity') as Complexity | null;
+
+  const library = loadLibraryForGuild(interaction.guildId!);
+  const infos = loadGameInfos();
+
+  // Deduplicate to one entry per game
+  const seen = new Set<string>();
+  const allGames: Array<{ displayName: string; owners: string[]; info: GameInfo | undefined }> = [];
+  for (const entry of library) {
+    const key = entry.gameName.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const gameInfo = infos.find(i => i.gameName.toLowerCase() === key);
+    const owners = library.filter(e => e.gameName.toLowerCase() === key).map(e => `<@${e.userId}>`);
+    allGames.push({ displayName: entry.gameName, info: gameInfo, owners });
+  }
+
+  // Filter by tags and complexity if provided
+  let pool = allGames.filter(g => {
+    if (tags.length > 0 && !g.info?.tags?.some(t => tags.some(ft => ft.toLowerCase() === t.toLowerCase()))) return false;
+    if (complexity && g.info?.complexity !== complexity) return false;
+    return true;
+  });
+  let fallback = false;
+  if ((tags.length > 0 || complexity) && pool.length === 0) {
+    pool = allGames;
+    fallback = true;
+  }
+
+  if (pool.length === 0) {
+    await interaction.reply({ content: 'The library is empty.', ephemeral: true });
+    return;
+  }
+
+  // Fisher-Yates shuffle and take up to 3
+  const shuffled = [...pool];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = shuffled[i]; shuffled[i] = shuffled[j]; shuffled[j] = tmp;
+  }
+  const picks = shuffled.slice(0, 3);
+
+  const filterLabels = [
+    tags.length > 0 ? tags.join(' or ') : '',
+    complexity ?? '',
+  ].filter(Boolean).join(', ');
+  const title = fallback
+    ? `No **${filterLabels}** games found — here are 3 random picks instead`
+    : `3 Random Game${picks.length !== 3 ? '' : 's'}${filterLabels ? ` — ${filterLabels}` : ''}`;
+
+  const embed = new EmbedBuilder().setTitle(title).setColor(0x5865f2);
+
+  for (const pick of picks) {
+    const meta: string[] = [];
+    if (pick.info?.minPlayers != null && pick.info?.maxPlayers != null) meta.push(`${pick.info.minPlayers}–${pick.info.maxPlayers} players`);
+    if (pick.info?.playTime != null) meta.push(`${pick.info.playTime} min`);
+    if (pick.info?.complexity) meta.push(pick.info.complexity);
+    if (pick.info?.tags?.length) meta.push(pick.info.tags.join(', '));
+    const value = [
+      `Owner${pick.owners.length !== 1 ? 's' : ''}: ${pick.owners.join(', ')}`,
+      ...(meta.length ? [meta.join(' • ')] : []),
+    ].join('\n');
+    embed.addFields({ name: pick.displayName, value });
+  }
+
+  embed.setFooter({ text: 'Use /library view <game> for full details • Run again for different picks' });
+
+  await interaction.reply({ embeds: [embed], ephemeral: true });
+}
+
+function parseInts(raw: string): number[] {
+  return raw.split(/[,/]/).map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n) && n > 0);
+}
+
+async function handleSearch(interaction: ChatInputCommandInteraction): Promise<void> {
+  const playersRaw = interaction.options.getString('players') ?? undefined;
+  const tags = [
+    interaction.options.getString('tag'),
+    interaction.options.getString('tag2'),
+    interaction.options.getString('tag3'),
+  ].filter((t): t is string => t !== null);
+  const durationRaw = interaction.options.getString('duration') ?? undefined;
+  const minDuration = interaction.options.getInteger('min_duration') ?? undefined;
+  const maxDuration = interaction.options.getInteger('max_duration') ?? undefined;
+  const complexity = interaction.options.getString('complexity') as Complexity | null;
+
+  const playerCounts = playersRaw ? parseInts(playersRaw) : [];
+  const durations = durationRaw ? parseInts(durationRaw) : [];
+
+  if (playerCounts.length === 0 && tags.length === 0 && durations.length === 0 && minDuration === undefined && maxDuration === undefined && !complexity) {
+    await interaction.reply({
+      content: 'Provide at least one valid filter: `players`, `tag`, or `duration`.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const library = loadLibraryForGuild(interaction.guildId!);
+  const infos = loadGameInfos();
+
+  const seen = new Set<string>();
+  const matches: Array<{ displayName: string; owners: string[]; info: GameInfo | undefined }> = [];
+
+  for (const entry of library) {
+    const key = entry.gameName.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const gameInfo = infos.find(i => i.gameName.toLowerCase() === key);
+
+    if (playerCounts.length > 0) {
+      if (gameInfo?.minPlayers == null || gameInfo?.maxPlayers == null) continue;
+      if (!playerCounts.some(p => p >= gameInfo.minPlayers! && p <= gameInfo.maxPlayers!)) continue;
+    }
+
+    if (tags.length > 0) {
+      if (!gameInfo?.tags?.some(t => tags.some(ft => ft.toLowerCase() === t.toLowerCase()))) continue;
+    }
+
+    if (durations.length > 0) {
+      if (gameInfo?.playTime == null) continue;
+      if (!durations.some(d => Math.abs(gameInfo.playTime! - d) <= 15)) continue;
+    }
+    if (minDuration !== undefined) {
+      if (gameInfo?.playTime == null || gameInfo.playTime < minDuration) continue;
+    }
+    if (maxDuration !== undefined) {
+      if (gameInfo?.playTime == null || gameInfo.playTime > maxDuration) continue;
+    }
+    if (complexity) {
+      if (gameInfo?.complexity !== complexity) continue;
+    }
+
+    const owners = library.filter(e => e.gameName.toLowerCase() === key).map(e => `<@${e.userId}>`);
+    matches.push({ displayName: entry.gameName, info: gameInfo, owners });
+  }
+
+  if (playerCounts.length > 0) {
+    matches.sort((a, b) => {
+      const refA = a.info?.bestPlayers ?? ((a.info?.minPlayers ?? 0) + (a.info?.maxPlayers ?? 0)) / 2;
+      const refB = b.info?.bestPlayers ?? ((b.info?.minPlayers ?? 0) + (b.info?.maxPlayers ?? 0)) / 2;
+      const distA = Math.min(...playerCounts.map(p => Math.abs(p - refA)));
+      const distB = Math.min(...playerCounts.map(p => Math.abs(p - refB)));
+      return distA !== distB ? distA - distB : a.displayName.localeCompare(b.displayName);
+    });
+  } else {
+    matches.sort((a, b) => a.displayName.localeCompare(b.displayName));
+  }
+
+  const durationRangePart = minDuration !== undefined || maxDuration !== undefined
+    ? `**${minDuration ?? 0}–${maxDuration ?? '∞'} min**`
+    : '';
+  const filterParts = [
+    playerCounts.length > 0 ? `**${playerCounts.join(' or ')} players**` : '',
+    tags.length > 0 ? `tag **${tags.join(' or ')}**` : '',
+    durations.length > 0 ? `**${durations.join(' or ')} min** (±15 min)` : '',
+    durationRangePart,
+    complexity ? `**${complexity}**` : '',
+  ].filter(Boolean).join(', ');
+
+  if (matches.length === 0) {
+    await interaction.reply({
+      content: `No games found matching ${filterParts}.`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const totalCount = matches.length;
+  const CHAR_BUDGET = 5200;
+  const shown: string[] = [];
+  let charCount = 0;
+
+  for (const m of matches) {
+    const meta: string[] = [];
+    if (m.info?.minPlayers != null && m.info?.maxPlayers != null) meta.push(`${m.info.minPlayers}–${m.info.maxPlayers}p`);
+    if (playerCounts.length > 0 && m.info?.bestPlayers != null) meta.push(`best: ${m.info.bestPlayers}p`);
+    if (m.info?.playTime != null) meta.push(`${m.info.playTime} min`);
+    if (m.info?.complexity) meta.push(m.info.complexity);
+    if (m.info?.tags?.length) meta.push(m.info.tags.join(', '));
+    const metaStr = meta.length ? ` *(${meta.join(' • ')})*` : '';
+    const line = `**${m.displayName}**${metaStr} — ${m.owners.join(', ')}`;
+    if (charCount + line.length + 1 > CHAR_BUDGET) break;
+    shown.push(line);
+    charCount += line.length + 1;
+  }
+
+  const truncated = shown.length < totalCount;
+  const embed = new EmbedBuilder()
+    .setTitle('Library Search')
+    .setDescription(`${truncated ? `Showing ${shown.length} of ${totalCount}` : totalCount} game${totalCount !== 1 ? 's' : ''} matching ${filterParts}`)
+    .setColor(0x5865f2);
+
+  const chunks: string[] = [];
+  let current = '';
+  for (const line of shown) {
+    if (current && current.length + line.length + 1 > 900) {
+      chunks.push(current);
+      current = '';
+    }
+    current += (current ? '\n' : '') + line;
+  }
+  if (current) chunks.push(current);
+
+  for (const chunk of chunks) {
+    embed.addFields({ name: '​', value: chunk });
+  }
+
+  const sortNote = playerCounts.length > 0
+    ? `Sorted by closest to ${playerCounts.join(' or ')} player${playerCounts.length > 1 || playerCounts[0] !== 1 ? 's' : ''} (by best player count)`
+    : 'Sorted alphabetically';
+  embed.setFooter({
+    text: truncated
+      ? `${sortNote} • Add more filters to narrow results`
+      : `${sortNote} • /library view <game> for full details`,
+  });
+
+  await interaction.reply({ embeds: [embed], ephemeral: true });
 }

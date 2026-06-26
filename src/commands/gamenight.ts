@@ -68,6 +68,12 @@ export const data = new SlashCommandBuilder()
       .addBooleanOption(opt =>
         opt.setName('open_channels').setDescription('Allow everyone to see event channels (true = open, false = RSVP only)').setRequired(false)
       )
+      .addStringOption(opt =>
+        opt.setName('event_category').setDescription('Discord category name for new event channels (default: "Monthly Events")').setRequired(false)
+      )
+      .addStringOption(opt =>
+        opt.setName('archive_category').setDescription('Discord category name for archived event channels (default: "Archive")').setRequired(false)
+      )
   )
   .addSubcommand(sub =>
     sub
@@ -143,6 +149,11 @@ function formatTime(date: Date): string {
 
 
 async function handleCreate(interaction: ChatInputCommandInteraction): Promise<void> {
+  if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageEvents)) {
+    await interaction.reply({ content: 'Only admins can schedule events.', ephemeral: true });
+    return;
+  }
+
   await interaction.deferReply({ ephemeral: true });
 
   const rawDate = interaction.options.getString('date', true);
@@ -197,18 +208,19 @@ async function handleCreate(interaction: ChatInputCommandInteraction): Promise<v
     console.warn('Could not create Discord scheduled event:', err);
   }
 
-  // Find or create "Monthly Events" category
+  // Find or create the configured event category
+  const eventCategoryName = getGuildConfig(guild.id).eventCategoryName;
   let categoryId: string | undefined;
   try {
     let category = guild.channels.cache.find(
-      c => c.type === ChannelType.GuildCategory && c.name === 'Monthly Events'
+      c => c.type === ChannelType.GuildCategory && c.name === eventCategoryName
     );
     if (!category) {
-      category = await guild.channels.create({ name: 'Monthly Events', type: ChannelType.GuildCategory });
+      category = await guild.channels.create({ name: eventCategoryName, type: ChannelType.GuildCategory });
     }
     categoryId = category.id;
   } catch (err) {
-    console.warn('Could not find/create Monthly Events category:', err);
+    console.warn('Could not find/create event category:', err);
   }
 
   // Create event channel, then lock it down in a separate step
@@ -330,6 +342,8 @@ async function handleConfig(interaction: ChatInputCommandInteraction): Promise<v
   const description = interaction.options.getString('description');
   const announcements = interaction.options.getChannel('announcements');
   const openChannels = interaction.options.getBoolean('open_channels');
+  const eventCategory = interaction.options.getString('event_category');
+  const archiveCategory = interaction.options.getString('archive_category');
 
   if (location !== null) patch.defaultLocation = location;
   if (time !== null) patch.defaultTime = time;
@@ -337,37 +351,30 @@ async function handleConfig(interaction: ChatInputCommandInteraction): Promise<v
   if (description !== null) patch.defaultDescription = description;
   if (announcements !== null) patch.announcementsChannelId = announcements.id;
   if (openChannels !== null) patch.openEventChannels = openChannels;
+  if (eventCategory !== null) patch.eventCategoryName = eventCategory;
+  if (archiveCategory !== null) patch.archiveCategoryName = archiveCategory;
+
+  function formatConfig(c: GuildConfig): string {
+    return [
+      '**Event defaults:**',
+      `> Start time: ${c.defaultTime || '*not set*'}`,
+      `> End time: ${c.defaultEndTime || '*not set*'}`,
+      `> Location: ${c.defaultLocation || '*not set*'}`,
+      `> Description: ${c.defaultDescription || '*not set*'}`,
+      `> Announcements channel: ${c.announcementsChannelId ? `<#${c.announcementsChannelId}>` : '*not set*'}`,
+      `> Event channel access: ${c.openEventChannels ? 'Open to everyone' : 'RSVP only'}`,
+      `> Event category: ${c.eventCategoryName}`,
+      `> Archive category: ${c.archiveCategoryName}`,
+    ].join('\n');
+  }
 
   if (Object.keys(patch).length === 0) {
-    const c = getGuildConfig(interaction.guildId!);
-    await interaction.reply({
-      content: [
-        '**Event defaults:**',
-        `> Start time: ${c.defaultTime || '*not set*'}`,
-        `> End time: ${c.defaultEndTime || '*not set*'}`,
-        `> Location: ${c.defaultLocation || '*not set*'}`,
-        `> Description: ${c.defaultDescription || '*not set*'}`,
-        `> Announcements channel: ${c.announcementsChannelId ? `<#${c.announcementsChannelId}>` : '*not set*'}`,
-        `> Event channel access: ${c.openEventChannels ? 'Open to everyone' : 'RSVP only'}`,
-      ].join('\n'),
-      ephemeral: true,
-    });
+    await interaction.reply({ content: formatConfig(getGuildConfig(interaction.guildId!)), ephemeral: true });
     return;
   }
 
   const updated = updateGuildConfig(interaction.guildId!, patch);
-  await interaction.reply({
-    content: [
-      '**Event defaults updated:**',
-      `> Start time: ${updated.defaultTime || '*not set*'}`,
-      `> End time: ${updated.defaultEndTime || '*not set*'}`,
-      `> Location: ${updated.defaultLocation || '*not set*'}`,
-      `> Description: ${updated.defaultDescription || '*not set*'}`,
-      `> Announcements channel: ${updated.announcementsChannelId ? `<#${updated.announcementsChannelId}>` : '*not set*'}`,
-      `> Event channel access: ${updated.openEventChannels ? 'Open to everyone' : 'RSVP only'}`,
-    ].join('\n'),
-    ephemeral: true,
-  });
+  await interaction.reply({ content: formatConfig(updated).replace('**Event defaults:**', '**Event defaults updated:**'), ephemeral: true });
 }
 
 async function handleList(interaction: ChatInputCommandInteraction): Promise<void> {

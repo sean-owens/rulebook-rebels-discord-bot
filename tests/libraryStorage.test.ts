@@ -15,6 +15,7 @@ import {
   removeRequests,
   removeAllRequestsForEvent,
   updateRequestCopies,
+  confirmBring,
   getGameInfo,
   upsertGameInfo,
 } from '../src/utils/libraryStorage';
@@ -37,35 +38,41 @@ describe('libraryStorage', () => {
 
   describe('addGame', () => {
     it('adds a new game and returns "added"', () => {
-      expect(addGame('user1', 'Wingspan')).toBe('added');
+      expect(addGame('guild-1', 'user1', 'Wingspan')).toBe('added');
       expect(loadLibrary()).toHaveLength(1);
     });
 
     it('returns "duplicate" when same user adds same title again', () => {
-      addGame('user1', 'Wingspan');
-      expect(addGame('user1', 'Wingspan')).toBe('duplicate');
+      addGame('guild-1', 'user1', 'Wingspan');
+      expect(addGame('guild-1', 'user1', 'Wingspan')).toBe('duplicate');
       expect(loadLibrary()).toHaveLength(1);
     });
 
     it('returns "duplicate" when same user adds same objectid under a different name', () => {
-      addGame('user1', 'Wingspan', 'obj-123');
-      expect(addGame('user1', 'Wingspan (Different Spelling)', 'obj-123')).toBe('duplicate');
+      addGame('guild-1', 'user1', 'Wingspan', 'obj-123');
+      expect(addGame('guild-1', 'user1', 'Wingspan (Different Spelling)', 'obj-123')).toBe('duplicate');
     });
 
     it('allows two different users to add the same game', () => {
-      addGame('user1', 'Wingspan');
-      expect(addGame('user2', 'Wingspan')).toBe('added');
+      addGame('guild-1', 'user1', 'Wingspan');
+      expect(addGame('guild-1', 'user2', 'Wingspan')).toBe('added');
       expect(loadLibrary()).toHaveLength(2);
     });
 
     it('is case-insensitive for duplicate detection', () => {
-      addGame('user1', 'wingspan');
-      expect(addGame('user1', 'Wingspan')).toBe('duplicate');
+      addGame('guild-1', 'user1', 'wingspan');
+      expect(addGame('guild-1', 'user1', 'Wingspan')).toBe('duplicate');
     });
 
     it('persists entries across calls', () => {
-      addGame('user1', 'Catan');
-      addGame('user1', 'Ticket to Ride');
+      addGame('guild-1', 'user1', 'Catan');
+      addGame('guild-1', 'user1', 'Ticket to Ride');
+      expect(loadLibrary()).toHaveLength(2);
+    });
+
+    it('allows the same user to add the same game in different guilds', () => {
+      addGame('guild-1', 'user1', 'Wingspan');
+      expect(addGame('guild-2', 'user1', 'Wingspan')).toBe('added');
       expect(loadLibrary()).toHaveLength(2);
     });
   });
@@ -74,26 +81,32 @@ describe('libraryStorage', () => {
 
   describe('removeGame', () => {
     it('removes an existing game and returns "removed"', () => {
-      addGame('user1', 'Wingspan');
-      expect(removeGame('user1', 'Wingspan')).toBe('removed');
+      addGame('guild-1', 'user1', 'Wingspan');
+      expect(removeGame('guild-1', 'user1', 'Wingspan')).toBe('removed');
       expect(loadLibrary()).toHaveLength(0);
     });
 
     it('returns "not_found" when game is not in library', () => {
-      expect(removeGame('user1', 'Nonexistent')).toBe('not_found');
+      expect(removeGame('guild-1', 'user1', 'Nonexistent')).toBe('not_found');
     });
 
     it('only removes the matching user\'s copy, not other users\'', () => {
-      addGame('user1', 'Wingspan');
-      addGame('user2', 'Wingspan');
-      removeGame('user1', 'Wingspan');
+      addGame('guild-1', 'user1', 'Wingspan');
+      addGame('guild-1', 'user2', 'Wingspan');
+      removeGame('guild-1', 'user1', 'Wingspan');
       expect(loadLibrary()).toHaveLength(1);
       expect(loadLibrary()[0].userId).toBe('user2');
     });
 
     it('is case-insensitive', () => {
-      addGame('user1', 'Wingspan');
-      expect(removeGame('user1', 'wingspan')).toBe('removed');
+      addGame('guild-1', 'user1', 'Wingspan');
+      expect(removeGame('guild-1', 'user1', 'wingspan')).toBe('removed');
+    });
+
+    it('does not remove the same game from a different guild', () => {
+      addGame('guild-1', 'user1', 'Wingspan');
+      expect(removeGame('guild-2', 'user1', 'Wingspan')).toBe('not_found');
+      expect(loadLibrary()).toHaveLength(1);
     });
   });
 
@@ -101,23 +114,28 @@ describe('libraryStorage', () => {
 
   describe('findGamesByName', () => {
     it('returns all entries for an exact name match', () => {
-      addGame('user1', 'Wingspan');
-      addGame('user2', 'Wingspan');
-      expect(findGamesByName('Wingspan')).toHaveLength(2);
+      addGame('guild-1', 'user1', 'Wingspan');
+      addGame('guild-1', 'user2', 'Wingspan');
+      expect(findGamesByName('guild-1', 'Wingspan')).toHaveLength(2);
     });
 
     it('is case-insensitive', () => {
-      addGame('user1', 'Wingspan');
-      expect(findGamesByName('wingspan')).toHaveLength(1);
+      addGame('guild-1', 'user1', 'Wingspan');
+      expect(findGamesByName('guild-1', 'wingspan')).toHaveLength(1);
     });
 
     it('returns an empty array when no match', () => {
-      expect(findGamesByName('Nonexistent')).toHaveLength(0);
+      expect(findGamesByName('guild-1', 'Nonexistent')).toHaveLength(0);
     });
 
     it('does not return partial matches', () => {
-      addGame('user1', 'Wingspan');
-      expect(findGamesByName('Wing')).toHaveLength(0);
+      addGame('guild-1', 'user1', 'Wingspan');
+      expect(findGamesByName('guild-1', 'Wing')).toHaveLength(0);
+    });
+
+    it('does not return entries from other guilds', () => {
+      addGame('guild-1', 'user1', 'Wingspan');
+      expect(findGamesByName('guild-2', 'Wingspan')).toHaveLength(0);
     });
   });
 
@@ -125,27 +143,42 @@ describe('libraryStorage', () => {
 
   describe('findGameNamesByPartial', () => {
     it('returns names that contain the search term', () => {
-      addGame('user1', 'Wingspan');
-      addGame('user1', 'Ticket to Ride');
-      addGame('user1', 'Catan');
-      expect(findGameNamesByPartial('wing')).toEqual(['Wingspan']);
+      addGame('guild-1', 'user1', 'Wingspan');
+      addGame('guild-1', 'user1', 'Ticket to Ride');
+      addGame('guild-1', 'user1', 'Catan');
+      expect(findGameNamesByPartial('guild-1', 'wing')).toEqual(['Wingspan']);
     });
 
     it('deduplicates names across multiple owners', () => {
-      addGame('user1', 'Wingspan');
-      addGame('user2', 'Wingspan');
-      expect(findGameNamesByPartial('wing')).toHaveLength(1);
+      addGame('guild-1', 'user1', 'Wingspan');
+      addGame('guild-1', 'user2', 'Wingspan');
+      expect(findGameNamesByPartial('guild-1', 'wing')).toHaveLength(1);
     });
 
     it('returns results sorted alphabetically', () => {
-      addGame('user1', 'Wingspread');
-      addGame('user1', 'Wingspan');
-      const results = findGameNamesByPartial('wing');
+      addGame('guild-1', 'user1', 'Wingspread');
+      addGame('guild-1', 'user1', 'Wingspan');
+      const results = findGameNamesByPartial('guild-1', 'wing');
       expect(results).toEqual(['Wingspan', 'Wingspread']);
     });
 
     it('returns an empty array when no match', () => {
-      expect(findGameNamesByPartial('zzz')).toHaveLength(0);
+      expect(findGameNamesByPartial('guild-1', 'zzz')).toHaveLength(0);
+    });
+
+    it('matches despite punctuation differences (apostrophes)', () => {
+      addGame('guild-1', 'user1', "Wonderland's War");
+      expect(findGameNamesByPartial('guild-1', 'Wonderlands War')).toEqual(["Wonderland's War"]);
+    });
+
+    it('matches despite punctuation differences (hyphens)', () => {
+      addGame('guild-1', 'user1', 'Dungeon-Crawler');
+      expect(findGameNamesByPartial('guild-1', 'Dungeon Crawler')).toEqual(['Dungeon-Crawler']);
+    });
+
+    it('does not return entries from other guilds', () => {
+      addGame('guild-2', 'user1', 'Wingspan');
+      expect(findGameNamesByPartial('guild-1', 'wing')).toHaveLength(0);
     });
   });
 
@@ -153,16 +186,21 @@ describe('libraryStorage', () => {
 
   describe('getGamesByUser', () => {
     it('returns only the specified user\'s games', () => {
-      addGame('user1', 'Wingspan');
-      addGame('user2', 'Catan');
-      addGame('user1', 'Ticket to Ride');
-      const games = getGamesByUser('user1');
+      addGame('guild-1', 'user1', 'Wingspan');
+      addGame('guild-1', 'user2', 'Catan');
+      addGame('guild-1', 'user1', 'Ticket to Ride');
+      const games = getGamesByUser('guild-1', 'user1');
       expect(games).toHaveLength(2);
       expect(games.every(g => g.userId === 'user1')).toBe(true);
     });
 
     it('returns an empty array for a user with no games', () => {
-      expect(getGamesByUser('nobody')).toHaveLength(0);
+      expect(getGamesByUser('guild-1', 'nobody')).toHaveLength(0);
+    });
+
+    it('does not return games from other guilds', () => {
+      addGame('guild-2', 'user1', 'Wingspan');
+      expect(getGamesByUser('guild-1', 'user1')).toHaveLength(0);
     });
   });
 
@@ -170,16 +208,22 @@ describe('libraryStorage', () => {
 
   describe('clearUserLibrary', () => {
     it('removes all games for the given user and returns the count', () => {
-      addGame('user1', 'Wingspan');
-      addGame('user1', 'Catan');
-      addGame('user2', 'Ticket to Ride');
-      expect(clearUserLibrary('user1')).toBe(2);
+      addGame('guild-1', 'user1', 'Wingspan');
+      addGame('guild-1', 'user1', 'Catan');
+      addGame('guild-1', 'user2', 'Ticket to Ride');
+      expect(clearUserLibrary('guild-1', 'user1')).toBe(2);
       expect(loadLibrary()).toHaveLength(1);
       expect(loadLibrary()[0].userId).toBe('user2');
     });
 
     it('returns 0 when the user has no games', () => {
-      expect(clearUserLibrary('nobody')).toBe(0);
+      expect(clearUserLibrary('guild-1', 'nobody')).toBe(0);
+    });
+
+    it('does not remove games from other guilds', () => {
+      addGame('guild-2', 'user1', 'Wingspan');
+      expect(clearUserLibrary('guild-1', 'user1')).toBe(0);
+      expect(loadLibrary()).toHaveLength(1);
     });
   });
 
@@ -296,6 +340,48 @@ describe('libraryStorage', () => {
     it('is case-insensitive for lookup', () => {
       upsertGameInfo({ gameName: 'Wingspan', updatedAt: new Date().toISOString() });
       expect(getGameInfo('wingspan')).toBeDefined();
+    });
+  });
+
+  // ── confirmBring ───────────────────────────────────────────────────────────
+
+  describe('confirmBring', () => {
+    it('returns "confirmed" and sets confirmedBy when the owner confirms a requested game', () => {
+      addGame('guild-1', 'user1', 'Wingspan');
+      addRequest('event1', 'Wingspan', 'user2');
+      expect(confirmBring('guild-1', 'event1', 'Wingspan', 'user1')).toBe('confirmed');
+      expect(getRequestsForEvent('event1')[0].confirmedBy).toBe('user1');
+    });
+
+    it('returns "not_requested" when the game has not been requested for that event', () => {
+      addGame('guild-1', 'user1', 'Wingspan');
+      expect(confirmBring('guild-1', 'event1', 'Wingspan', 'user1')).toBe('not_requested');
+    });
+
+    it('returns "not_owner" when the user does not own the game', () => {
+      addGame('guild-1', 'user1', 'Wingspan');
+      addRequest('event1', 'Wingspan', 'user2');
+      expect(confirmBring('guild-1', 'event1', 'Wingspan', 'user2')).toBe('not_owner');
+    });
+
+    it('is case-insensitive for the game name lookup', () => {
+      addGame('guild-1', 'user1', 'Wingspan');
+      addRequest('event1', 'wingspan', 'user2');
+      expect(confirmBring('guild-1', 'event1', 'WINGSPAN', 'user1')).toBe('confirmed');
+    });
+
+    it('allows re-confirmation (idempotent)', () => {
+      addGame('guild-1', 'user1', 'Wingspan');
+      addRequest('event1', 'Wingspan', 'user2');
+      confirmBring('guild-1', 'event1', 'Wingspan', 'user1');
+      expect(confirmBring('guild-1', 'event1', 'Wingspan', 'user1')).toBe('confirmed');
+      expect(getRequestsForEvent('event1')[0].confirmedBy).toBe('user1');
+    });
+
+    it('returns "not_owner" when the user owns the game in a different guild', () => {
+      addGame('guild-2', 'user1', 'Wingspan');
+      addRequest('event1', 'Wingspan', 'user2');
+      expect(confirmBring('guild-1', 'event1', 'Wingspan', 'user1')).toBe('not_owner');
     });
   });
 });

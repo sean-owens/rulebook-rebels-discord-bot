@@ -194,7 +194,7 @@ async function handleSuggest(interaction: ChatInputCommandInteraction): Promise<
   }
 
   // Check the group library — exact match first
-  const libraryMatches = findGamesByName(title);
+  const libraryMatches = findGamesByName(interaction.guildId!, title);
   if (libraryMatches.length > 0) {
     const info = getGameInfo(title);
     await postLibraryGame(interaction, gameNight, libraryMatches[0].gameName, info ?? null, libraryMatches.map(e => e.userId));
@@ -202,7 +202,7 @@ async function handleSuggest(interaction: ChatInputCommandInteraction): Promise<
   }
 
   // Partial match in library — prompt user to confirm which game
-  const partials = findGameNamesByPartial(title);
+  const partials = findGameNamesByPartial(interaction.guildId!, title);
   if (partials.length > 0 && partials.length <= 25) {
     const options = partials.map(name =>
       new StringSelectMenuOptionBuilder().setLabel(name.slice(0, 100)).setValue(name)
@@ -248,14 +248,14 @@ export async function handleEventSelect(interaction: StringSelectMenuInteraction
   const title = pending?.title ?? '';
   const withExpansions = pending?.withExpansions ?? false;
 
-  const libraryMatches = findGamesByName(title);
+  const libraryMatches = findGamesByName(interaction.guildId!, title);
   if (libraryMatches.length > 0) {
     const info = getGameInfo(title);
     await postLibraryGame(interaction, gameNight, libraryMatches[0].gameName, info ?? null, libraryMatches.map(e => e.userId));
     return;
   }
 
-  const partials = findGameNamesByPartial(title);
+  const partials = findGameNamesByPartial(interaction.guildId!, title);
   if (partials.length > 0 && partials.length <= 25) {
     const options = partials.map(name =>
       new StringSelectMenuOptionBuilder().setLabel(name.slice(0, 100)).setValue(name)
@@ -318,6 +318,17 @@ function bringGameRow(): ActionRowBuilder<ButtonBuilder> {
 // ── List scheduled games ──────────────────────────────────────────────────────
 
 async function handleGameList(interaction: ChatInputCommandInteraction): Promise<void> {
+  const isEventChannel = loadGameNights().some(
+    gn => !gn.cancelled && !gn.archived && gn.eventChannelId === interaction.channelId
+  );
+  if (!isEventChannel) {
+    await interaction.reply({
+      content: 'Use `/game list` inside an event channel to see that event\'s game lineup. Try `/event list` to see upcoming events.',
+      ephemeral: true,
+    });
+    return;
+  }
+
   const games = findGamesByChannel(interaction.channelId!);
 
   if (games.length === 0) {
@@ -447,7 +458,7 @@ async function postLibraryGame(
     suggestedStartTime: null,
     tags: info?.tags ?? [],
     expansions: [],
-    seats: [],
+    seats: [interaction.user.id],
     waitlist: [],
     createdAt: new Date().toISOString(),
     createdBy: interaction.user.id,
@@ -500,7 +511,7 @@ export async function handleLibrarySuggestSelect(interaction: StringSelectMenuIn
   }
 
   // Library game selected
-  const libraryMatches = findGamesByName(value);
+  const libraryMatches = findGamesByName(interaction.guildId!, value);
   const info = getGameInfo(value);
   await postLibraryGame(interaction, gameNight, value, info ?? null, libraryMatches.map(e => e.userId));
 }
@@ -668,7 +679,7 @@ export async function handleManualGameSubmit(interaction: ModalSubmitInteraction
     suggestedStartTime: null,
     tags: [],
     expansions: [],
-    seats: [],
+    seats: [interaction.user.id],
     waitlist: [],
     createdAt: new Date().toISOString(),
     createdBy: interaction.user.id,
@@ -913,7 +924,7 @@ async function postBGGGame(
     suggestedStartTime: null,
     tags: bggGame.tags,
     expansions: expansions.map(e => ({ id: e.id, name: e.name } as GameExpansion)),
-    seats: [],
+    seats: [interaction.user.id],
     waitlist: [],
     createdAt: new Date().toISOString(),
     createdBy: interaction.user.id,
@@ -1055,7 +1066,7 @@ export async function handleBringConfirm(interaction: ButtonInteraction): Promis
     return;
   }
   pendingBrings.delete(interaction.user.id);
-  addGame(interaction.user.id, pending.gameName, pending.objectid);
+  addGame(interaction.guildId!, interaction.user.id, pending.gameName, pending.objectid);
   await interaction.update({
     content: `Got it! **${pending.gameName}** has been added to your library.`,
     components: [],
