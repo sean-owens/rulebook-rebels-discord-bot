@@ -18,6 +18,7 @@ import {
 } from 'discord.js';
 import { randomUUID } from 'crypto';
 import { searchBGG, getBGGGame, BGGGame, BGGExpansion, BGGSearchResult } from '../utils/bgg';
+import { searchCatalog, isCatalogLoaded } from '../utils/bggCatalog';
 import { loadGames, saveGames, upsertGame, GameSuggestion, GameExpansion, findGamesByChannel } from '../utils/gameStorage';
 import { buildGameEmbed, buildGameButtons } from '../utils/gameEmbeds';
 import { loadGameNights, GameNight } from '../utils/storage';
@@ -117,6 +118,35 @@ async function buildBGGSearchReply(
   try { results = await searchBGG(title); } catch { bggFailed = true; }
 
   if (results.length === 0) {
+    // When BGG is unreachable, fall back to the local catalog before going to manual entry
+    if (bggFailed && isCatalogLoaded()) {
+      const catalogResults = searchCatalog(title, 5);
+      if (catalogResults.length > 0) {
+        const options = catalogResults.map(r => {
+          const desc = [r.year ? `Published ${r.year}` : 'Year unknown', r.isExpansion ? 'Expansion' : '']
+            .filter(Boolean).join(' • ');
+          return new StringSelectMenuOptionBuilder()
+            .setLabel(r.name.slice(0, 100))
+            .setValue(r.id)
+            .setDescription(desc.slice(0, 100));
+        });
+        options.push(
+          new StringSelectMenuOptionBuilder()
+            .setLabel('None of these — enter details manually')
+            .setValue(MANUAL_VALUE)
+            .setDescription('Fill in player count, duration, and a link yourself')
+        );
+        const select = new StringSelectMenuBuilder()
+          .setCustomId(withExpansions ? 'game_select_exp' : 'game_select')
+          .setPlaceholder('Choose the correct game...')
+          .addOptions(options);
+        return {
+          content: `Couldn't reach BGG right now, but found **${catalogResults.length}** match(es) in our local catalog — pick the one you mean:`,
+          components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
+        };
+      }
+    }
+
     const content = fromLibraryDismiss
       ? `No BGG results for **"${title}"**. Enter details manually:`
       : bggFailed

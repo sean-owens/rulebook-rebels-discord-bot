@@ -40,12 +40,14 @@ import { loadGameNights } from '../utils/storage';
 import { getGameRoles } from '../utils/gameRoles';
 import { updateRequestPin } from '../utils/requestPin';
 import { getBGGGame, weightTag } from '../utils/bgg';
+import { searchCatalog, isCatalogLoaded, normalizeName, BGGCatalogEntry } from '../utils/bggCatalog';
 
 const HEADER_PATTERNS = new Set(['game', 'name', 'game name', 'title', 'board game', 'boardgame']);
 
 interface PendingAdd {
   gameName: string;
   objectid?: string;
+  originalInput?: string; // user's typed name, stored when showing BGG suggestions
 }
 const pendingAdds = new Map<string, PendingAdd>();
 const pendingEdits = new Map<string, string>(); // userId -> canonical gameName
@@ -791,32 +793,49 @@ async function handleAdd(interaction: ChatInputCommandInteraction): Promise<void
     return;
   }
 
-  // Check if user already owns this game before touching storage
-  const userGames = getGamesByUser(interaction.guildId!, interaction.user.id);
-  const alreadyOwns = userGames.some(e => e.gameName.toLowerCase() === gameName.toLowerCase());
+  const guildId = interaction.guildId!;
+  const userId = interaction.user.id;
+
+  // Resolve canonical name/id from BGG catalog before any library checks.
+  // Exact normalized match (e.g. "brass birmingham" → "Brass: Birmingham") is applied silently.
+  // Token-only matches (e.g. "arkham" → multiple results) are presented to the user.
+  let resolvedName = gameName;
+  let resolvedObjectid: string | undefined;
+  let catalogSuggestions: BGGCatalogEntry[] = [];
+
+  if (isCatalogLoaded()) {
+    const catalogResults = searchCatalog(gameName, 5);
+    if (catalogResults.length > 0) {
+      const top = catalogResults[0];
+      if (normalizeName(top.name) === normalizeName(gameName)) {
+        resolvedName = top.name;
+        resolvedObjectid = top.id;
+      } else {
+        catalogSuggestions = catalogResults;
+      }
+    }
+  }
+
+  // Check if user already owns this game (by canonical name)
+  const userGames = getGamesByUser(guildId, userId);
+  const alreadyOwns = userGames.some(e => e.gameName.toLowerCase() === resolvedName.toLowerCase());
   if (alreadyOwns) {
-    await interaction.reply({ content: `**${gameName}** is already in your library.`, ephemeral: true });
+    await interaction.reply({ content: `**${resolvedName}** is already in your library.`, ephemeral: true });
     return;
   }
 
-  // Check if anyone else in the group owns a game by this name
-  const existing = findGamesByName(interaction.guildId!, gameName).filter(e => e.userId !== interaction.user.id);
+  // Check if anyone else in the group owns a game by the canonical name
+  const existing = findGamesByName(guildId, resolvedName).filter(e => e.userId !== userId);
   if (existing.length > 0) {
     const canonical = existing[0].gameName;
-    const objectid = existing[0].objectid;
+    const objectid = existing[0].objectid ?? resolvedObjectid;
     const owners = [...new Set(existing.map(e => `<@${e.userId}>`))].join(', ');
 
-    pendingAdds.set(interaction.user.id, { gameName: canonical, objectid });
+    pendingAdds.set(userId, { gameName: canonical, objectid });
 
     const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder()
-        .setCustomId('library_add_confirm')
-        .setLabel('Yes, I own it too')
-        .setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId('library_add_cancel')
-        .setLabel('Cancel')
-        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('library_add_confirm').setLabel('Yes, I own it too').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('library_add_cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary),
     );
 
     await interaction.reply({
@@ -827,9 +846,66 @@ async function handleAdd(interaction: ChatInputCommandInteraction): Promise<void
     return;
   }
 
-  addGame(interaction.guildId!, interaction.user.id, gameName);
+  // Catalog found matches with a different canonical name — ask the user to confirm
+  if (catalogSuggestions.length > 0) {
+    if (catalogSuggestions.length === 1) {
+      const top = catalogSuggestions[0];
+      const yearNote = top.year ? ` (${top.year})` : '';
+      const expNote = top.isExpansion ? ' — expansion' : '';
+      pendingAdds.set(userId, { gameName: top.name, objectid: top.id, originalInput: gameName });
+
+      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId('library_add_bgg_confirm')
+          .setLabel(`Yes, use "${top.name.slice(0, 55)}"`)
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId('library_add_bgg_dismiss')
+          .setLabel('No, add as typed')
+          .setStyle(ButtonStyle.Secondary),
+      );
+
+      await interaction.reply({
+        content: `Found **${top.name}**${yearNote}${expNote} on BGG — is that the game you mean?`,
+        components: [row],
+        ephemeral: true,
+      });
+    } else {
+      pendingAdds.set(userId, { gameName: gameName, originalInput: gameName });
+
+      const options = catalogSuggestions.map(r => {
+        const desc = [r.year ? `Published ${r.year}` : 'Year unknown', r.isExpansion ? 'Expansion' : '']
+          .filter(Boolean).join(' • ');
+        return new StringSelectMenuOptionBuilder()
+          .setLabel(r.name.slice(0, 100))
+          .setValue(`${r.id}|${r.name.slice(0, 90)}`)
+          .setDescription(desc.slice(0, 100));
+      });
+      options.push(
+        new StringSelectMenuOptionBuilder()
+          .setLabel('None of these — add as typed')
+          .setValue('__none__')
+          .setDescription(`Add as "${gameName.slice(0, 80)}"`)
+      );
+
+      const select = new StringSelectMenuBuilder()
+        .setCustomId('library_add_bgg_select')
+        .setPlaceholder('Choose the correct game...')
+        .addOptions(options);
+
+      await interaction.reply({
+        content: `Found **${catalogSuggestions.length}** possible matches for **"${gameName}"** on BGG — which did you mean?`,
+        components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
+        ephemeral: true,
+      });
+    }
+    return;
+  }
+
+  // No catalog suggestions — add directly (exact match silently corrects casing/attaches ID)
+  addGame(guildId, userId, resolvedName, resolvedObjectid);
   await interaction.reply({
-    content: `Added **${gameName}** to your library. Other members can now request it for events.`,
+    content: `Added **${resolvedName}** to your library. Other members can now request it for events.`,
     ephemeral: true,
   });
 }
@@ -851,6 +927,88 @@ export async function handleAddConfirm(interaction: ButtonInteraction): Promise<
 export async function handleAddCancel(interaction: ButtonInteraction): Promise<void> {
   pendingAdds.delete(interaction.user.id);
   await interaction.update({ content: 'Cancelled. No changes were made to your library.', components: [] });
+}
+
+export async function handleAddBggConfirm(interaction: ButtonInteraction): Promise<void> {
+  const pending = pendingAdds.get(interaction.user.id);
+  if (!pending) {
+    await interaction.update({ content: 'This confirmation has expired. Please run `/library add` again.', components: [] });
+    return;
+  }
+  pendingAdds.delete(interaction.user.id);
+  addGame(interaction.guildId!, interaction.user.id, pending.gameName, pending.objectid);
+  await interaction.update({
+    content: `Added **${pending.gameName}** to your library. Other members can now request it for events.`,
+    components: [],
+  });
+}
+
+export async function handleAddBggDismiss(interaction: ButtonInteraction): Promise<void> {
+  const pending = pendingAdds.get(interaction.user.id);
+  if (!pending) {
+    await interaction.update({ content: 'This confirmation has expired. Please run `/library add` again.', components: [] });
+    return;
+  }
+  pendingAdds.delete(interaction.user.id);
+  const nameToAdd = pending.originalInput ?? pending.gameName;
+  addGame(interaction.guildId!, interaction.user.id, nameToAdd);
+  await interaction.update({
+    content: `Added **${nameToAdd}** to your library. Other members can now request it for events.`,
+    components: [],
+  });
+}
+
+export async function handleAddBggSelect(interaction: StringSelectMenuInteraction): Promise<void> {
+  const value = interaction.values[0];
+  const pending = pendingAdds.get(interaction.user.id);
+  const originalInput = pending?.originalInput ?? pending?.gameName ?? '';
+  pendingAdds.delete(interaction.user.id);
+
+  if (value === '__none__') {
+    if (originalInput) {
+      addGame(interaction.guildId!, interaction.user.id, originalInput);
+      await interaction.update({
+        content: `Added **${originalInput}** to your library. Other members can now request it for events.`,
+        components: [],
+      });
+    } else {
+      await interaction.update({ content: 'Cancelled. No changes were made to your library.', components: [] });
+    }
+    return;
+  }
+
+  const [id, name] = value.split('|', 2);
+
+  // Check if user already owns the selected game
+  const userGames = getGamesByUser(interaction.guildId!, interaction.user.id);
+  if (userGames.some(e => e.gameName.toLowerCase() === name.toLowerCase())) {
+    await interaction.update({ content: `**${name}** is already in your library.`, components: [] });
+    return;
+  }
+
+  // Check if others own the selected game
+  const existing = findGamesByName(interaction.guildId!, name).filter(e => e.userId !== interaction.user.id);
+  if (existing.length > 0) {
+    const canonical = existing[0].gameName;
+    const objectid = existing[0].objectid ?? id;
+    const owners = [...new Set(existing.map(e => `<@${e.userId}>`))].join(', ');
+    pendingAdds.set(interaction.user.id, { gameName: canonical, objectid });
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId('library_add_confirm').setLabel('Yes, I own it too').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('library_add_cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary),
+    );
+    await interaction.update({
+      content: `**${canonical}** is already in the group library (owned by ${owners}). Are you adding your own copy?`,
+      components: [row],
+    });
+    return;
+  }
+
+  addGame(interaction.guildId!, interaction.user.id, name, id);
+  await interaction.update({
+    content: `Added **${name}** to your library. Other members can now request it for events.`,
+    components: [],
+  });
 }
 
 async function handleRemove(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -888,12 +1046,33 @@ async function handleRequest(interaction: ChatInputCommandInteraction): Promise<
       });
       return;
     }
-    await interaction.reply({
-      content: partials.length > 25
-        ? `Too many matches for **"${gameName}"** — try a more specific name.`
-        : `**${gameName}** isn't in the group library. Check what's available with \`/library list\`.`,
-      ephemeral: true,
-    });
+    if (partials.length > 25) {
+      await interaction.reply({
+        content: `Too many matches for **"${gameName}"** — try a more specific name.`,
+        ephemeral: true,
+      });
+      return;
+    }
+
+    // Check the BGG catalog to give a more helpful "not in library" message
+    let notFoundMsg = `**${gameName}** isn't in the group library.`;
+    if (isCatalogLoaded()) {
+      const catalogResults = searchCatalog(gameName, 1);
+      if (catalogResults.length > 0) {
+        const top = catalogResults[0];
+        if (normalizeName(top.name) === normalizeName(gameName)) {
+          notFoundMsg = `**${top.name}** isn't in the group library yet — ask someone who owns it to add it with \`/library add\`.`;
+        } else {
+          notFoundMsg = `**${gameName}** isn't in the group library. Did you mean **${top.name}**? Check \`/library list\` for what's available.`;
+        }
+      } else {
+        notFoundMsg += ' Check what\'s available with `/library list`.';
+      }
+    } else {
+      notFoundMsg += ' Check what\'s available with `/library list`.';
+    }
+
+    await interaction.reply({ content: notFoundMsg, ephemeral: true });
     return;
   }
 

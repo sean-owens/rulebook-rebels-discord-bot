@@ -12,11 +12,13 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "adm-zip": "^0.5.17",
     "discord.js": "^14.16.3",
     "dotenv": "^16.4.5",
     "fast-xml-parser": "^5.9.3"
   },
   "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
     "@types/node": "^22.0.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.5.4",

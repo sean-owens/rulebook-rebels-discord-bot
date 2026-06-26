@@ -94,10 +94,11 @@ npx vitest run     # run the full test suite, all tests must pass
 npm run deploy     # re-register slash commands with Discord (required if command definitions changed)
 ```
 
-Then restart the bot (`npm run dev`) so the running process reflects the new code.
+Then restart the bot so the running process reflects the new code.
 
 ### Rules
 - **Never skip the build.** A passing test suite on uncompiled code is not sufficient — `tsc` catches type errors that Vitest does not.
 - **Never skip the tests.** Even a one-line change can break an existing test. The suite must be fully green before moving on.
 - **Re-deploy when command definitions change.** Any change to a command's name, subcommands, options, or option descriptions requires `npm run deploy` to take effect in Discord. When in doubt, re-deploy.
+- **Always cycle the bot process on restart.** Before launching a new bot instance locally, check for any existing `ts-node src/index.ts` processes and kill them all first. Only then start a single fresh process. This prevents duplicate bot instances from competing over the same gateway connection.
 - **Do not commit or merge to Git unless explicitly instructed.** Work stays local until the user gives the go-ahead. This applies to all branches.

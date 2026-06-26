@@ -9,6 +9,9 @@ import {
   handleScheduledEventUserRemove,
 } from './events/scheduledEvents';
 import { handleGuildMemberAdd } from './events/guildMemberAdd';
+import { loadBGGCatalog } from './utils/bggCatalog';
+
+loadBGGCatalog().catch(err => console.error('[BGGCatalog] Startup error:', err));
 
 const client = new Client({
   intents: [

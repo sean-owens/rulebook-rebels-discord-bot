@@ -4,7 +4,7 @@ import { execute as executeGameNight } from '../commands/gamenight';
 import { execute as executeWelcome } from '../commands/welcome';
 import { execute as executeGameTags, handleAutocomplete as handleGameTagsAutocomplete } from '../commands/gametags';
 import { execute as executeMyRoles, handleMyRolesTag, handleMyRolesDiff, handleMyRolesNext, handleMyRolesBackDiff, handleMyRolesPage, handleMyRolesSubmit } from '../commands/myroles';
-import { execute as executeLibrary, handleAddConfirm, handleAddCancel, handleEditModal, handleLibraryViewSelect, handleLibraryRequestSelect, handleUnrequestEventSelect, handleUnrequestSelect, handleUnrequestAll, handleLibraryListNav } from '../commands/library';
+import { execute as executeLibrary, handleAddConfirm, handleAddCancel, handleAddBggConfirm, handleAddBggDismiss, handleAddBggSelect, handleEditModal, handleLibraryViewSelect, handleLibraryRequestSelect, handleUnrequestEventSelect, handleUnrequestSelect, handleUnrequestAll, handleLibraryListNav } from '../commands/library';
 import {
   execute as executeGame,
   handleGameSelect,
@@ -44,6 +44,7 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
       const id = interaction.customId;
       if (id === 'game_event_select') await handleEventSelect(interaction);
       else if (id === 'library_suggest_select') await handleLibrarySuggestSelect(interaction);
+      else if (id === 'library_add_bgg_select') await handleAddBggSelect(interaction);
       else if (id === 'library_view_select') await handleLibraryViewSelect(interaction);
       else if (id === 'library_request_select') await handleLibraryRequestSelect(interaction);
       else if (id === 'library_unrequest_event_select') await handleUnrequestEventSelect(interaction);
@@ -83,6 +84,10 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handleAddConfirm(interaction);
       } else if (id === 'library_add_cancel') {
         await handleAddCancel(interaction);
+      } else if (id === 'library_add_bgg_confirm') {
+        await handleAddBggConfirm(interaction);
+      } else if (id === 'library_add_bgg_dismiss') {
+        await handleAddBggDismiss(interaction);
       } else if (id.startsWith('library_unrequest_all_')) {
         await handleUnrequestAll(interaction, id.slice('library_unrequest_all_'.length));
       } else if (id.startsWith('game_tags_skip_')) {

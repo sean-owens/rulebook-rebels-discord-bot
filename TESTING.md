@@ -215,11 +215,28 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 4a. `/library add`
 
-**What it does:** Adds a game you own to the shared library.
+**What it does:** Adds a game you own to the shared library. When the BGG catalog is loaded, the bot resolves canonical game names and BGG IDs automatically.
 
-- [ ] `/library add game:Catan` — confirm "added to your library"
+#### Basic add
+- [ ] `/library add game:Wingspan` — confirm "Added **Wingspan** to your library" (exact catalog match — ID attached silently)
 - [ ] Add the same game again — confirm "already in your library" duplicate message
-- [ ] Add a game with a BGG ID option (if implemented)
+
+#### Canonical name correction (exact normalized match)
+- [ ] `/library add game:brass birmingham` — confirm bot adds it as **Brass: Birmingham** (colon and casing corrected, no prompt)
+- [ ] `/library add game:pandemic legacy season 1` — confirm added as **Pandemic Legacy: Season 1**
+
+#### BGG suggestion UI (token match — different canonical name)
+- [ ] `/library add game:arkham` — confirm a "which did you mean?" select menu appears listing matches such as Arkham Horror and Arkham Horror: The Card Game, with base games listed before expansions
+- [ ] Select a game from the dropdown — confirm it is added with the canonical BGG name and a success message
+- [ ] Select "None of these — add as typed" — confirm the game is added under the original typed name
+
+#### Single BGG suggestion (confirm/dismiss)
+- [ ] Type a name that produces exactly one token match that differs from the typed name — confirm a "Found **X** on BGG — is that the game you mean?" message with **Yes** and **No, add as typed** buttons
+- [ ] Click **Yes** — confirm game is added using the canonical BGG name
+- [ ] Click **No, add as typed** — confirm game is added under the original typed name
+
+#### Others already own the game
+- [ ] When the canonical BGG name is already in the library (owned by someone else), confirm the "are you adding your own copy?" prompt still appears using the canonical name
 
 ### 4b. `/library remove`
 
@@ -289,12 +306,14 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 4h. `/library request`
 
-**What it does:** Requests a specific game be brought to an event. When run inside an event channel it targets that specific event; when run elsewhere it targets the soonest upcoming event. Appears in the event's request pin.
+**What it does:** Requests a specific game be brought to an event. When run inside an event channel it targets that specific event; when run elsewhere it targets the soonest upcoming event. Appears in the event's request pin. When a game isn't in the library, the BGG catalog is used to improve the error message.
 
 - [ ] `/library request game:Catan` from a non-event channel — confirm request targets the **soonest** upcoming event and the confirmation message names that event's date
 - [ ] `/library request game:Catan` from **inside** a specific event channel (e.g. June 29) — confirm request targets **that event**, not the nearest one
 - [ ] Request the same game twice for the same event — confirm duplicate is blocked and error message names the event date
 - [ ] Request with a slight punctuation variant (e.g. `Wonderlands War` when the library has `Wonderland's War`) — confirm the partial-match picker appears with the correct game listed
+- [ ] Request a game that exists in the BGG catalog but isn't in the library (e.g. `/library request game:Gloomhaven` when no one has added it) — confirm the error message says "**Gloomhaven** isn't in the group library yet — ask someone who owns it to add it with `/library add`"
+- [ ] Request a mistyped name that matches a BGG entry (e.g. `/library request game:gloomhaven` lowercase) — confirm the canonical BGG name appears in the "not in library" message
 
 ### 4i. `/library unrequest`
 
@@ -470,5 +489,5 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run `/game suggest` in a channel with no active event and no upcoming events — confirm "There are no upcoming events" message
 - [ ] Attempt to RSVP to a cancelled event — confirm the embed is removed or no longer responds
 - [ ] Suggest a game when the event's channel has been archived — confirm "no longer active" message
-- [ ] Verify bot handles BGG being unreachable — confirm manual entry fallback message appears instead of crashing
+- [ ] Verify bot handles BGG being unreachable — confirm that if the local BGG catalog has matches, a catalog-sourced select menu appears instead of going straight to manual entry; if no catalog match, manual entry fallback appears
 - [ ] Confirm all ephemeral responses are only visible to the invoking user
