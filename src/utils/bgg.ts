@@ -56,23 +56,24 @@ export const BGG_TO_TAG: Record<string, string> = {
   'hand management': 'Hand Management',
   'social deduction': 'Social Deduction',
   'hidden roles': 'Hidden Roles',
-  'bluffing': 'Bluffing',
+  bluffing: 'Bluffing',
   'abstract strategy': 'Abstract',
-  'strategy': 'Strategy',
-  'economic': 'Economic',
+  strategy: 'Strategy',
+  economic: 'Economic',
   'party game': 'Party',
   'dungeon crawler': 'Dungeon Crawler',
   'legacy game': 'Legacy',
   'family game': 'Gateway / Family',
-  'miniatures': 'Miniatures'
+  miniatures: 'Miniatures',
 };
 
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
 
 function bggHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'application/xml, text/xml, */*',
+    'User-Agent':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    Accept: 'application/xml, text/xml, */*',
   };
   const apiKey = process.env.BGG_API_KEY;
   if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
@@ -95,9 +96,9 @@ export async function searchBGG(query: string): Promise<BGGSearchResult[]> {
   const raw = parsed?.items?.item ?? [];
   const items: any[] = Array.isArray(raw) ? raw : [raw];
 
-  return items.slice(0, 5).map(item => {
+  return items.slice(0, 5).map((item) => {
     const names: any[] = Array.isArray(item.name) ? item.name : [item.name];
-    const primary = names.find(n => n['@_type'] === 'primary');
+    const primary = names.find((n) => n['@_type'] === 'primary');
     return {
       id: String(item['@_id']),
       name: primary?.['@_value'] ?? names[0]?.['@_value'] ?? 'Unknown',
@@ -143,15 +144,19 @@ function decodeEntities(str: string): string {
     .replace(/&apos;/g, "'");
 }
 
-async function fetchCollectionPage(username: string, subtype: 'boardgame' | 'boardgameexpansion'): Promise<BGGCollectionGame[] | null> {
+async function fetchCollectionPage(
+  username: string,
+  subtype: 'boardgame' | 'boardgameexpansion',
+): Promise<BGGCollectionGame[] | null> {
   for (let attempt = 0; attempt < 2; attempt++) {
-    const url = subtype === 'boardgame'
-      ? `https://boardgamegeek.com/xmlapi2/collection?username=${encodeURIComponent(username)}&own=1&subtype=boardgame&excludesubtype=boardgameexpansion&stats=1`
-      : `https://boardgamegeek.com/xmlapi2/collection?username=${encodeURIComponent(username)}&own=1&subtype=boardgameexpansion&stats=1`;
+    const url =
+      subtype === 'boardgame'
+        ? `https://boardgamegeek.com/xmlapi2/collection?username=${encodeURIComponent(username)}&own=1&subtype=boardgame&excludesubtype=boardgameexpansion&stats=1`
+        : `https://boardgamegeek.com/xmlapi2/collection?username=${encodeURIComponent(username)}&own=1&subtype=boardgameexpansion&stats=1`;
     const res = await fetch(url, { headers: bggHeaders() });
     if (res.status === 202) {
       console.log(`[BGG collection] 202 queued (attempt ${attempt + 1}), retrying…`);
-      if (attempt === 0) await new Promise(r => setTimeout(r, 3000));
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 3000));
       continue;
     }
     if (!res.ok) {
@@ -164,18 +169,23 @@ async function fetchCollectionPage(username: string, subtype: 'boardgame' | 'boa
     const items: any[] = Array.isArray(raw) ? raw : [raw];
 
     return items
-      .filter(item => item['@_subtype'] === subtype)
-      .map(item => {
+      .filter((item) => item['@_subtype'] === subtype)
+      .map((item) => {
         const status = item.status ?? {};
         const stats = item.stats ?? {};
         const ratingVal = parseFloat(item.stats?.rating?.['@_value']);
         const avgVal = parseFloat(item.stats?.rating?.average?.['@_value']);
         const ranks: any[] = Array.isArray(stats.rating?.ranks?.rank)
           ? stats.rating.ranks.rank
-          : stats.rating?.ranks?.rank ? [stats.rating.ranks.rank] : [];
-        const overallRank = ranks.find(r => r['@_name'] === 'boardgame');
+          : stats.rating?.ranks?.rank
+            ? [stats.rating.ranks.rank]
+            : [];
+        const overallRank = ranks.find((r) => r['@_name'] === 'boardgame');
         const rankVal = parseInt(overallRank?.['@_value'], 10);
-        const rawName = typeof item.name === 'string' ? item.name : String(item.name?.['#text'] ?? item.name ?? '');
+        const rawName =
+          typeof item.name === 'string'
+            ? item.name
+            : String(item.name?.['#text'] ?? item.name ?? '');
 
         return {
           bggGameId: String(item['@_objectid']),
@@ -202,7 +212,9 @@ async function fetchCollectionPage(username: string, subtype: 'boardgame' | 'boa
   return null;
 }
 
-export async function fetchBggOwnedCollection(username: string): Promise<BGGCollectionGame[] | null> {
+export async function fetchBggOwnedCollection(
+  username: string,
+): Promise<BGGCollectionGame[] | null> {
   try {
     const baseGames = await fetchCollectionPage(username, 'boardgame');
     if (!baseGames) return null;
@@ -222,14 +234,18 @@ export interface BGGUserProfile {
   topGames: { rank: number; name: string }[];
 }
 
-async function fetchCollectionCount(username: string, subtype: 'boardgame' | 'boardgameexpansion'): Promise<number | null> {
+async function fetchCollectionCount(
+  username: string,
+  subtype: 'boardgame' | 'boardgameexpansion',
+): Promise<number | null> {
   for (let attempt = 0; attempt < 2; attempt++) {
-    const url = subtype === 'boardgame'
-      ? `https://boardgamegeek.com/xmlapi2/collection?username=${encodeURIComponent(username)}&own=1&subtype=boardgame&excludesubtype=boardgameexpansion`
-      : `https://boardgamegeek.com/xmlapi2/collection?username=${encodeURIComponent(username)}&own=1&subtype=boardgameexpansion`;
+    const url =
+      subtype === 'boardgame'
+        ? `https://boardgamegeek.com/xmlapi2/collection?username=${encodeURIComponent(username)}&own=1&subtype=boardgame&excludesubtype=boardgameexpansion`
+        : `https://boardgamegeek.com/xmlapi2/collection?username=${encodeURIComponent(username)}&own=1&subtype=boardgameexpansion`;
     const res = await fetch(url, { headers: bggHeaders() });
     if (res.status === 202) {
-      if (attempt === 0) await new Promise(r => setTimeout(r, 3000));
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 3000));
       continue;
     }
     if (!res.ok) return null;
@@ -264,12 +280,18 @@ export async function getBggUserProfile(username: string): Promise<BGGUserProfil
   const rawTop = user.top?.item ?? [];
   const topItems: any[] = Array.isArray(rawTop) ? rawTop : [rawTop];
   const topGames = topItems
-    .filter(i => i?.['@_name'])
-    .map(i => ({ rank: Number(i['@_rank']), name: String(i['@_name']) }))
+    .filter((i) => i?.['@_name'])
+    .map((i) => ({ rank: Number(i['@_rank']), name: String(i['@_name']) }))
     .sort((a, b) => a.rank - b.rank)
     .slice(0, 5);
 
-  return { username: String(user['@_name'] ?? username), memberSince, baseGames, expansions, topGames };
+  return {
+    username: String(user['@_name'] ?? username),
+    memberSince,
+    baseGames,
+    expansions,
+    topGames,
+  };
 }
 
 const pendingUserValidations = new Map<string, Promise<BGGUser | null>>();
@@ -300,7 +322,7 @@ export async function validateBggUser(username: string): Promise<BGGUser | null>
   return promise;
 }
 
-export async function getBGGGame(id: string): Promise<BGGGame> {
+export async function getBGGGame(id: string, trustedUploaders: string[] = []): Promise<BGGGame> {
   const url = `https://boardgamegeek.com/xmlapi2/thing?id=${id}&stats=1&videos=1`;
   const xml = await fetchXML(url);
   const parsed = parser.parse(xml);
@@ -309,21 +331,27 @@ export async function getBGGGame(id: string): Promise<BGGGame> {
   if (!item) throw new Error(`BGG game ${id} not found`);
 
   const names: any[] = Array.isArray(item.name) ? item.name : [item.name];
-  const primaryName = names.find(n => n['@_type'] === 'primary')?.['@_value'] ?? 'Unknown';
+  const primaryName = names.find((n) => n['@_type'] === 'primary')?.['@_value'] ?? 'Unknown';
 
   // Best player count from community poll
-  const polls: any[] = Array.isArray(item.poll) ? item.poll : (item.poll ? [item.poll] : []);
-  const numPlayersPoll = polls.find(p => p['@_name'] === 'suggested_numplayers');
+  const polls: any[] = Array.isArray(item.poll) ? item.poll : item.poll ? [item.poll] : [];
+  const numPlayersPoll = polls.find((p) => p['@_name'] === 'suggested_numplayers');
   let suggestedPlayers = Number(item.minplayers?.['@_value'] ?? 2);
 
   if (numPlayersPoll?.results) {
-    const results: any[] = Array.isArray(numPlayersPoll.results) ? numPlayersPoll.results : [numPlayersPoll.results];
+    const results: any[] = Array.isArray(numPlayersPoll.results)
+      ? numPlayersPoll.results
+      : [numPlayersPoll.results];
     let bestVotes = 0;
     for (const result of results) {
       const numPlayers = String(result['@_numplayers'] ?? '');
       if (numPlayers.includes('+')) continue;
-      const votes: any[] = Array.isArray(result.result) ? result.result : (result.result ? [result.result] : []);
-      const best = votes.find(v => v['@_value'] === 'Best');
+      const votes: any[] = Array.isArray(result.result)
+        ? result.result
+        : result.result
+          ? [result.result]
+          : [];
+      const best = votes.find((v) => v['@_value'] === 'Best');
       const count = Number(best?.['@_numvotes'] ?? 0);
       if (count > bestVotes) {
         bestVotes = count;
@@ -333,10 +361,10 @@ export async function getBGGGame(id: string): Promise<BGGGame> {
   }
 
   // Expansions: outbound boardgameexpansion links (not inbound)
-  const links: any[] = Array.isArray(item.link) ? item.link : (item.link ? [item.link] : []);
+  const links: any[] = Array.isArray(item.link) ? item.link : item.link ? [item.link] : [];
   const expansions: BGGExpansion[] = links
-    .filter(l => l['@_type'] === 'boardgameexpansion' && !l['@_inbound'])
-    .map(l => ({ id: String(l['@_id']), name: String(l['@_value']) }))
+    .filter((l) => l['@_type'] === 'boardgameexpansion' && !l['@_inbound'])
+    .map((l) => ({ id: String(l['@_id']), name: String(l['@_value']) }))
     .slice(0, 25);
 
   // Tags: map BGG categories and mechanics to our curated vocabulary
@@ -346,18 +374,48 @@ export async function getBGGGame(id: string): Promise<BGGGame> {
     const type: string = link['@_type'] ?? '';
     if (type !== 'boardgamecategory' && type !== 'boardgamemechanic') continue;
     const mapped = BGG_TO_TAG[String(link['@_value'] ?? '').toLowerCase()];
-    if (mapped && !seen.has(mapped)) { seen.add(mapped); tags.push(mapped); }
+    if (mapped && !seen.has(mapped)) {
+      seen.add(mapped);
+      tags.push(mapped);
+    }
     if (tags.length >= 5) break;
   }
 
   const rawWeight = item.statistics?.ratings?.averageweight?.['@_value'];
   const weight = rawWeight != null && Number(rawWeight) > 0 ? Number(rawWeight) : null;
 
-  // Instructional video: prefer English, fall back to any language
+  // Instructional video: prefer English "how to play" / overview titles, fall back to any instructional
   const rawVideos = item.videos?.video ?? [];
   const videoList: any[] = Array.isArray(rawVideos) ? rawVideos : [rawVideos];
-  const instructional = videoList.filter(v => String(v['@_category'] ?? '').toLowerCase() === 'instructional');
-  const preferred = instructional.find(v => String(v['@_language'] ?? '').toLowerCase().startsWith('english')) ?? instructional[0] ?? null;
+  const instructional = videoList.filter(
+    (v) => String(v['@_category'] ?? '').toLowerCase() === 'instructional',
+  );
+  const isOverview = (v: any) => {
+    const title = String(v['@_title'] ?? '').toLowerCase();
+    return (
+      title.includes('how to play') ||
+      title.includes('learn to play') ||
+      title.includes('overview') ||
+      title.includes('tutorial')
+    );
+  };
+  const isEnglish = (v: any) =>
+    String(v['@_language'] ?? '').toLowerCase().startsWith('english');
+  const isTrusted = (v: any) =>
+    trustedUploaders.length > 0 &&
+    trustedUploaders.some(
+      (u) => u.toLowerCase() === String(v['@_uploader'] ?? '').toLowerCase(),
+    );
+  const preferred =
+    instructional.find((v) => isEnglish(v) && isOverview(v) && isTrusted(v)) ??
+    instructional.find((v) => isOverview(v) && isTrusted(v)) ??
+    instructional.find((v) => isEnglish(v) && isTrusted(v)) ??
+    instructional.find((v) => isTrusted(v)) ??
+    instructional.find((v) => isEnglish(v) && isOverview(v)) ??
+    instructional.find((v) => isOverview(v)) ??
+    instructional.find((v) => isEnglish(v)) ??
+    instructional[0] ??
+    null;
   const howToPlayUrl = preferred ? String(preferred['@_link']) : null;
 
   return {
@@ -370,7 +428,11 @@ export async function getBGGGame(id: string): Promise<BGGGame> {
     minPlaytime: Number(item.minplaytime?.['@_value'] ?? 30),
     maxPlaytime: Number(item.maxplaytime?.['@_value'] ?? 60),
     weight,
-    thumbnail: item.thumbnail ? (String(item.thumbnail).startsWith('//') ? `https:${item.thumbnail}` : String(item.thumbnail)) : null,
+    thumbnail: item.thumbnail
+      ? String(item.thumbnail).startsWith('//')
+        ? `https:${item.thumbnail}`
+        : String(item.thumbnail)
+      : null,
     expansions,
     tags,
     howToPlayUrl,

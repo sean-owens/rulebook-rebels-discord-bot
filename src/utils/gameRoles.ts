@@ -22,7 +22,7 @@ export function addGameRole(guildId: string, role: GameRole): void {
 
 export function removeGameRole(guildId: string, roleId: string): void {
   const store = readJson<Store>(FILE, {});
-  store[guildId] = (store[guildId] ?? []).filter(r => r.roleId !== roleId);
+  store[guildId] = (store[guildId] ?? []).filter((r) => r.roleId !== roleId);
   writeJson(FILE, store);
 }
 

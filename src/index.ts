@@ -14,7 +14,7 @@ import { handleGuildDelete } from './events/guildDelete';
 import { runRetentionCleanup } from './utils/guildLifecycle';
 import { loadBGGCatalog } from './utils/bggCatalog';
 
-loadBGGCatalog().catch(err => console.error('[BGGCatalog] Startup error:', err));
+loadBGGCatalog().catch((err) => console.error('[BGGCatalog] Startup error:', err));
 
 const client = new Client({
   intents: [

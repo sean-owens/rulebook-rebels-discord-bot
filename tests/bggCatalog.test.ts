@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { searchCatalog, isCatalogLoaded, normalizeName, _loadFromCsvText, _resetCatalog } from '../src/utils/bggCatalog';
+import {
+  searchCatalog,
+  isCatalogLoaded,
+  normalizeName,
+  _loadFromCsvText,
+  _resetCatalog,
+} from '../src/utils/bggCatalog';
 
 const TEST_CSV = `id,name,yearpublished,rank,bayesaverage,average,usersrated,is_expansion,abstracts_rank
 224517,"Brass: Birmingham",2018,1,8.39,8.56,58991,0,
@@ -65,15 +71,15 @@ describe('searchCatalog', () => {
 
   it('finds results via token intersection when no exact match', () => {
     const results = searchCatalog('arkham', 5);
-    const names = results.map(r => r.name);
+    const names = results.map((r) => r.name);
     expect(names).toContain('Arkham Horror');
     expect(names).toContain('Arkham Horror: The Card Game');
   });
 
   it('sorts base games before expansions', () => {
     const results = searchCatalog('wingspan', 5);
-    const base = results.find(r => r.name === 'Wingspan');
-    const expansion = results.find(r => r.name === 'Wingspan: European Expansion');
+    const base = results.find((r) => r.name === 'Wingspan');
+    const expansion = results.find((r) => r.name === 'Wingspan: European Expansion');
     if (base && expansion) {
       expect(results.indexOf(base)).toBeLessThan(results.indexOf(expansion));
     }
@@ -83,10 +89,10 @@ describe('searchCatalog', () => {
 
   it('sorts by rank within the same expansion status', () => {
     const results = searchCatalog('arkham', 5);
-    const baseGames = results.filter(r => !r.isExpansion);
+    const baseGames = results.filter((r) => !r.isExpansion);
     // Arkham Horror: The Card Game (rank 20) should come before Arkham Horror (rank 150)
-    const cardGame = baseGames.findIndex(r => r.name === 'Arkham Horror: The Card Game');
-    const original = baseGames.findIndex(r => r.name === 'Arkham Horror');
+    const cardGame = baseGames.findIndex((r) => r.name === 'Arkham Horror: The Card Game');
+    const original = baseGames.findIndex((r) => r.name === 'Arkham Horror');
     expect(cardGame).toBeLessThan(original);
   });
 
@@ -116,7 +122,7 @@ describe('searchCatalog', () => {
     expect(results[0].rank).toBe(1);
 
     const expResults = searchCatalog('wingspan european expansion');
-    const exp = expResults.find(r => r.isExpansion);
+    const exp = expResults.find((r) => r.isExpansion);
     expect(exp?.rank).toBeNull();
   });
 });

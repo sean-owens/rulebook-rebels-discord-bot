@@ -18,7 +18,16 @@ if (!token || !clientId) {
   process.exit(1);
 }
 
-const commands = [gamenightCommand.toJSON(), gameCommand.toJSON(), adminCommand.toJSON(), hostCommand.toJSON(), myrolesCommand.toJSON(), libraryCommand.toJSON(), helpCommand.toJSON(), bggCommand.toJSON()];
+const commands = [
+  gamenightCommand.toJSON(),
+  gameCommand.toJSON(),
+  adminCommand.toJSON(),
+  hostCommand.toJSON(),
+  myrolesCommand.toJSON(),
+  libraryCommand.toJSON(),
+  helpCommand.toJSON(),
+  bggCommand.toJSON(),
+];
 const rest = new REST().setToken(token);
 
 (async () => {

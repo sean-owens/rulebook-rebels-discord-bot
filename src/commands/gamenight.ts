@@ -8,6 +8,7 @@ import {
   GuildScheduledEventEntityType,
   GuildScheduledEventPrivacyLevel,
   Message,
+  MessageFlags,
 } from 'discord.js';
 import { randomUUID } from 'crypto';
 import { loadGameNights, findGameNight, upsertGameNight, GameNight } from '../utils/storage';
@@ -20,9 +21,7 @@ import { updateAnnouncementPin } from '../utils/pins';
 export const data = new SlashCommandBuilder()
   .setName('event')
   .setDescription('View upcoming game night events')
-  .addSubcommand(sub =>
-    sub.setName('list').setDescription('List upcoming game nights')
-  );
+  .addSubcommand((sub) => sub.setName('list').setDescription('List upcoming game nights'));
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   const sub = interaction.options.getSubcommand();
@@ -30,14 +29,36 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 }
 
 function slugify(str: string): string {
-  return str.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return str
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
 }
 
 const MONTH_NAMES: Record<string, number> = {
-  jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2,
-  apr: 3, april: 3, may: 4, jun: 5, june: 5, jul: 6, july: 6,
-  aug: 7, august: 7, sep: 8, september: 8, oct: 9, october: 9,
-  nov: 10, november: 10, dec: 11, december: 11,
+  jan: 0,
+  january: 0,
+  feb: 1,
+  february: 1,
+  mar: 2,
+  march: 2,
+  apr: 3,
+  april: 3,
+  may: 4,
+  jun: 5,
+  june: 5,
+  jul: 6,
+  july: 6,
+  aug: 7,
+  august: 7,
+  sep: 8,
+  september: 8,
+  oct: 9,
+  october: 9,
+  nov: 10,
+  november: 10,
+  dec: 11,
+  december: 11,
 };
 
 export function parseDateTime(dateStr: string, timeStr: string): Date {
@@ -70,7 +91,10 @@ export function parseDateTime(dateStr: string, timeStr: string): Date {
 
 function formatDate(date: Date): string {
   return date.toLocaleDateString('en-US', {
-    weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
   });
 }
 
@@ -78,14 +102,13 @@ function formatTime(date: Date): string {
   return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 }
 
-
 export async function handleCreate(interaction: ChatInputCommandInteraction): Promise<void> {
   if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageEvents)) {
-    await interaction.reply({ content: 'Only hosts can schedule events.', ephemeral: true });
+    await interaction.reply({ content: 'Only hosts can schedule events.', flags: MessageFlags.Ephemeral });
     return;
   }
 
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const rawDate = interaction.options.getString('date', true);
   const guild = interaction.guild!;
@@ -102,7 +125,9 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
   try {
     startTime = parseDateTime(rawDate, rawTime);
   } catch {
-    await interaction.editReply(`Could not parse "${rawDate} ${rawTime}". Try something like "August 22" and "7:00 PM".`);
+    await interaction.editReply(
+      `Could not parse "${rawDate} ${rawTime}". Try something like "August 22" and "7:00 PM".`,
+    );
     return;
   }
 
@@ -111,7 +136,9 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
     try {
       endTime = parseDateTime(rawDate, rawEndTime);
     } catch {
-      await interaction.editReply(`Could not parse end time "${rawEndTime}". Try something like "10:00 PM".`);
+      await interaction.editReply(
+        `Could not parse end time "${rawEndTime}". Try something like "10:00 PM".`,
+      );
       return;
     }
   } else {
@@ -144,10 +171,13 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
   let categoryId: string | undefined;
   try {
     let category = guild.channels.cache.find(
-      c => c.type === ChannelType.GuildCategory && c.name === eventCategoryName
+      (c) => c.type === ChannelType.GuildCategory && c.name === eventCategoryName,
     );
     if (!category) {
-      category = await guild.channels.create({ name: eventCategoryName, type: ChannelType.GuildCategory });
+      category = await guild.channels.create({
+        name: eventCategoryName,
+        type: ChannelType.GuildCategory,
+      });
     }
     categoryId = category.id;
   } catch (err) {
@@ -158,16 +188,20 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
   let eventChannelId: string | null = null;
   try {
     const shortDate = startTime.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
-    const eventChannel = await guild.channels.create({
+    const eventChannel = (await guild.channels.create({
       name: `monthly-${slugify(shortDate)}`,
       type: ChannelType.GuildText,
       parent: categoryId,
       topic: `Monthly Gaming Event — ${date} | ${time} | ${location}`,
-    }) as TextChannel;
+    })) as TextChannel;
     eventChannelId = eventChannel.id;
 
     // Bot always needs explicit access so it can manage the channel
-    await eventChannel.permissionOverwrites.create(me, { ViewChannel: true, SendMessages: true, ManageMessages: true });
+    await eventChannel.permissionOverwrites.create(me, {
+      ViewChannel: true,
+      SendMessages: true,
+      ManageMessages: true,
+    });
 
     if (!defaults.openEventChannels) {
       // Private mode: hide from everyone, then grant access per RSVP
@@ -175,7 +209,9 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
       await eventChannel.permissionOverwrites.create(interaction.user, { ViewChannel: true });
     }
 
-    const announcementsRef = defaults.announcementsChannelId ? `<#${defaults.announcementsChannelId}>` : 'the announcements channel';
+    const announcementsRef = defaults.announcementsChannelId
+      ? `<#${defaults.announcementsChannelId}>`
+      : 'the announcements channel';
     const welcomeMsg = defaults.openEventChannels
       ? `Welcome to the **${date}** Monthly Gaming Event! Everyone is welcome — RSVP in ${announcementsRef} so we know you're coming.`
       : `Welcome to the **${date}** Monthly Gaming Event! RSVP in ${announcementsRef} to join this channel.`;
@@ -251,16 +287,17 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
 
   // Pin the new event (text channels only — forum threads don't use channel pins)
   if (announcementMsg) {
-    await updateAnnouncementPin(guild.client, guild.id).catch(err =>
-      console.warn('Could not pin announcement:', err)
+    await updateAnnouncementPin(guild.client, guild.id).catch((err) =>
+      console.warn('Could not pin announcement:', err),
     );
   }
 
-  await interaction.editReply(`Event created for **${date}** at **${time}**! RSVP embed posted in ${announcementMention || `<#${gn.channelId}>`}.`);
+  await interaction.editReply(
+    `Event created for **${date}** at **${time}**! RSVP embed posted in ${announcementMention || `<#${gn.channelId}>`}.`,
+  );
 }
 
 export async function handleConfig(interaction: ChatInputCommandInteraction): Promise<void> {
-
   const patch: Partial<GuildConfig> = {};
   const location = interaction.options.getString('location');
   const time = interaction.options.getString('time');
@@ -295,29 +332,36 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
   }
 
   if (Object.keys(patch).length === 0) {
-    await interaction.reply({ content: formatConfig(getGuildConfig(interaction.guildId!)), ephemeral: true });
+    await interaction.reply({
+      content: formatConfig(getGuildConfig(interaction.guildId!)),
+      flags: MessageFlags.Ephemeral,
+    });
     return;
   }
 
   const updated = updateGuildConfig(interaction.guildId!, patch);
-  await interaction.reply({ content: formatConfig(updated).replace('**Event defaults:**', '**Event defaults updated:**'), ephemeral: true });
+  await interaction.reply({
+    content: formatConfig(updated).replace('**Event defaults:**', '**Event defaults updated:**'),
+    flags: MessageFlags.Ephemeral,
+  });
 }
 
 async function handleList(interaction: ChatInputCommandInteraction): Promise<void> {
-  const upcoming = loadGameNights().filter(g => !g.cancelled && !g.archived);
+  const upcoming = loadGameNights().filter((g) => !g.cancelled && !g.archived);
 
   if (upcoming.length === 0) {
-    await interaction.reply({ content: 'No upcoming game nights scheduled.', ephemeral: true });
+    await interaction.reply({ content: 'No upcoming game nights scheduled.', flags: MessageFlags.Ephemeral });
     return;
   }
 
   const lines = upcoming.map(
-    g => `\`${g.id}\` — **${g.date}** at **${g.time}** @ ${g.location}${g.eventChannelId ? ` | <#${g.eventChannelId}>` : ''} (${g.rsvps.yes.length} going)`
+    (g) =>
+      `\`${g.id}\` — **${g.date}** at **${g.time}** @ ${g.location}${g.eventChannelId ? ` | <#${g.eventChannelId}>` : ''} (${g.rsvps.yes.length} going)`,
   );
 
   await interaction.reply({
     content: `**Upcoming Game Nights:**\n${lines.join('\n')}`,
-    ephemeral: true,
+    flags: MessageFlags.Ephemeral,
   });
 }
 
@@ -326,28 +370,33 @@ export async function handleCancel(interaction: ChatInputCommandInteraction): Pr
   const gn = findGameNight(id);
 
   if (!gn) {
-    await interaction.reply({ content: `No event found with ID \`${id}\`.`, ephemeral: true });
+    await interaction.reply({ content: `No event found with ID \`${id}\`.`, flags: MessageFlags.Ephemeral });
     return;
   }
   if (gn.cancelled) {
-    await interaction.reply({ content: 'That event is already cancelled.', ephemeral: true });
+    await interaction.reply({ content: 'That event is already cancelled.', flags: MessageFlags.Ephemeral });
     return;
   }
 
   const isCreator = gn.createdBy === interaction.user.id;
   const isAdmin = interaction.memberPermissions?.has(PermissionFlagsBits.ManageEvents) ?? false;
   if (!isCreator && !isAdmin) {
-    await interaction.reply({ content: 'Only the event creator or an admin can cancel this.', ephemeral: true });
+    await interaction.reply({
+      content: 'Only the event creator or an admin can cancel this.',
+      flags: MessageFlags.Ephemeral,
+    });
     return;
   }
 
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   if (gn.discordEventId) {
     try {
       const event = await interaction.guild!.scheduledEvents.fetch(gn.discordEventId);
       await event.delete();
-    } catch { /* already deleted */ }
+    } catch {
+      /* already deleted */
+    }
   }
 
   gn.cancelled = true;
@@ -360,11 +409,12 @@ export async function handleCancel(interaction: ChatInputCommandInteraction): Pr
 }
 
 export async function handleArchiveOld(interaction: ChatInputCommandInteraction): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const now = Date.now();
   const toArchive = loadGameNights().filter(
-    g => !g.cancelled && !g.archived && g.eventChannelId && new Date(g.startTimeISO).getTime() < now
+    (g) =>
+      !g.cancelled && !g.archived && g.eventChannelId && new Date(g.startTimeISO).getTime() < now,
   );
 
   if (toArchive.length === 0) {

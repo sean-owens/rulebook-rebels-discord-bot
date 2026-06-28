@@ -50,7 +50,9 @@ describe('libraryStorage', () => {
 
     it('returns "duplicate" when same user adds same objectid under a different name', () => {
       addGame('guild-1', 'user1', 'Wingspan', 'obj-123');
-      expect(addGame('guild-1', 'user1', 'Wingspan (Different Spelling)', 'obj-123')).toBe('duplicate');
+      expect(addGame('guild-1', 'user1', 'Wingspan (Different Spelling)', 'obj-123')).toBe(
+        'duplicate',
+      );
     });
 
     it('allows two different users to add the same game', () => {
@@ -90,7 +92,7 @@ describe('libraryStorage', () => {
       expect(removeGame('guild-1', 'user1', 'Nonexistent')).toBe('not_found');
     });
 
-    it('only removes the matching user\'s copy, not other users\'', () => {
+    it("only removes the matching user's copy, not other users'", () => {
       addGame('guild-1', 'user1', 'Wingspan');
       addGame('guild-1', 'user2', 'Wingspan');
       removeGame('guild-1', 'user1', 'Wingspan');
@@ -185,13 +187,13 @@ describe('libraryStorage', () => {
   // ── getGamesByUser ─────────────────────────────────────────────────────────
 
   describe('getGamesByUser', () => {
-    it('returns only the specified user\'s games', () => {
+    it("returns only the specified user's games", () => {
       addGame('guild-1', 'user1', 'Wingspan');
       addGame('guild-1', 'user2', 'Catan');
       addGame('guild-1', 'user1', 'Ticket to Ride');
       const games = getGamesByUser('guild-1', 'user1');
       expect(games).toHaveLength(2);
-      expect(games.every(g => g.userId === 'user1')).toBe(true);
+      expect(games.every((g) => g.userId === 'user1')).toBe(true);
     });
 
     it('returns an empty array for a user with no games', () => {
@@ -284,7 +286,7 @@ describe('libraryStorage', () => {
       expect(getRequestsForEvent('event1')).toHaveLength(0);
     });
 
-    it('removes only the specified user\'s requests when userId given', () => {
+    it("removes only the specified user's requests when userId given", () => {
       addRequest('event1', 'Wingspan', 'user1');
       addRequest('event1', 'Catan', 'user2');
       expect(removeAllRequestsForEvent('event1', 'user1')).toBe(1);

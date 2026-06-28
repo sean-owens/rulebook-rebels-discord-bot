@@ -5,7 +5,7 @@ import path from 'path';
 
 vi.mock('../src/utils/bgg', () => ({
   getBGGGame: vi.fn(),
-  weightTag: vi.fn((w: number) => w <= 2 ? 'Light' : w <= 3.5 ? 'Medium' : 'Heavy'),
+  weightTag: vi.fn((w: number) => (w <= 2 ? 'Light' : w <= 3.5 ? 'Medium' : 'Heavy')),
   fetchBggOwnedCollection: vi.fn(() => null),
   BGG_TO_TAG: {},
 }));
@@ -14,7 +14,12 @@ vi.mock('../src/utils/bggCatalog', () => ({
   searchCatalog: vi.fn(() => []),
   isCatalogLoaded: vi.fn(() => true),
   // mirrors the real implementation in bggCatalog.ts
-  normalizeName: (s: string) => s.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim(),
+  normalizeName: (s: string) =>
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim(),
 }));
 
 vi.mock('../src/utils/bggAccountStorage', () => ({
@@ -56,7 +61,7 @@ const mockIsCatalogLoaded = vi.mocked(isCatalogLoaded);
 function makeAddInteraction(gameName: string, guildId = 'g1', userId = 'u1') {
   return {
     options: {
-      getString: (name: string, _required?: boolean) => name === 'game' ? gameName : null,
+      getString: (name: string, _required?: boolean) => (name === 'game' ? gameName : null),
       getInteger: vi.fn(() => null),
       getSubcommand: () => 'add',
       getSubcommandGroup: (_allowNull?: boolean) => null,
@@ -96,9 +101,11 @@ describe('/library add — step ordering', () => {
     addGame('g1', 'u1', 'Wingspan');
     const interaction = makeAddInteraction('Wingspan');
     await execute(interaction);
-    expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({
-      content: expect.stringContaining('already in your library'),
-    }));
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('already in your library'),
+      }),
+    );
     expect(interaction.showModal).not.toHaveBeenCalled();
   });
 
@@ -106,9 +113,11 @@ describe('/library add — step ordering', () => {
     addGame('g1', 'u1', 'Wingspan');
     const interaction = makeAddInteraction('wingspan');
     await execute(interaction);
-    expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({
-      content: expect.stringContaining('already in your library'),
-    }));
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('already in your library'),
+      }),
+    );
   });
 
   // --- Step 1b: exact match in guild library owned by others ---
@@ -117,9 +126,11 @@ describe('/library add — step ordering', () => {
     addGame('g1', 'u2', 'Wingspan');
     const interaction = makeAddInteraction('Wingspan', 'g1', 'u1');
     await execute(interaction);
-    expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({
-      content: expect.stringContaining('already in the group library'),
-    }));
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('already in the group library'),
+      }),
+    );
     expect(interaction.showModal).not.toHaveBeenCalled();
   });
 
@@ -127,9 +138,11 @@ describe('/library add — step ordering', () => {
     addGame('g1', 'u2', 'Wingspan');
     const interaction = makeAddInteraction('wingspan', 'g1', 'u1');
     await execute(interaction);
-    expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({
-      content: expect.stringContaining('already in the group library'),
-    }));
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('already in the group library'),
+      }),
+    );
   });
 
   // --- Step 2: partial match in guild library ---
@@ -138,40 +151,52 @@ describe('/library add — step ordering', () => {
     addGame('g1', 'u2', 'Wingspan');
     const interaction = makeAddInteraction('wing', 'g1', 'u1');
     await execute(interaction);
-    expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({
-      content: expect.stringContaining('similar games in the group library'),
-    }));
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('similar games in the group library'),
+      }),
+    );
     expect(interaction.showModal).not.toHaveBeenCalled();
   });
 
   it('step 2: partial select is shown before BGG catalog', async () => {
     addGame('g1', 'u2', 'Wingspan');
     // BGG would also find Wingspan — library partial should win
-    mockSearchCatalog.mockReturnValue([{ id: '266192', name: 'Wingspan', year: 2019, isExpansion: false, rank: 10 }]);
+    mockSearchCatalog.mockReturnValue([
+      { id: '266192', name: 'Wingspan', year: 2019, isExpansion: false, rank: 10 },
+    ]);
     const interaction = makeAddInteraction('wing', 'g1', 'u1');
     await execute(interaction);
-    expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({
-      content: expect.stringContaining('similar games in the group library'),
-    }));
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('similar games in the group library'),
+      }),
+    );
   });
 
   // --- Step 3a: BGG exact canonical match ---
 
   it('step 3a: BGG exact match shows confirm prompt before adding', async () => {
-    mockSearchCatalog.mockReturnValue([{ id: '266192', name: 'Wingspan', year: 2019, isExpansion: false, rank: 10 }]);
+    mockSearchCatalog.mockReturnValue([
+      { id: '266192', name: 'Wingspan', year: 2019, isExpansion: false, rank: 10 },
+    ]);
     const interaction = makeAddInteraction('Wingspan', 'g1', 'u1');
     await execute(interaction);
     // Shows confirm buttons — game is NOT added until user clicks Yes
-    expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({
-      content: expect.stringContaining('Wingspan'),
-    }));
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('Wingspan'),
+      }),
+    );
     expect(interaction.showModal).not.toHaveBeenCalled();
-    expect(getGamesByUser('g1', 'u1').some(e => e.gameName === 'Wingspan')).toBe(false);
+    expect(getGamesByUser('g1', 'u1').some((e) => e.gameName === 'Wingspan')).toBe(false);
   });
 
   it('step 3a: BGG exact match re-checks library via normalized name (caught by step 2 normalized path)', async () => {
     addGame('g1', 'u2', 'Brass: Birmingham');
-    mockSearchCatalog.mockReturnValue([{ id: '224517', name: 'Brass: Birmingham', year: 2018, isExpansion: false, rank: 5 }]);
+    mockSearchCatalog.mockReturnValue([
+      { id: '224517', name: 'Brass: Birmingham', year: 2018, isExpansion: false, rank: 5 },
+    ]);
     // "brass birmingham" normalizes to "brassbirmingham" which is a substring of "brassbirmingham"
     // → step 2 (partial library match) catches it before step 3
     const interaction = makeAddInteraction('brass birmingham', 'g1', 'u1');
@@ -190,9 +215,11 @@ describe('/library add — step ordering', () => {
     ]);
     const interaction = makeAddInteraction('wing', 'g1', 'u1');
     await execute(interaction);
-    expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({
-      content: expect.stringContaining('possible matches'),
-    }));
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('possible matches'),
+      }),
+    );
     expect(interaction.showModal).not.toHaveBeenCalled();
   });
 
@@ -202,9 +229,11 @@ describe('/library add — step ordering', () => {
     ]);
     const interaction = makeAddInteraction('wingsspan', 'g1', 'u1'); // typo, not exact match
     await execute(interaction);
-    expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({
-      content: expect.stringContaining('Found **Wingspan**'),
-    }));
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('Found **Wingspan**'),
+      }),
+    );
     expect(interaction.showModal).not.toHaveBeenCalled();
   });
 
@@ -215,7 +244,7 @@ describe('/library add — step ordering', () => {
     const interaction = makeAddInteraction('My Custom Game', 'g1', 'u1');
     await execute(interaction);
     expect(interaction.showModal).toHaveBeenCalled();
-    expect(getGamesByUser('g1', 'u1').some(e => e.gameName === 'My Custom Game')).toBe(true);
+    expect(getGamesByUser('g1', 'u1').some((e) => e.gameName === 'My Custom Game')).toBe(true);
   });
 
   it('step 4: adds as custom when BGG catalog is not loaded', async () => {
@@ -223,7 +252,7 @@ describe('/library add — step ordering', () => {
     const interaction = makeAddInteraction('Some Game', 'g1', 'u1');
     await execute(interaction);
     expect(interaction.showModal).toHaveBeenCalled();
-    expect(getGamesByUser('g1', 'u1').some(e => e.gameName === 'Some Game')).toBe(true);
+    expect(getGamesByUser('g1', 'u1').some((e) => e.gameName === 'Some Game')).toBe(true);
   });
 
   // --- Guild isolation ---

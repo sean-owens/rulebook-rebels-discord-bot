@@ -1,16 +1,26 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { BGG_TO_TAG, searchBGG, getBGGGame, validateBggUser, getBggUserProfile, fetchBggOwnedCollection } from '../src/utils/bgg';
+import {
+  BGG_TO_TAG,
+  searchBGG,
+  getBGGGame,
+  validateBggUser,
+  getBggUserProfile,
+  fetchBggOwnedCollection,
+} from '../src/utils/bgg';
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
 function mockFetch(xml: string, status = 200): void {
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-    ok: status >= 200 && status < 300,
-    status,
-    text: () => Promise.resolve(xml),
-  }));
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({
+      ok: status >= 200 && status < 300,
+      status,
+      text: () => Promise.resolve(xml),
+    }),
+  );
 }
 
 // ── BGG_TO_TAG ────────────────────────────────────────────────────────────────
@@ -72,10 +82,13 @@ describe('searchBGG', () => {
   });
 
   it('returns at most 5 results', async () => {
-    const items = Array.from({ length: 8 }, (_, i) => `
+    const items = Array.from(
+      { length: 8 },
+      (_, i) => `
   <item type="boardgame" id="${i}">
     <name type="primary" value="Game ${i}"/>
-  </item>`).join('');
+  </item>`,
+    ).join('');
     mockFetch(`<items total="8">${items}</items>`);
 
     const results = await searchBGG('game');
@@ -223,9 +236,14 @@ describe('validateBggUser', () => {
 </user>`;
 
   it('returns user info for a valid username', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true, status: 200, text: () => Promise.resolve(VALID_USER_XML),
-    }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve(VALID_USER_XML),
+      }),
+    );
     const result = await validateBggUser('boardgamefan');
     expect(result).not.toBeNull();
     expect(result?.id).toBe('12345');
@@ -233,25 +251,40 @@ describe('validateBggUser', () => {
   });
 
   it('returns null for an unknown username (id=0 in response)', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true, status: 200, text: () => Promise.resolve(NOT_FOUND_XML),
-    }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve(NOT_FOUND_XML),
+      }),
+    );
     const result = await validateBggUser('nosuchuser');
     expect(result).toBeNull();
   });
 
   it('returns null when BGG responds with 404', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: false, status: 404, text: () => Promise.resolve(''),
-    }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        text: () => Promise.resolve(''),
+      }),
+    );
     const result = await validateBggUser('nosuchuser');
     expect(result).toBeNull();
   });
 
   it('throws when the API returns a non-OK status other than 404', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: false, status: 503, text: () => Promise.resolve(''),
-    }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 503,
+        text: () => Promise.resolve(''),
+      }),
+    );
     await expect(validateBggUser('anyone')).rejects.toThrow('503');
   });
 });
@@ -274,10 +307,19 @@ describe('getBggUserProfile', () => {
 </items>`;
 
   it('returns member since, base game count, expansion count, and top games', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve(USER_WITH_TOP_XML) })  // user+top
-      .mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve(COLLECTION_XML) })     // base games
-      .mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve('<items totalitems="12"></items>') }); // expansions
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve(USER_WITH_TOP_XML),
+      }) // user+top
+      .mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve(COLLECTION_XML) }) // base games
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve('<items totalitems="12"></items>'),
+      }); // expansions
     vi.stubGlobal('fetch', fetchMock);
 
     const profile = await getBggUserProfile('boardgamefan');
@@ -291,8 +333,13 @@ describe('getBggUserProfile', () => {
 
   it('returns null counts when BGG responds 202 twice for both collection calls', async () => {
     vi.useFakeTimers();
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve(USER_WITH_TOP_XML) })
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve(USER_WITH_TOP_XML),
+      })
       .mockResolvedValue({ ok: false, status: 202, text: () => Promise.resolve('') });
     vi.stubGlobal('fetch', fetchMock);
 
@@ -305,7 +352,10 @@ describe('getBggUserProfile', () => {
   });
 
   it('returns null when the user is not found', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 404, text: () => Promise.resolve('') }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: false, status: 404, text: () => Promise.resolve('') }),
+    );
     const profile = await getBggUserProfile('nosuchuser');
     expect(profile).toBeNull();
   });
@@ -315,10 +365,15 @@ describe('getBggUserProfile', () => {
 <user id="12345" name="boardgamefan" termsofuse="https://boardgamegeek.com/xmlapi/termsofuse">
   <yearregistered value="2020" />
 </user>`;
-    const fetchMock = vi.fn()
+    const fetchMock = vi
+      .fn()
       .mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve(NO_TOP_XML) })
       .mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve(COLLECTION_XML) })
-      .mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve('<items totalitems="0"></items>') });
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve('<items totalitems="0"></items>'),
+      });
     vi.stubGlobal('fetch', fetchMock);
 
     const profile = await getBggUserProfile('boardgamefan');
@@ -364,7 +419,12 @@ describe('fetchBggOwnedCollection', () => {
 </items>`;
 
   it('parses game names, IDs, players, and playtime', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve(COLLECTION_XML) }));
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve(COLLECTION_XML) }),
+    );
     const games = await fetchBggOwnedCollection('boardgamefan');
     expect(games).toHaveLength(2);
     expect(games![0].gameName).toBe('Wingspan');
@@ -386,7 +446,10 @@ describe('fetchBggOwnedCollection', () => {
     <numplays>0</numplays>
   </item>
 </items>`;
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve(xml) }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve(xml) }),
+    );
     const games = await fetchBggOwnedCollection('boardgamefan');
     expect(games![0].gameName).toBe("EXIT: The Pharaoh's Tomb & More");
   });
@@ -411,7 +474,10 @@ describe('fetchBggOwnedCollection', () => {
     <numplays>0</numplays>
   </item>
 </items>`;
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve(xml) }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve(xml) }),
+    );
     const games = await fetchBggOwnedCollection('boardgamefan');
     expect(games).toHaveLength(2);
     expect(games![0].gameName).toBe('Base Game');
@@ -421,7 +487,12 @@ describe('fetchBggOwnedCollection', () => {
   });
 
   it('parses status flags correctly', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve(COLLECTION_XML) }));
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve(COLLECTION_XML) }),
+    );
     const games = await fetchBggOwnedCollection('boardgamefan');
     expect(games![0].own).toBe(true);
     expect(games![0].forTrade).toBe(false);
@@ -430,7 +501,12 @@ describe('fetchBggOwnedCollection', () => {
   });
 
   it('parses user rating and num plays', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve(COLLECTION_XML) }));
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve(COLLECTION_XML) }),
+    );
     const games = await fetchBggOwnedCollection('boardgamefan');
     expect(games![0].userRating).toBe(8);
     expect(games![0].numPlays).toBe(5);
@@ -439,14 +515,22 @@ describe('fetchBggOwnedCollection', () => {
   });
 
   it('prepends https: to thumbnail URLs', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve(COLLECTION_XML) }));
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve(COLLECTION_XML) }),
+    );
     const games = await fetchBggOwnedCollection('boardgamefan');
     expect(games![0].thumbnail).toBe('https://cf.geekdo-images.com/thumb.jpg');
   });
 
   it('returns null when BGG responds 202 twice', async () => {
     vi.useFakeTimers();
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 202, text: () => Promise.resolve('') }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: false, status: 202, text: () => Promise.resolve('') }),
+    );
     const promise = fetchBggOwnedCollection('boardgamefan');
     await vi.runAllTimersAsync();
     expect(await promise).toBeNull();
@@ -454,7 +538,10 @@ describe('fetchBggOwnedCollection', () => {
   });
 
   it('returns null on non-OK response', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 503, text: () => Promise.resolve('') }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: false, status: 503, text: () => Promise.resolve('') }),
+    );
     expect(await fetchBggOwnedCollection('boardgamefan')).toBeNull();
   });
 });

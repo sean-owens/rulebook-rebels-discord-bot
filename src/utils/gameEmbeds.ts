@@ -1,4 +1,10 @@
-import { AttachmentBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import {
+  AttachmentBuilder,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+} from 'discord.js';
 import { GameSuggestion } from './gameStorage';
 import { getGameRoles } from './gameRoles';
 
@@ -8,7 +14,10 @@ export function buildBggAttachment(): AttachmentBuilder {
   return new AttachmentBuilder('BGG/images/powered_by_BGG_01_SM.png');
 }
 
-export function buildGameEmbed(game: GameSuggestion, nameMap: Record<string, string>): EmbedBuilder {
+export function buildGameEmbed(
+  game: GameSuggestion,
+  nameMap: Record<string, string>,
+): EmbedBuilder {
   const getName = (id: string) => nameMap[id] ?? `<@${id}>`;
   const waitlist = game.waitlist ?? [];
 
@@ -16,54 +25,76 @@ export function buildGameEmbed(game: GameSuggestion, nameMap: Record<string, str
   const maxSeats = game.maxPlayers;
   const isFull = seatCount >= maxSeats;
 
-  const playerInfo = game.minPlayers === game.maxPlayers
-    ? `${game.minPlayers}`
-    : `${game.minPlayers}–${game.maxPlayers}`;
+  const playerInfo =
+    game.minPlayers === game.maxPlayers
+      ? `${game.minPlayers}`
+      : `${game.minPlayers}–${game.maxPlayers}`;
 
-  const durationInfo = game.minPlaytime === game.maxPlaytime
-    ? `~${game.minPlaytime} min`
-    : `${game.minPlaytime}–${game.maxPlaytime} min`;
+  const durationInfo =
+    game.minPlaytime === game.maxPlaytime
+      ? `~${game.minPlaytime} min`
+      : `${game.minPlaytime}–${game.maxPlaytime} min`;
 
   const roles = getGameRoles(game.guildId);
 
   const complexityIcon = game.complexity ? (COMPLEXITY_ICON[game.complexity] ?? '') : '';
   const complexityRole = game.complexity
-    ? roles.find(r => r.type === 'difficulty' && r.name.toLowerCase() === game.complexity!.toLowerCase())
+    ? roles.find(
+        (r) => r.type === 'difficulty' && r.name.toLowerCase() === game.complexity!.toLowerCase(),
+      )
     : undefined;
   const complexityValue = complexityRole
     ? `${complexityIcon} <@&${complexityRole.roleId}>`
-    : game.complexity ? `${complexityIcon} ${game.complexity}` : null;
+    : game.complexity
+      ? `${complexityIcon} ${game.complexity}`
+      : null;
 
-  const playerField = { name: 'Players', value: `${playerInfo} (best with **${game.suggestedPlayers}**)`, inline: true };
-  const durationField = { name: 'Duration', value: durationInfo, inline: true };
   const embed = new EmbedBuilder()
     .setTitle(game.title)
     .setURL(game.bggLink || null)
     .setColor(0xe8a838);
   if (game.thumbnail) embed.setThumbnail(game.thumbnail);
-  embed.addFields(
-      playerField,
-      durationField,
-      ...(complexityValue ? [{ name: 'Complexity', value: complexityValue, inline: true }] : []),
-    );
 
+  // Row 1: Players | Best With | Complexity (all inline)
+  embed.addFields({ name: 'Players', value: playerInfo, inline: true });
+  embed.addFields({ name: 'Best With', value: `**${game.suggestedPlayers}**`, inline: true });
+  if (complexityValue) embed.addFields({ name: 'Complexity', value: complexityValue, inline: true });
+
+  // Tags (full-width, below row 1)
   if (game.tags?.length) {
-    const tagValues = game.tags.map(tag => {
-      const role = roles.find(r => r.type !== 'difficulty' && r.name.toLowerCase() === tag.toLowerCase());
+    const tagValues = game.tags.map((tag) => {
+      const role = roles.find(
+        (r) => r.type !== 'difficulty' && r.name.toLowerCase() === tag.toLowerCase(),
+      );
       return role ? `<@&${role.roleId}>` : tag;
     });
     embed.addFields({ name: 'Tags', value: tagValues.join(' • ') });
   }
 
+  // Duration — just above Expansions
+  embed.addFields({ name: 'Duration', value: durationInfo });
+
   if (game.expansions.length > 0) {
     embed.addFields({
       name: 'Expansions',
-      value: game.expansions.map(e => `• [${e.name}](https://boardgamegeek.com/boardgameexpansion/${e.id})`).join('\n'),
+      value: game.expansions
+        .map((e) => `• [${e.name}](https://boardgamegeek.com/boardgameexpansion/${e.id})`)
+        .join('\n'),
     });
   }
 
   // Multi-group view when waitlist has enough for a second group
   const group2Ready = isFull && waitlist.length >= game.minPlayers;
+
+  const resourceParts: string[] = [];
+  if (game.howToPlayUrl) resourceParts.push(`[📹 How to Play](${game.howToPlayUrl})`);
+  if (game.bggId)
+    resourceParts.push(
+      `[📖 Rules & Files](https://boardgamegeek.com/boardgame/${game.bggId}/files)`,
+    );
+  if (resourceParts.length > 0) {
+    embed.addFields({ name: 'Resources', value: resourceParts.join(' • ') });
+  }
 
   if (group2Ready) {
     const g1Lines = game.seats.map((id, i) => `${i + 1}. ${getName(id)}`);
@@ -73,7 +104,10 @@ export function buildGameEmbed(game: GameSuggestion, nameMap: Record<string, str
     const g2Open = maxSeats - g2Players.length;
     const g2Lines = g2Players.map((id, i) => `${i + 1}. ${getName(id)}`);
     if (g2Open > 0) g2Lines.push(`*(${g2Open} open slot${g2Open !== 1 ? 's' : ''})*`);
-    embed.addFields({ name: `Group 2 (${g2Players.length}/${maxSeats})`, value: g2Lines.join('\n') });
+    embed.addFields({
+      name: `Group 2 (${g2Players.length}/${maxSeats})`,
+      value: g2Lines.join('\n'),
+    });
 
     const overflow = waitlist.slice(maxSeats);
     if (overflow.length > 0) {
@@ -87,23 +121,20 @@ export function buildGameEmbed(game: GameSuggestion, nameMap: Record<string, str
     const seatLines = game.seats.map((id, i) => `${i + 1}. ${getName(id)}`);
     const openCount = maxSeats - seatCount;
     if (openCount > 0) seatLines.push(`*(${openCount} open slot${openCount !== 1 ? 's' : ''})*`);
-    embed.addFields({ name: `Seats (${seatCount}/${maxSeats})`, value: seatLines.join('\n') || '*(no seats defined)*' });
+    embed.addFields({
+      name: `Seats (${seatCount}/${maxSeats})`,
+      value: seatLines.join('\n') || '*(no seats defined)*',
+    });
 
     if (isFull && waitlist.length > 0) {
       const needed = game.minPlayers - waitlist.length;
       embed.addFields({
         name: `Waitlist — Group 2 forming (${waitlist.length}/${game.minPlayers} min needed)`,
-        value: waitlist.map((id, i) => `${i + 1}. ${getName(id)}`).join('\n')
-          + (needed > 0 ? `\n*(${needed} more needed to split into a second group)*` : ''),
+        value:
+          waitlist.map((id, i) => `${i + 1}. ${getName(id)}`).join('\n') +
+          (needed > 0 ? `\n*(${needed} more needed to split into a second group)*` : ''),
       });
     }
-  }
-
-  const resourceParts: string[] = [];
-  if (game.howToPlayUrl) resourceParts.push(`[📹 How to Play](${game.howToPlayUrl})`);
-  if (game.bggId) resourceParts.push(`[📖 Rules & Files](https://boardgamegeek.com/boardgame/${game.bggId}/files)`);
-  if (resourceParts.length > 0) {
-    embed.addFields({ name: 'Resources', value: resourceParts.join(' • ') });
   }
 
   embed.setImage('attachment://powered_by_BGG_01_SM.png');

@@ -14,6 +14,7 @@ export interface GuildConfig {
   openEventChannels: boolean;
   eventCategoryName: string;
   archiveCategoryName: string;
+  trustedVideoUploaders: string[];
 }
 
 const DEFAULT_CONFIG: GuildConfig = {
@@ -28,6 +29,7 @@ const DEFAULT_CONFIG: GuildConfig = {
   openEventChannels: false,
   eventCategoryName: 'Monthly Events',
   archiveCategoryName: 'Archive',
+  trustedVideoUploaders: [],
 };
 
 type ConfigStore = Record<string, GuildConfig>;

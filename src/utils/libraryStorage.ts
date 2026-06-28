@@ -35,12 +35,18 @@ function saveLibrary(entries: LibraryEntry[]): void {
 }
 
 export function loadLibraryForGuild(guildId: string): LibraryEntry[] {
-  return loadLibrary().filter(e => e.guildId === guildId);
+  return loadLibrary().filter((e) => e.guildId === guildId);
 }
 
-export function addGame(guildId: string, userId: string, gameName: string, objectid?: string, isExpansion?: boolean): 'added' | 'duplicate' {
+export function addGame(
+  guildId: string,
+  userId: string,
+  gameName: string,
+  objectid?: string,
+  isExpansion?: boolean,
+): 'added' | 'duplicate' {
   const entries = loadLibrary();
-  const exists = entries.some(e => {
+  const exists = entries.some((e) => {
     if (e.guildId !== guildId || e.userId !== userId) return false;
     if (objectid && e.objectid === objectid) return true;
     return e.gameName.toLowerCase() === gameName.toLowerCase();
@@ -55,7 +61,9 @@ export function addGame(guildId: string, userId: string, gameName: string, objec
 }
 
 export function findGamesByName(guildId: string, gameName: string): LibraryEntry[] {
-  return loadLibrary().filter(e => e.guildId === guildId && e.gameName.toLowerCase() === gameName.toLowerCase());
+  return loadLibrary().filter(
+    (e) => e.guildId === guildId && e.gameName.toLowerCase() === gameName.toLowerCase(),
+  );
 }
 
 function normalizeName(s: string): string {
@@ -66,7 +74,7 @@ export function findGameNamesByPartial(guildId: string, term: string): string[] 
   const normalizedTerm = normalizeName(term);
   const seen = new Set<string>();
   const names: string[] = [];
-  for (const e of loadLibrary().filter(e => e.guildId === guildId)) {
+  for (const e of loadLibrary().filter((e) => e.guildId === guildId)) {
     const key = e.gameName.toLowerCase();
     const normalizedKey = normalizeName(e.gameName);
     const forward = key.includes(term.toLowerCase()) || normalizedKey.includes(normalizedTerm);
@@ -81,15 +89,22 @@ export function findGameNamesByPartial(guildId: string, term: string): string[] 
 
 export function clearUserLibrary(guildId: string, userId: string): number {
   const entries = loadLibrary();
-  const remaining = entries.filter(e => !(e.guildId === guildId && e.userId === userId));
+  const remaining = entries.filter((e) => !(e.guildId === guildId && e.userId === userId));
   saveLibrary(remaining);
   return entries.length - remaining.length;
 }
 
-export function removeGame(guildId: string, userId: string, gameName: string): 'removed' | 'not_found' {
+export function removeGame(
+  guildId: string,
+  userId: string,
+  gameName: string,
+): 'removed' | 'not_found' {
   const entries = loadLibrary();
   const idx = entries.findIndex(
-    e => e.guildId === guildId && e.userId === userId && e.gameName.toLowerCase() === gameName.toLowerCase()
+    (e) =>
+      e.guildId === guildId &&
+      e.userId === userId &&
+      e.gameName.toLowerCase() === gameName.toLowerCase(),
   );
   if (idx === -1) return 'not_found';
   entries.splice(idx, 1);
@@ -98,7 +113,7 @@ export function removeGame(guildId: string, userId: string, gameName: string): '
 }
 
 export function getGamesByUser(guildId: string, userId: string): LibraryEntry[] {
-  return loadLibrary().filter(e => e.guildId === guildId && e.userId === userId);
+  return loadLibrary().filter((e) => e.guildId === guildId && e.userId === userId);
 }
 
 export function loadRequests(): GameRequest[] {
@@ -109,13 +124,24 @@ function saveRequests(requests: GameRequest[]): void {
   writeJson(REQUESTS_FILE, requests);
 }
 
-export function addRequest(eventId: string, gameName: string, requestedBy: string, preferredOwnerId?: string): 'added' | 'duplicate' {
+export function addRequest(
+  eventId: string,
+  gameName: string,
+  requestedBy: string,
+  preferredOwnerId?: string,
+): 'added' | 'duplicate' {
   const requests = loadRequests();
   const exists = requests.some(
-    r => r.eventId === eventId && r.gameName.toLowerCase() === gameName.toLowerCase()
+    (r) => r.eventId === eventId && r.gameName.toLowerCase() === gameName.toLowerCase(),
   );
   if (exists) return 'duplicate';
-  const req: GameRequest = { id: randomUUID(), eventId, gameName, requestedBy, createdAt: new Date().toISOString() };
+  const req: GameRequest = {
+    id: randomUUID(),
+    eventId,
+    gameName,
+    requestedBy,
+    createdAt: new Date().toISOString(),
+  };
   if (preferredOwnerId) req.preferredOwnerId = preferredOwnerId;
   requests.push(req);
   saveRequests(requests);
@@ -123,19 +149,19 @@ export function addRequest(eventId: string, gameName: string, requestedBy: strin
 }
 
 export function getRequestsForEvent(eventId: string): GameRequest[] {
-  return loadRequests().filter(r => r.eventId === eventId);
+  return loadRequests().filter((r) => r.eventId === eventId);
 }
 
 export function removeRequests(requestIds: string[]): number {
   const requests = loadRequests();
-  const remaining = requests.filter(r => !requestIds.includes(r.id));
+  const remaining = requests.filter((r) => !requestIds.includes(r.id));
   saveRequests(remaining);
   return requests.length - remaining.length;
 }
 
 export function removeAllRequestsForEvent(eventId: string, userId?: string): number {
   const requests = loadRequests();
-  const remaining = requests.filter(r => {
+  const remaining = requests.filter((r) => {
     if (r.eventId !== eventId) return true;
     if (userId) return r.requestedBy !== userId;
     return false;
@@ -147,7 +173,7 @@ export function removeAllRequestsForEvent(eventId: string, userId?: string): num
 export function updateRequestCopies(eventId: string, gameName: string, copies: number): void {
   const requests = loadRequests();
   const idx = requests.findIndex(
-    r => r.eventId === eventId && r.gameName.toLowerCase() === gameName.toLowerCase()
+    (r) => r.eventId === eventId && r.gameName.toLowerCase() === gameName.toLowerCase(),
   );
   if (idx >= 0) {
     requests[idx].copiesNeeded = copies;
@@ -163,12 +189,15 @@ export function confirmBring(
 ): 'confirmed' | 'not_requested' | 'not_owner' {
   const requests = loadRequests();
   const idx = requests.findIndex(
-    r => r.eventId === eventId && r.gameName.toLowerCase() === gameName.toLowerCase()
+    (r) => r.eventId === eventId && r.gameName.toLowerCase() === gameName.toLowerCase(),
   );
   if (idx === -1) return 'not_requested';
 
   const owns = loadLibrary().some(
-    e => e.guildId === guildId && e.userId === userId && e.gameName.toLowerCase() === gameName.toLowerCase()
+    (e) =>
+      e.guildId === guildId &&
+      e.userId === userId &&
+      e.gameName.toLowerCase() === gameName.toLowerCase(),
   );
   if (!owns) return 'not_owner';
 
@@ -177,8 +206,8 @@ export function confirmBring(
   return 'confirmed';
 }
 
-export type GameTag = typeof GENRE_TAG_DEFINITIONS[number]['name'];
-export const GAME_TAGS: readonly GameTag[] = GENRE_TAG_DEFINITIONS.map(t => t.name);
+export type GameTag = (typeof GENRE_TAG_DEFINITIONS)[number]['name'];
+export const GAME_TAGS: readonly GameTag[] = GENRE_TAG_DEFINITIONS.map((t) => t.name);
 
 export type Complexity = 'Light' | 'Medium' | 'Heavy';
 
@@ -187,13 +216,13 @@ export interface GameInfo {
   objectid?: string;
   minPlayers?: number;
   maxPlayers?: number;
-  bestPlayers?: number;       // BGG community "best at" player count
+  bestPlayers?: number; // BGG community "best at" player count
   playTime?: number;
-  weight?: number;            // BGG average weight (1–5 complexity scale)
+  weight?: number; // BGG average weight (1–5 complexity scale)
   complexity?: Complexity | null; // null = checked BGG, no weight data found
   tags?: string[];
-  expansions?: string[];      // owner-noted expansions they personally own
-  bggExpansions?: string[];   // full expansion list from BGG
+  expansions?: string[]; // owner-noted expansions they personally own
+  bggExpansions?: string[]; // full expansion list from BGG
   howToPlayUrl?: string | null; // null = checked BGG, no instructional video found
   thumbnail?: string | null;
   updatedAt: string;
@@ -208,12 +237,12 @@ function saveGameInfos(infos: GameInfo[]): void {
 }
 
 export function getGameInfo(gameName: string): GameInfo | undefined {
-  return loadGameInfos().find(i => i.gameName.toLowerCase() === gameName.toLowerCase());
+  return loadGameInfos().find((i) => i.gameName.toLowerCase() === gameName.toLowerCase());
 }
 
 export function upsertGameInfo(info: GameInfo): void {
   const infos = loadGameInfos();
-  const idx = infos.findIndex(i => i.gameName.toLowerCase() === info.gameName.toLowerCase());
+  const idx = infos.findIndex((i) => i.gameName.toLowerCase() === info.gameName.toLowerCase());
   if (idx >= 0) infos[idx] = info;
   else infos.push(info);
   saveGameInfos(infos);

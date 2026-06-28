@@ -6,7 +6,9 @@ vi.mock('../src/utils/db', () => {
   const store: Record<string, unknown> = {};
   return {
     readJson: vi.fn((filename: string, fallback: unknown) => store[filename] ?? fallback),
-    writeJson: vi.fn((filename: string, data: unknown) => { store[filename] = data; }),
+    writeJson: vi.fn((filename: string, data: unknown) => {
+      store[filename] = data;
+    }),
   };
 });
 
@@ -14,7 +16,9 @@ import { readJson, writeJson } from '../src/utils/db';
 
 function setFile(filename: string, data: unknown) {
   (readJson as ReturnType<typeof vi.fn>).mockImplementation((f: string, fallback: unknown) => {
-    const store: Record<string, unknown> = (setFile as unknown as { _store: Record<string, unknown> })._store;
+    const store: Record<string, unknown> = (
+      setFile as unknown as { _store: Record<string, unknown> }
+    )._store;
     return f in store ? store[f] : fallback;
   });
   const s = (setFile as unknown as { _store: Record<string, unknown> })._store;
@@ -34,13 +38,19 @@ function getLastWrite(filename: string): unknown {
 describe('guildLifecycle', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    (readJson as ReturnType<typeof vi.fn>).mockImplementation((_: string, fallback: unknown) => fallback);
+    (readJson as ReturnType<typeof vi.fn>).mockImplementation(
+      (_: string, fallback: unknown) => fallback,
+    );
   });
 
   describe('markGuildDeleted', () => {
     it('adds an entry to deleted_guilds.json with a deletedAt timestamp', () => {
       markGuildDeleted('guild-1', 'Test Server');
-      const written = getLastWrite('deleted_guilds.json') as Array<{ guildId: string; guildName: string; deletedAt: string }>;
+      const written = getLastWrite('deleted_guilds.json') as Array<{
+        guildId: string;
+        guildName: string;
+        deletedAt: string;
+      }>;
       expect(written).toHaveLength(1);
       expect(written[0].guildId).toBe('guild-1');
       expect(written[0].guildName).toBe('Test Server');

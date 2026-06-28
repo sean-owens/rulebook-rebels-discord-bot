@@ -17,10 +17,7 @@ const SETUP_ROLES = [
   {
     name: 'Host',
     colors: { primaryColor: '#3498db' as `#${string}` },
-    permissions: [
-      PermissionFlagsBits.ManageEvents,
-      PermissionFlagsBits.ManageMessages,
-    ],
+    permissions: [PermissionFlagsBits.ManageEvents, PermissionFlagsBits.ManageMessages],
     reason: 'Rulebook Rebels Bot setup — required for /host commands',
   },
 ];
@@ -28,7 +25,9 @@ const SETUP_ROLES = [
 export async function handleGuildCreate(guild: Guild): Promise<void> {
   const restored = restoreGuild(guild.id);
   if (restored) {
-    console.log(`[GuildCreate] Bot re-added to "${guild.name}" — data restored (was pending deletion)`);
+    console.log(
+      `[GuildCreate] Bot re-added to "${guild.name}" — data restored (was pending deletion)`,
+    );
   }
 
   let existing;
@@ -39,7 +38,7 @@ export async function handleGuildCreate(guild: Guild): Promise<void> {
     return;
   }
 
-  const existingNames = new Set(existing.map(r => r.name.toLowerCase()));
+  const existingNames = new Set(existing.map((r) => r.name.toLowerCase()));
 
   for (const role of SETUP_ROLES) {
     if (existingNames.has(role.name.toLowerCase())) {

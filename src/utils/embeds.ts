@@ -56,7 +56,10 @@ export function buildGameNightEmbed(gn: GameNight, nameMap: Record<string, strin
   return embed;
 }
 
-export function buildGameNightButtons(gnId: string, disabled = false): ActionRowBuilder<ButtonBuilder> {
+export function buildGameNightButtons(
+  gnId: string,
+  disabled = false,
+): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId(`rsvp_yes_${gnId}`)

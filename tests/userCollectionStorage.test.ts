@@ -1,9 +1,19 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { getUserCollection, setUserCollection, mergeUserCollection, updateCollectionEntry, UserCollectionEntry } from '../src/utils/userCollectionStorage';
+import {
+  getUserCollection,
+  setUserCollection,
+  mergeUserCollection,
+  updateCollectionEntry,
+  UserCollectionEntry,
+} from '../src/utils/userCollectionStorage';
 
 vi.spyOn(process, 'cwd').mockReturnValue(import.meta.dirname);
 
-function makeEntry(bggGameId: string, gameName: string, overrides: Partial<UserCollectionEntry> = {}): UserCollectionEntry {
+function makeEntry(
+  bggGameId: string,
+  gameName: string,
+  overrides: Partial<UserCollectionEntry> = {},
+): UserCollectionEntry {
   return {
     bggGameId,
     gameName,

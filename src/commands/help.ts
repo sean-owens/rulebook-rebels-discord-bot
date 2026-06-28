@@ -1,4 +1,10 @@
-import { ChatInputCommandInteraction, EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
+import {
+  ChatInputCommandInteraction,
+  EmbedBuilder,
+  PermissionFlagsBits,
+  SlashCommandBuilder,
+  MessageFlags,
+} from 'discord.js';
 
 export const data = new SlashCommandBuilder()
   .setName('help')
@@ -6,12 +12,15 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   const isAdmin = interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ?? false;
-  const isHost = isAdmin || (interaction.memberPermissions?.has(PermissionFlagsBits.ManageEvents) ?? false);
+  const isHost =
+    isAdmin || (interaction.memberPermissions?.has(PermissionFlagsBits.ManageEvents) ?? false);
 
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
     .setTitle('Rulebook Rebels Bot — Commands')
-    .setDescription('Here\'s everything you can do. All commands are slash commands — type `/` to get started.')
+    .setDescription(
+      "Here's everything you can do. All commands are slash commands — type `/` to get started.",
+    )
     .addFields(
       {
         name: '📅  /event',
@@ -30,7 +39,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         value: [
           '`add` — Add a game you own to the shared library',
           '`remove` — Remove one of your games from the library',
-          '`mine` — List all the games you\'ve added',
+          "`mine` — List all the games you've added",
           '`list` — Browse the full library',
           '`view` — Look up a specific game',
           '`edit` — Update details on one of your games (players, play time, tags, complexity)',
@@ -54,34 +63,42 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
           '`profile` — View your currently linked BoardGameGeek account',
         ].join('\n'),
       },
-      ...(isHost ? [{
-        name: '🎙️  /host — Event & moderation tools',
-        value: [
-          '`/host event create` — Schedule a new game night',
-          '`/host event cancel` — Cancel a game night',
-          '`/host event archive` — Archive past event channels',
-          '`/host game cancel` — Remove any game from the event lineup',
-          '`/host library unrequest` — Remove any game request from an event',
-        ].join('\n'),
-      }] : []),
-      ...(isAdmin ? [{
-        name: '🔧  /admin — Server configuration',
-        value: [
-          '`/admin event config` — Set server-wide defaults for new events (location, time, description)',
-          '`/admin library clear` — Clear a specific member\'s entire library',
-          '`/admin library sync` — Re-sync a game\'s data from BoardGameGeek',
-          '`/admin tags add` — Add a game genre tag (creates a Discord role)',
-          '`/admin tags remove` — Remove a game genre tag',
-          '`/admin tags list` — List all current tags',
-          '`/admin tags sync` — Create roles for all built-in tags at once',
-          '`/admin tags clear` — Remove all game tags and their roles',
-          '`/admin welcome config` — Configure the welcome message and channel',
-          '`/admin welcome test` — Preview the welcome message',
-          '`/admin welcome greet` — Manually send the welcome message to a member',
-        ].join('\n'),
-      }] : []),
+      ...(isHost
+        ? [
+            {
+              name: '🎙️  /host — Event & moderation tools',
+              value: [
+                '`/host event create` — Schedule a new game night',
+                '`/host event cancel` — Cancel a game night',
+                '`/host event archive` — Archive past event channels',
+                '`/host game cancel` — Remove any game from the event lineup',
+                '`/host library unrequest` — Remove any game request from an event',
+              ].join('\n'),
+            },
+          ]
+        : []),
+      ...(isAdmin
+        ? [
+            {
+              name: '🔧  /admin — Server configuration',
+              value: [
+                '`/admin event config` — Set server-wide defaults for new events (location, time, description)',
+                "`/admin library clear` — Clear a specific member's entire library",
+                "`/admin library sync` — Re-sync a game's data from BoardGameGeek",
+                '`/admin tags add` — Add a game genre tag (creates a Discord role)',
+                '`/admin tags remove` — Remove a game genre tag',
+                '`/admin tags list` — List all current tags',
+                '`/admin tags sync` — Create roles for all built-in tags at once',
+                '`/admin tags clear` — Remove all game tags and their roles',
+                '`/admin welcome config` — Configure the welcome message and channel',
+                '`/admin welcome test` — Preview the welcome message',
+                '`/admin welcome greet` — Manually send the welcome message to a member',
+              ].join('\n'),
+            },
+          ]
+        : []),
     )
     .setFooter({ text: 'Built for the Rulebook Rebels board game group • Made with Claude' });
 
-  await interaction.reply({ embeds: [embed], ephemeral: true });
+  await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }

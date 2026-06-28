@@ -1,31 +1,36 @@
-import { AutocompleteInteraction, ChatInputCommandInteraction } from 'discord.js';
+import {
+  AutocompleteInteraction,
+  ChatInputCommandInteraction,
+  MessageFlags,
+} from 'discord.js';
 import { GENRE_TAG_DEFINITIONS, DIFFICULTY_TAG_DEFINITIONS } from '../utils/tagDefinitions';
 
 const COLOR_PALETTE = [
-  { name: 'Red',         value: '#e74c3c' },
-  { name: 'Orange',      value: '#e67e22' },
-  { name: 'Yellow',      value: '#f1c40f' },
-  { name: 'Green',       value: '#2ecc71' },
-  { name: 'Teal',        value: '#1abc9c' },
-  { name: 'Cyan',        value: '#00bcd4' },
-  { name: 'Blue',        value: '#3498db' },
-  { name: 'Blurple',     value: '#5865f2' },
-  { name: 'Purple',      value: '#9b59b6' },
-  { name: 'Pink',        value: '#e91e8c' },
-  { name: 'Rose',        value: '#e06c75' },
-  { name: 'Gold',        value: '#f0b232' },
-  { name: 'Light Grey',  value: '#95a5a6' },
-  { name: 'Dark Grey',   value: '#607d8b' },
-  { name: 'White',       value: '#ffffff' },
+  { name: 'Red', value: '#e74c3c' },
+  { name: 'Orange', value: '#e67e22' },
+  { name: 'Yellow', value: '#f1c40f' },
+  { name: 'Green', value: '#2ecc71' },
+  { name: 'Teal', value: '#1abc9c' },
+  { name: 'Cyan', value: '#00bcd4' },
+  { name: 'Blue', value: '#3498db' },
+  { name: 'Blurple', value: '#5865f2' },
+  { name: 'Purple', value: '#9b59b6' },
+  { name: 'Pink', value: '#e91e8c' },
+  { name: 'Rose', value: '#e06c75' },
+  { name: 'Gold', value: '#f0b232' },
+  { name: 'Light Grey', value: '#95a5a6' },
+  { name: 'Dark Grey', value: '#607d8b' },
+  { name: 'White', value: '#ffffff' },
 ];
 import { getGameRoles, addGameRole, removeGameRole, clearGameRoles } from '../utils/gameRoles';
 
 export async function handleAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
   const focused = interaction.options.getFocused().toLowerCase();
-  const matches = COLOR_PALETTE
-    .filter(c => c.name.toLowerCase().includes(focused) || c.value.includes(focused))
+  const matches = COLOR_PALETTE.filter(
+    (c) => c.name.toLowerCase().includes(focused) || c.value.includes(focused),
+  )
     .slice(0, 25)
-    .map(c => ({ name: `${c.name} — ${c.value}`, value: c.value }));
+    .map((c) => ({ name: `${c.name} — ${c.value}`, value: c.value }));
   await interaction.respond(matches);
 }
 
@@ -35,12 +40,15 @@ export async function handleAdd(interaction: ChatInputCommandInteraction): Promi
   const colorNum = parseInt(colorStr.replace('#', ''), 16);
 
   const existing = getGameRoles(interaction.guildId!);
-  if (existing.some(r => r.name.toLowerCase() === name.toLowerCase())) {
-    await interaction.reply({ content: `A tag named **${name}** already exists.`, ephemeral: true });
+  if (existing.some((r) => r.name.toLowerCase() === name.toLowerCase())) {
+    await interaction.reply({
+      content: `A tag named **${name}** already exists.`,
+      flags: MessageFlags.Ephemeral,
+    });
     return;
   }
 
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const discordRole = await interaction.guild!.roles.create({
     name,
@@ -57,14 +65,17 @@ export async function handleAdd(interaction: ChatInputCommandInteraction): Promi
 export async function handleRemove(interaction: ChatInputCommandInteraction): Promise<void> {
   const name = interaction.options.getString('name', true).trim();
   const tags = getGameRoles(interaction.guildId!);
-  const tag = tags.find(r => r.name.toLowerCase() === name.toLowerCase());
+  const tag = tags.find((r) => r.name.toLowerCase() === name.toLowerCase());
 
   if (!tag) {
-    await interaction.reply({ content: `No tag named **${name}** found. Use \`/admin tags list\` to see available tags.`, ephemeral: true });
+    await interaction.reply({
+      content: `No tag named **${name}** found. Use \`/admin tags list\` to see available tags.`,
+      flags: MessageFlags.Ephemeral,
+    });
     return;
   }
 
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
     const discordRole = await interaction.guild!.roles.fetch(tag.roleId);
@@ -78,16 +89,22 @@ export async function handleRemove(interaction: ChatInputCommandInteraction): Pr
 }
 
 export async function handleSync(interaction: ChatInputCommandInteraction): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const existing = getGameRoles(interaction.guildId!);
-  const existingNames = new Set(existing.map(r => r.name.toLowerCase()));
+  const existingNames = new Set(existing.map((r) => r.name.toLowerCase()));
 
-  const genreToCreate = GENRE_TAG_DEFINITIONS.filter(tag => !existingNames.has(tag.name.toLowerCase()));
-  const diffToCreate = DIFFICULTY_TAG_DEFINITIONS.filter(tag => !existingNames.has(tag.name.toLowerCase()));
+  const genreToCreate = GENRE_TAG_DEFINITIONS.filter(
+    (tag) => !existingNames.has(tag.name.toLowerCase()),
+  );
+  const diffToCreate = DIFFICULTY_TAG_DEFINITIONS.filter(
+    (tag) => !existingNames.has(tag.name.toLowerCase()),
+  );
 
   if (genreToCreate.length === 0 && diffToCreate.length === 0) {
-    await interaction.editReply(`All ${GENRE_TAG_DEFINITIONS.length} genre tags and ${DIFFICULTY_TAG_DEFINITIONS.length} difficulty roles already exist.`);
+    await interaction.editReply(
+      `All ${GENRE_TAG_DEFINITIONS.length} genre tags and ${DIFFICULTY_TAG_DEFINITIONS.length} difficulty roles already exist.`,
+    );
     return;
   }
 
@@ -119,20 +136,29 @@ export async function handleSync(interaction: ChatInputCommandInteraction): Prom
         mentionable: false,
         reason: `Difficulty role sync by ${interaction.user.tag}`,
       });
-      addGameRole(interaction.guildId!, { roleId: discordRole.id, name: tag.name, type: 'difficulty' });
+      addGameRole(interaction.guildId!, {
+        roleId: discordRole.id,
+        name: tag.name,
+        type: 'difficulty',
+      });
       created++;
     } catch {
       failed.push(tag.name);
     }
   }
 
-  const skipped = (GENRE_TAG_DEFINITIONS.length - genreToCreate.length) + (DIFFICULTY_TAG_DEFINITIONS.length - diffToCreate.length);
+  const skipped =
+    GENRE_TAG_DEFINITIONS.length -
+    genreToCreate.length +
+    (DIFFICULTY_TAG_DEFINITIONS.length - diffToCreate.length);
   const parts: string[] = [];
   if (created > 0) parts.push(`**${created}** role${created !== 1 ? 's' : ''} created`);
   if (skipped > 0) parts.push(`**${skipped}** already existed`);
   if (failed.length > 0) parts.push(`**${failed.length}** failed: ${failed.join(', ')}`);
 
-  await interaction.editReply(`Sync complete — ${parts.join(', ')}. Members can assign these with \`/myroles\`.`);
+  await interaction.editReply(
+    `Sync complete — ${parts.join(', ')}. Members can assign these with \`/myroles\`.`,
+  );
 }
 
 export async function handleList(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -141,25 +167,25 @@ export async function handleList(interaction: ChatInputCommandInteraction): Prom
   if (tags.length === 0) {
     await interaction.reply({
       content: 'No game tags set up yet. Use `/gametags add` to create some.',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
-  const genre = tags.filter(t => t.type !== 'difficulty');
-  const difficulty = tags.filter(t => t.type === 'difficulty');
+  const genre = tags.filter((t) => t.type !== 'difficulty');
+  const difficulty = tags.filter((t) => t.type === 'difficulty');
   const lines: string[] = [`**Game tags (${tags.length}):**`];
   if (difficulty.length > 0) {
-    lines.push('**Difficulty:**', ...difficulty.map(t => `> <@&${t.roleId}>`));
+    lines.push('**Difficulty:**', ...difficulty.map((t) => `> <@&${t.roleId}>`));
   }
   if (genre.length > 0) {
-    lines.push('**Genre:**', ...genre.map(t => `> <@&${t.roleId}>`));
+    lines.push('**Genre:**', ...genre.map((t) => `> <@&${t.roleId}>`));
   }
-  await interaction.reply({ content: lines.join('\n'), ephemeral: true });
+  await interaction.reply({ content: lines.join('\n'), flags: MessageFlags.Ephemeral });
 }
 
 export async function handleClear(interaction: ChatInputCommandInteraction): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const removed = clearGameRoles(interaction.guildId!);
   if (removed.length === 0) {
@@ -178,5 +204,7 @@ export async function handleClear(interaction: ChatInputCommandInteraction): Pro
     }
   }
 
-  await interaction.editReply(`Cleared **${deleted}** game tag role${deleted !== 1 ? 's' : ''}. Use \`/admin tags sync\` to recreate them.`);
+  await interaction.editReply(
+    `Cleared **${deleted}** game tag role${deleted !== 1 ? 's' : ''}. Use \`/admin tags sync\` to recreate them.`,
+  );
 }

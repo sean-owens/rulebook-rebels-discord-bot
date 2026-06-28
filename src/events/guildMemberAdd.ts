@@ -7,7 +7,7 @@ export async function handleGuildMemberAdd(member: GuildMember): Promise<void> {
   // ── Welcome embed in introductions channel ───────────────────────────────
   if (config.welcomeChannelId) {
     try {
-      const channel = await member.client.channels.fetch(config.welcomeChannelId) as TextChannel;
+      const channel = (await member.client.channels.fetch(config.welcomeChannelId)) as TextChannel;
 
       const fields = [];
 
@@ -43,7 +43,9 @@ export async function handleGuildMemberAdd(member: GuildMember): Promise<void> {
       const embed = new EmbedBuilder()
         .setColor(0x57f287)
         .setTitle(`Welcome to Rulebook Rebels!`)
-        .setDescription(`Hey ${member}! We're so glad you're here. Here are a few things to help you get started:`)
+        .setDescription(
+          `Hey ${member}! We're so glad you're here. Here are a few things to help you get started:`,
+        )
         .addFields(fields)
         .setThumbnail(member.user.displayAvatarURL())
         .setFooter({ text: `Member #${member.guild.memberCount}` });
@@ -56,17 +58,19 @@ export async function handleGuildMemberAdd(member: GuildMember): Promise<void> {
 
   // ── DM to new member ─────────────────────────────────────────────────────
   try {
-    await member.send([
-      `👋 Hey **${member.displayName}**, welcome to **${member.guild.name}**!`,
-      ``,
-      `One quick tip: consider setting a **server nickname** so the group knows who you are!`,
-      ``,
-      `Here's how:`,
-      `> • **Desktop:** Right-click your name in the member list → *Edit Server Profile* → set a *Server Nickname*`,
-      `> • **Mobile:** Tap your avatar → *Edit Server Profile* → set a *Server Nickname*`,
-      ``,
-      `See you at the table! 🎲`,
-    ].join('\n'));
+    await member.send(
+      [
+        `👋 Hey **${member.displayName}**, welcome to **${member.guild.name}**!`,
+        ``,
+        `One quick tip: consider setting a **server nickname** so the group knows who you are!`,
+        ``,
+        `Here's how:`,
+        `> • **Desktop:** Right-click your name in the member list → *Edit Server Profile* → set a *Server Nickname*`,
+        `> • **Mobile:** Tap your avatar → *Edit Server Profile* → set a *Server Nickname*`,
+        ``,
+        `See you at the table! 🎲`,
+      ].join('\n'),
+    );
   } catch {
     // User may have DMs disabled — that's fine
   }

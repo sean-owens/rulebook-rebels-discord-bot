@@ -12,7 +12,7 @@ export async function archiveEventChannel(client: Client, gn: GameNight): Promis
 
   const { archiveCategoryName } = getGuildConfig(gn.guildId);
   let archiveCategory = guild.channels.cache.find(
-    c => c.type === ChannelType.GuildCategory && c.name === archiveCategoryName
+    (c) => c.type === ChannelType.GuildCategory && c.name === archiveCategoryName,
   );
   if (!archiveCategory) {
     archiveCategory = await guild.channels.create({
@@ -21,20 +21,28 @@ export async function archiveEventChannel(client: Client, gn: GameNight): Promis
     });
   }
 
-  const channel = await client.channels.fetch(gn.eventChannelId) as TextChannel;
+  const channel = (await client.channels.fetch(gn.eventChannelId)) as TextChannel;
 
   const me = await guild.members.fetchMe();
-  await channel.permissionOverwrites.create(me, { ViewChannel: true, SendMessages: true, ManageMessages: true });
+  await channel.permissionOverwrites.create(me, {
+    ViewChannel: true,
+    SendMessages: true,
+    ManageMessages: true,
+  });
 
   // Move to Archive category without locking — locking happens after LOCK_DELAY_DAYS
   await channel.setParent(archiveCategory.id, { lockPermissions: false });
 
   const lockDate = new Date();
   lockDate.setDate(lockDate.getDate() + LOCK_DELAY_DAYS);
-  const lockDateStr = lockDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const lockDateStr = lockDate.toLocaleDateString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  });
 
   await channel.send(
-    `*This event has concluded. The channel has been archived and will become read-only on ${lockDateStr}.*`
+    `*This event has concluded. The channel has been archived and will become read-only on ${lockDateStr}.*`,
   );
 
   // Clean up the announcement
@@ -52,7 +60,9 @@ export async function archiveEventChannel(client: Client, gn: GameNight): Promis
         const msg = await (announcementChannel as TextChannel).messages.fetch(gn.messageId);
         await msg.delete();
       }
-    } catch { /* already deleted/archived */ }
+    } catch {
+      /* already deleted/archived */
+    }
   }
 
   gn.archived = true;
@@ -67,7 +77,7 @@ export async function lockEventChannel(client: Client, gn: GameNight): Promise<v
 
   try {
     const guild = await client.guilds.fetch(gn.guildId);
-    const channel = await client.channels.fetch(gn.eventChannelId) as TextChannel;
+    const channel = (await client.channels.fetch(gn.eventChannelId)) as TextChannel;
 
     await channel.permissionOverwrites.create(guild.roles.everyone, {
       ViewChannel: true,
@@ -89,7 +99,7 @@ export async function lockEventChannel(client: Client, gn: GameNight): Promise<v
 export async function checkPendingLocks(client: Client): Promise<void> {
   const now = new Date();
   const pending = loadGameNights().filter(
-    gn => gn.archived && !gn.locked && gn.lockAt && new Date(gn.lockAt) <= now
+    (gn) => gn.archived && !gn.locked && gn.lockAt && new Date(gn.lockAt) <= now,
   );
   for (const gn of pending) {
     await lockEventChannel(client, gn);

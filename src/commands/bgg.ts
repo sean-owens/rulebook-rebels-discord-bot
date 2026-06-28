@@ -1,4 +1,10 @@
-import { AttachmentBuilder, ChatInputCommandInteraction, EmbedBuilder, SlashCommandBuilder } from 'discord.js';
+import {
+  AttachmentBuilder,
+  ChatInputCommandInteraction,
+  EmbedBuilder,
+  SlashCommandBuilder,
+  MessageFlags,
+} from 'discord.js';
 import { validateBggUser, getBggUserProfile } from '../utils/bgg';
 import { getBggAccount, setBggAccount, removeBggAccount } from '../utils/bggAccountStorage';
 
@@ -10,19 +16,21 @@ const linkCooldowns = new Map<string, number>();
 export const data = new SlashCommandBuilder()
   .setName('bgg')
   .setDescription('Link your BoardGameGeek account')
-  .addSubcommand(sub =>
+  .addSubcommand((sub) =>
     sub
       .setName('link')
       .setDescription('Link your BoardGameGeek account to this server')
-      .addStringOption(opt =>
-        opt.setName('username').setDescription('Your BoardGameGeek username').setRequired(true)
-      )
+      .addStringOption((opt) =>
+        opt.setName('username').setDescription('Your BoardGameGeek username').setRequired(true),
+      ),
   )
-  .addSubcommand(sub =>
-    sub.setName('unlink').setDescription('Remove your linked BoardGameGeek account from this server')
+  .addSubcommand((sub) =>
+    sub
+      .setName('unlink')
+      .setDescription('Remove your linked BoardGameGeek account from this server'),
   )
-  .addSubcommand(sub =>
-    sub.setName('profile').setDescription('View your linked BoardGameGeek account')
+  .addSubcommand((sub) =>
+    sub.setName('profile').setDescription('View your linked BoardGameGeek account'),
   );
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -39,7 +47,7 @@ async function handleLink(interaction: ChatInputCommandInteraction): Promise<voi
   if (existing && existing.bggUsername.toLowerCase() === username.toLowerCase()) {
     await interaction.reply({
       content: `Your BoardGameGeek account **[${existing.bggUsername}](https://boardgamegeek.com/user/${encodeURIComponent(existing.bggUsername)})** is already linked on this server.`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -50,13 +58,13 @@ async function handleLink(interaction: ChatInputCommandInteraction): Promise<voi
   if (remaining > 0) {
     await interaction.reply({
       content: `Please wait ${Math.ceil(remaining / 1000)} seconds before trying again.`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
   linkCooldowns.set(cooldownKey, Date.now());
 
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   let bggUser;
   try {
@@ -67,7 +75,9 @@ async function handleLink(interaction: ChatInputCommandInteraction): Promise<voi
   }
 
   if (!bggUser) {
-    await interaction.editReply('We couldn\'t verify that BoardGameGeek account. Double-check your username and try again.');
+    await interaction.editReply(
+      "We couldn't verify that BoardGameGeek account. Double-check your username and try again.",
+    );
     return;
   }
 
@@ -82,7 +92,11 @@ async function handleLink(interaction: ChatInputCommandInteraction): Promise<voi
     .setColor(0x5865f2)
     .setTitle(isRelink ? 'BoardGameGeek Account Updated' : 'BoardGameGeek Account Linked')
     .setDescription(description)
-    .addFields({ name: 'What this unlocks', value: 'You can now import your BoardGameGeek collection and use BoardGameGeek-connected features on this server.' })
+    .addFields({
+      name: 'What this unlocks',
+      value:
+        'You can now import your BoardGameGeek collection and use BoardGameGeek-connected features on this server.',
+    })
     .setImage('attachment://powered_by_BGG_01_SM.png');
 
   await interaction.editReply({ embeds: [embed], files: [BGG_LOGO] });
@@ -92,11 +106,17 @@ async function handleUnlink(interaction: ChatInputCommandInteraction): Promise<v
   const removed = removeBggAccount(interaction.guildId!, interaction.user.id);
 
   if (!removed) {
-    await interaction.reply({ content: 'You don\'t have a BoardGameGeek account linked on this server.', ephemeral: true });
+    await interaction.reply({
+      content: "You don't have a BoardGameGeek account linked on this server.",
+      flags: MessageFlags.Ephemeral,
+    });
     return;
   }
 
-  await interaction.reply({ content: 'Your BoardGameGeek account has been unlinked from this server.', ephemeral: true });
+  await interaction.reply({
+    content: 'Your BoardGameGeek account has been unlinked from this server.',
+    flags: MessageFlags.Ephemeral,
+  });
 }
 
 async function handleProfile(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -104,13 +124,14 @@ async function handleProfile(interaction: ChatInputCommandInteraction): Promise<
 
   if (!account) {
     await interaction.reply({
-      content: 'You don\'t have a BoardGameGeek account linked on this server. Use `/bgg link` to connect one.',
-      ephemeral: true,
+      content:
+        "You don't have a BoardGameGeek account linked on this server. Use `/bgg link` to connect one.",
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   let profile;
   try {
@@ -135,21 +156,23 @@ async function handleProfile(interaction: ChatInputCommandInteraction): Promise<
 
     const baseStr = profile.baseGames !== null ? `${profile.baseGames} games` : null;
     const expStr = profile.expansions !== null ? `${profile.expansions} expansions` : null;
-    const collectionValue = (baseStr || expStr)
-      ? [baseStr, expStr].filter(Boolean).join('\n')
-      : 'Unavailable — try again shortly';
+    const collectionValue =
+      baseStr || expStr
+        ? [baseStr, expStr].filter(Boolean).join('\n')
+        : 'Unavailable — try again shortly';
     fields.push({ name: 'Collection', value: collectionValue, inline: true });
 
     if (profile.topGames.length > 0) {
-      const topList = profile.topGames
-        .map(g => `${g.rank}. ${g.name}`)
-        .join('\n');
+      const topList = profile.topGames.map((g) => `${g.rank}. ${g.name}`).join('\n');
       fields.push({ name: 'Top Games', value: topList });
     }
 
     embed.addFields(...fields);
   } else {
-    embed.addFields({ name: 'Profile data', value: 'Could not load BoardGameGeek profile data right now — try again in a moment.' });
+    embed.addFields({
+      name: 'Profile data',
+      value: 'Could not load BoardGameGeek profile data right now — try again in a moment.',
+    });
   }
 
   embed.setImage('attachment://powered_by_BGG_01_SM.png');

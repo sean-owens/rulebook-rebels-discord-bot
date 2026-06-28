@@ -24,12 +24,13 @@ export async function updateAnnouncementPin(client: Client, guildId: string): Pr
   // Pin the next upcoming event
   const now = Date.now();
   const next = loadGameNights()
-    .filter(g =>
-      !g.cancelled &&
-      !g.archived &&
-      g.messageId &&
-      g.channelId === config.announcementsChannelId &&
-      new Date(g.startTimeISO).getTime() > now
+    .filter(
+      (g) =>
+        !g.cancelled &&
+        !g.archived &&
+        g.messageId &&
+        g.channelId === config.announcementsChannelId &&
+        new Date(g.startTimeISO).getTime() > now,
     )
     .sort((a, b) => new Date(a.startTimeISO).getTime() - new Date(b.startTimeISO).getTime())[0];
 

@@ -1,4 +1,4 @@
-import { ChatInputCommandInteraction } from 'discord.js';
+import { ChatInputCommandInteraction, MessageFlags } from 'discord.js';
 import { getGuildConfig, updateGuildConfig } from '../utils/config';
 import { handleGuildMemberAdd } from '../events/guildMemberAdd';
 
@@ -12,7 +12,7 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
   if (rulesChannel !== null) patch.rulesChannelId = rulesChannel.id;
   if (facebookUrl !== null) patch.facebookGroupUrl = facebookUrl;
 
-  const ch = (id: string) => id ? `<#${id}>` : '*not set*';
+  const ch = (id: string) => (id ? `<#${id}>` : '*not set*');
 
   if (Object.keys(patch).length === 0) {
     const c = getGuildConfig(interaction.guildId!);
@@ -23,7 +23,7 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
         `> Rules channel: ${ch(c.rulesChannelId)}`,
         `> Facebook group: ${c.facebookGroupUrl || '*not set*'}`,
       ].join('\n'),
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -36,19 +36,19 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
       `> Rules channel: ${ch(updated.rulesChannelId)}`,
       `> Facebook group: ${updated.facebookGroupUrl || '*not set*'}`,
     ].join('\n'),
-    ephemeral: true,
+    flags: MessageFlags.Ephemeral,
   });
 }
 
 export async function handleTest(interaction: ChatInputCommandInteraction): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const member = await interaction.guild!.members.fetch(interaction.user.id);
   await handleGuildMemberAdd(member);
   await interaction.editReply('Welcome message sent! Check the welcome channel and your DMs.');
 }
 
 export async function handleGreet(interaction: ChatInputCommandInteraction): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const user = interaction.options.getUser('member', true);
   const member = await interaction.guild!.members.fetch(user.id);
   await handleGuildMemberAdd(member);

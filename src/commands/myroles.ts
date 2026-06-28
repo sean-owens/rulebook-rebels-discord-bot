@@ -6,6 +6,7 @@ import {
   ChatInputCommandInteraction,
   EmbedBuilder,
   SlashCommandBuilder,
+  MessageFlags,
 } from 'discord.js';
 import { getGameRoles, GameRole } from '../utils/gameRoles';
 
@@ -20,8 +21,8 @@ export const data = new SlashCommandBuilder()
 
 function splitTags(tags: GameRole[]): { genreTags: GameRole[]; difficultyTags: GameRole[] } {
   return {
-    genreTags: tags.filter(t => t.type !== 'difficulty'),
-    difficultyTags: tags.filter(t => t.type === 'difficulty'),
+    genreTags: tags.filter((t) => t.type !== 'difficulty'),
+    difficultyTags: tags.filter((t) => t.type === 'difficulty'),
   };
 }
 
@@ -29,20 +30,20 @@ function buildDifficultyStep(
   difficultyTags: GameRole[],
   selected: Set<string>,
 ): { embeds: EmbedBuilder[]; components: ActionRowBuilder<ButtonBuilder>[] } {
-  const selectedDiff = difficultyTags.filter(t => selected.has(t.roleId));
+  const selectedDiff = difficultyTags.filter((t) => selected.has(t.roleId));
 
   const rows: ActionRowBuilder<ButtonBuilder>[] = [];
 
   if (difficultyTags.length > 0) {
     rows.push(
       new ActionRowBuilder<ButtonBuilder>().addComponents(
-        difficultyTags.map(t =>
+        difficultyTags.map((t) =>
           new ButtonBuilder()
             .setCustomId(`myroles_diff_${t.roleId}`)
             .setLabel(`⚖️ ${t.name}`)
-            .setStyle(selected.has(t.roleId) ? ButtonStyle.Success : ButtonStyle.Primary)
-        )
-      )
+            .setStyle(selected.has(t.roleId) ? ButtonStyle.Success : ButtonStyle.Primary),
+        ),
+      ),
     );
   }
 
@@ -51,17 +52,22 @@ function buildDifficultyStep(
       new ButtonBuilder()
         .setCustomId('myroles_next')
         .setLabel('Next: Pick Genres →')
-        .setStyle(ButtonStyle.Secondary)
-    )
+        .setStyle(ButtonStyle.Secondary),
+    ),
   );
 
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
     .setTitle('Your Game Preferences — Step 1 of 2')
-    .setDescription('How complex do you like your games? Pick a difficulty level that fits your style best.')
+    .setDescription(
+      'How complex do you like your games? Pick a difficulty level that fits your style best.',
+    )
     .addFields({
       name: 'Selected Difficulty',
-      value: selectedDiff.length > 0 ? selectedDiff.map(t => `<@&${t.roleId}>`).join(' ') : '*None — skip if you have no preference*',
+      value:
+        selectedDiff.length > 0
+          ? selectedDiff.map((t) => `<@&${t.roleId}>`).join(' ')
+          : '*None — skip if you have no preference*',
     });
 
   return { embeds: [embed], components: rows };
@@ -76,8 +82,8 @@ function buildGenreStep(
   const totalPages = Math.ceil(genreTags.length / GENRE_PAGE_SIZE);
   const pageRoles = genreTags.slice(page * GENRE_PAGE_SIZE, (page + 1) * GENRE_PAGE_SIZE);
 
-  const selectedDiff = difficultyTags.filter(t => selected.has(t.roleId));
-  const selectedGenre = genreTags.filter(t => selected.has(t.roleId));
+  const selectedDiff = difficultyTags.filter((t) => selected.has(t.roleId));
+  const selectedGenre = genreTags.filter((t) => selected.has(t.roleId));
   const selectedGenreCount = selectedGenre.length;
   const atLimit = selectedGenreCount >= MAX_GENRE_TAGS;
 
@@ -87,15 +93,15 @@ function buildGenreStep(
   for (let i = 0; i < pageRoles.length; i += 5) {
     rows.push(
       new ActionRowBuilder<ButtonBuilder>().addComponents(
-        pageRoles.slice(i, i + 5).map(t => {
+        pageRoles.slice(i, i + 5).map((t) => {
           const isSelected = selected.has(t.roleId);
           return new ButtonBuilder()
             .setCustomId(`myroles_tag_${page}_${t.roleId}`)
             .setLabel(t.name)
             .setStyle(isSelected ? ButtonStyle.Success : ButtonStyle.Secondary)
             .setDisabled(atLimit && !isSelected);
-        })
-      )
+        }),
+      ),
     );
   }
 
@@ -111,7 +117,7 @@ function buildGenreStep(
       new ButtonBuilder()
         .setCustomId(`myroles_page_${page - 1}`)
         .setLabel('← Back')
-        .setStyle(ButtonStyle.Secondary)
+        .setStyle(ButtonStyle.Secondary),
     );
   }
   if (totalPages > 1 && page < totalPages - 1) {
@@ -119,14 +125,14 @@ function buildGenreStep(
       new ButtonBuilder()
         .setCustomId(`myroles_page_${page + 1}`)
         .setLabel('Next →')
-        .setStyle(ButtonStyle.Secondary)
+        .setStyle(ButtonStyle.Secondary),
     );
   }
   controlRow.push(
     new ButtonBuilder()
       .setCustomId('myroles_submit')
       .setLabel('Save')
-      .setStyle(ButtonStyle.Primary)
+      .setStyle(ButtonStyle.Primary),
   );
   rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(...controlRow));
 
@@ -136,16 +142,24 @@ function buildGenreStep(
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
     .setTitle(`Your Game Preferences — Step 2 of 2${pageNote}`)
-    .setDescription('Pick up to **5 genre tags** that best describe the types of games you enjoy most.')
+    .setDescription(
+      'Pick up to **5 genre tags** that best describe the types of games you enjoy most.',
+    )
     .addFields(
       {
         name: 'Difficulty',
-        value: selectedDiff.length > 0 ? selectedDiff.map(t => `<@&${t.roleId}>`).join(' ') : '*None selected*',
+        value:
+          selectedDiff.length > 0
+            ? selectedDiff.map((t) => `<@&${t.roleId}>`).join(' ')
+            : '*None selected*',
         inline: true,
       },
       {
         name: genreLabel,
-        value: selectedGenre.length > 0 ? selectedGenre.map(t => `<@&${t.roleId}>`).join(' ') : '*None selected*',
+        value:
+          selectedGenre.length > 0
+            ? selectedGenre.map((t) => `<@&${t.roleId}>`).join(' ')
+            : '*None selected*',
         inline: true,
       },
     );
@@ -153,13 +167,16 @@ function buildGenreStep(
   return { embeds: [embed], components: rows };
 }
 
-async function initPending(interaction: ButtonInteraction, allTags: GameRole[]): Promise<Set<string>> {
+async function initPending(
+  interaction: ButtonInteraction,
+  allTags: GameRole[],
+): Promise<Set<string>> {
   if (!pendingSelections.has(interaction.user.id)) {
     const member = await interaction.guild!.members.fetch(interaction.user.id);
-    const tagRoleIds = new Set(allTags.map(t => t.roleId));
+    const tagRoleIds = new Set(allTags.map((t) => t.roleId));
     pendingSelections.set(
       interaction.user.id,
-      new Set([...member.roles.cache.keys()].filter(id => tagRoleIds.has(id))),
+      new Set([...member.roles.cache.keys()].filter((id) => tagRoleIds.has(id))),
     );
   }
   return pendingSelections.get(interaction.user.id)!;
@@ -171,22 +188,22 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   if (allTags.length === 0) {
     await interaction.reply({
       content: 'No game tags have been set up yet. Ask an admin to run `/gametags sync`.',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
   const { difficultyTags } = splitTags(allTags);
   const member = await interaction.guild!.members.fetch(interaction.user.id);
-  const tagRoleIds = new Set(allTags.map(t => t.roleId));
-  const selected = new Set([...member.roles.cache.keys()].filter(id => tagRoleIds.has(id)));
+  const tagRoleIds = new Set(allTags.map((t) => t.roleId));
+  const selected = new Set([...member.roles.cache.keys()].filter((id) => tagRoleIds.has(id)));
   pendingSelections.set(interaction.user.id, selected);
 
   if (difficultyTags.length > 0) {
-    await interaction.reply({ ...buildDifficultyStep(difficultyTags, selected), ephemeral: true });
+    await interaction.reply({ ...buildDifficultyStep(difficultyTags, selected), flags: MessageFlags.Ephemeral });
   } else {
     const { genreTags } = splitTags(allTags);
-    await interaction.reply({ ...buildGenreStep(genreTags, [], selected, 0), ephemeral: true });
+    await interaction.reply({ ...buildGenreStep(genreTags, [], selected, 0), flags: MessageFlags.Ephemeral });
   }
 }
 
@@ -237,7 +254,7 @@ export async function handleMyRolesTag(
   if (selected.has(roleId)) {
     selected.delete(roleId);
   } else {
-    const currentGenreCount = genreTags.filter(t => selected.has(t.roleId)).length;
+    const currentGenreCount = genreTags.filter((t) => selected.has(t.roleId)).length;
     if (currentGenreCount < MAX_GENRE_TAGS) selected.add(roleId);
   }
 
@@ -263,20 +280,23 @@ export async function handleMyRolesSubmit(interaction: ButtonInteraction): Promi
   const { genreTags, difficultyTags } = splitTags(allTags);
   const member = await interaction.guild!.members.fetch(interaction.user.id);
 
-  const selected = pendingSelections.get(interaction.user.id)
-    ?? new Set([...member.roles.cache.keys()].filter(id => allTags.some(t => t.roleId === id)));
+  const selected =
+    pendingSelections.get(interaction.user.id) ??
+    new Set([...member.roles.cache.keys()].filter((id) => allTags.some((t) => t.roleId === id)));
   pendingSelections.delete(interaction.user.id);
 
-  const toAdd = allTags.filter(t => selected.has(t.roleId) && !member.roles.cache.has(t.roleId));
-  const toRemove = allTags.filter(t => !selected.has(t.roleId) && member.roles.cache.has(t.roleId));
+  const toAdd = allTags.filter((t) => selected.has(t.roleId) && !member.roles.cache.has(t.roleId));
+  const toRemove = allTags.filter(
+    (t) => !selected.has(t.roleId) && member.roles.cache.has(t.roleId),
+  );
 
   await Promise.all([
-    ...toAdd.map(t => member.roles.add(t.roleId)),
-    ...toRemove.map(t => member.roles.remove(t.roleId)),
+    ...toAdd.map((t) => member.roles.add(t.roleId)),
+    ...toRemove.map((t) => member.roles.remove(t.roleId)),
   ]);
 
-  const selectedDiff = difficultyTags.filter(t => selected.has(t.roleId));
-  const selectedGenre = genreTags.filter(t => selected.has(t.roleId));
+  const selectedDiff = difficultyTags.filter((t) => selected.has(t.roleId));
+  const selectedGenre = genreTags.filter((t) => selected.has(t.roleId));
 
   const embed = new EmbedBuilder()
     .setColor(0x57f287)
@@ -284,12 +304,18 @@ export async function handleMyRolesSubmit(interaction: ButtonInteraction): Promi
     .addFields(
       {
         name: 'Difficulty',
-        value: selectedDiff.length > 0 ? selectedDiff.map(t => `<@&${t.roleId}>`).join(' ') : '*None selected*',
+        value:
+          selectedDiff.length > 0
+            ? selectedDiff.map((t) => `<@&${t.roleId}>`).join(' ')
+            : '*None selected*',
         inline: true,
       },
       {
         name: 'Genres',
-        value: selectedGenre.length > 0 ? selectedGenre.map(t => `<@&${t.roleId}>`).join(' ') : '*None selected*',
+        value:
+          selectedGenre.length > 0
+            ? selectedGenre.map((t) => `<@&${t.roleId}>`).join(' ')
+            : '*None selected*',
         inline: true,
       },
     );

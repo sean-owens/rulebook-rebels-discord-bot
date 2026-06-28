@@ -41,16 +41,16 @@ export function saveGameNights(gamenights: GameNight[]): void {
 }
 
 export function findGameNight(id: string): GameNight | undefined {
-  return loadGameNights().find(g => g.id === id);
+  return loadGameNights().find((g) => g.id === id);
 }
 
 export function findGameNightByDiscordEventId(discordEventId: string): GameNight | undefined {
-  return loadGameNights().find(g => g.discordEventId === discordEventId);
+  return loadGameNights().find((g) => g.discordEventId === discordEventId);
 }
 
 export function upsertGameNight(gamenight: GameNight): void {
   const all = loadGameNights();
-  const idx = all.findIndex(g => g.id === gamenight.id);
+  const idx = all.findIndex((g) => g.id === gamenight.id);
   if (idx >= 0) all[idx] = gamenight;
   else all.push(gamenight);
   saveGameNights(all);

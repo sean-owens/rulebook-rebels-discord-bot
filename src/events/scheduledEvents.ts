@@ -37,8 +37,8 @@ export async function handleScheduledEventUpdate(
   }
 
   if (newEvent.status === GuildScheduledEventStatus.Completed && !gn.archived) {
-    await archiveEventChannel(newEvent.client, gn).catch(err =>
-      console.warn('Could not archive event channel:', err)
+    await archiveEventChannel(newEvent.client, gn).catch((err) =>
+      console.warn('Could not archive event channel:', err),
     );
     await updateAnnouncementPin(newEvent.client, gn.guildId).catch(() => null);
   }
@@ -55,27 +55,31 @@ export async function handleScheduledEventUserRemove(
   const userId = user.id;
   if (gn.rsvps.no.includes(userId)) return;
 
-  gn.rsvps.yes = gn.rsvps.yes.filter(id => id !== userId);
-  gn.rsvps.maybe = gn.rsvps.maybe.filter(id => id !== userId);
+  gn.rsvps.yes = gn.rsvps.yes.filter((id) => id !== userId);
+  gn.rsvps.maybe = gn.rsvps.maybe.filter((id) => id !== userId);
   gn.rsvps.no.push(userId);
   upsertGameNight(gn);
 
   if (gn.eventChannelId) {
     try {
-      const ch = await scheduledEvent.client.channels.fetch(gn.eventChannelId) as TextChannel;
+      const ch = (await scheduledEvent.client.channels.fetch(gn.eventChannelId)) as TextChannel;
       await ch.permissionOverwrites.delete(userId);
-    } catch { /* channel may not exist */ }
+    } catch {
+      /* channel may not exist */
+    }
   }
 
   if (gn.messageId && gn.channelId) {
     try {
-      const ch = await scheduledEvent.client.channels.fetch(gn.channelId) as TextChannel;
+      const ch = (await scheduledEvent.client.channels.fetch(gn.channelId)) as TextChannel;
       const msg = await ch.messages.fetch(gn.messageId);
       await msg.edit({
         embeds: [buildGameNightEmbed(gn, {})],
         components: [buildGameNightButtons(gn.id)],
       });
-    } catch { /* message deleted */ }
+    } catch {
+      /* message deleted */
+    }
   }
 }
 
@@ -90,26 +94,30 @@ export async function handleScheduledEventUserAdd(
   const userId = user.id;
   if (gn.rsvps.yes.includes(userId)) return;
 
-  gn.rsvps.maybe = gn.rsvps.maybe.filter(id => id !== userId);
-  gn.rsvps.no = gn.rsvps.no.filter(id => id !== userId);
+  gn.rsvps.maybe = gn.rsvps.maybe.filter((id) => id !== userId);
+  gn.rsvps.no = gn.rsvps.no.filter((id) => id !== userId);
   gn.rsvps.yes.push(userId);
   upsertGameNight(gn);
 
   if (gn.eventChannelId) {
     try {
-      const ch = await scheduledEvent.client.channels.fetch(gn.eventChannelId) as TextChannel;
+      const ch = (await scheduledEvent.client.channels.fetch(gn.eventChannelId)) as TextChannel;
       await ch.permissionOverwrites.create(userId, { ViewChannel: true });
-    } catch { /* channel may not exist */ }
+    } catch {
+      /* channel may not exist */
+    }
   }
 
   if (gn.messageId && gn.channelId) {
     try {
-      const ch = await scheduledEvent.client.channels.fetch(gn.channelId) as TextChannel;
+      const ch = (await scheduledEvent.client.channels.fetch(gn.channelId)) as TextChannel;
       const msg = await ch.messages.fetch(gn.messageId);
       await msg.edit({
         embeds: [buildGameNightEmbed(gn, {})],
         components: [buildGameNightButtons(gn.id)],
       });
-    } catch { /* message deleted */ }
+    } catch {
+      /* message deleted */
+    }
   }
 }

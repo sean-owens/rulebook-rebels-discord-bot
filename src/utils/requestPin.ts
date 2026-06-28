@@ -3,7 +3,11 @@ import { loadGameNights, upsertGameNight } from './storage';
 import { getRequestsForEvent, loadLibraryForGuild, GameRequest } from './libraryStorage';
 import { findGamesByChannel, GameSuggestion } from './gameStorage';
 
-export function buildRequestEmbed(guildId: string, requests: GameRequest[], nameMap: Record<string, string> = {}): EmbedBuilder {
+export function buildRequestEmbed(
+  guildId: string,
+  requests: GameRequest[],
+  nameMap: Record<string, string> = {},
+): EmbedBuilder {
   const library = loadLibraryForGuild(guildId);
 
   // Group by owner — a game with multiple owners appears under each
@@ -13,14 +17,17 @@ export function buildRequestEmbed(guildId: string, requests: GameRequest[], name
   for (const req of requests) {
     const copies = req.copiesNeeded ?? 1;
     const confirmed = req.confirmedBy ? ' ✅' : '';
-    const label = copies > 1
-      ? `${req.gameName} *(${copies} copies needed)*${confirmed}`
-      : `${req.gameName}${confirmed}`;
-    const owners = [...new Set(
-      library
-        .filter(e => e.gameName.toLowerCase() === req.gameName.toLowerCase())
-        .map(e => e.userId)
-    )];
+    const label =
+      copies > 1
+        ? `${req.gameName} *(${copies} copies needed)*${confirmed}`
+        : `${req.gameName}${confirmed}`;
+    const owners = [
+      ...new Set(
+        library
+          .filter((e) => e.gameName.toLowerCase() === req.gameName.toLowerCase())
+          .map((e) => e.userId),
+      ),
+    ];
 
     if (owners.length === 0) {
       noOwnerGames.push(label);
@@ -37,15 +44,20 @@ export function buildRequestEmbed(guildId: string, requests: GameRequest[], name
   const embed = new EmbedBuilder()
     .setTitle('Games to Bring')
     .setColor(0x5865f2)
-    .setFooter({ text: 'Request games with /library request <game> • Confirm with /library bring game:<name>' });
+    .setFooter({
+      text: 'Request games with /library request <game> • Confirm with /library bring game:<name>',
+    });
 
   for (const [userId, games] of ownerMap) {
     const displayName = nameMap[userId] ?? `User ${userId.slice(0, 6)}…`;
-    embed.addFields({ name: displayName, value: games.map(g => `• ${g}`).join('\n') });
+    embed.addFields({ name: displayName, value: games.map((g) => `• ${g}`).join('\n') });
   }
 
   if (noOwnerGames.length > 0) {
-    embed.addFields({ name: 'Owner not in library', value: noOwnerGames.map(g => `• ${g}`).join('\n') });
+    embed.addFields({
+      name: 'Owner not in library',
+      value: noOwnerGames.map((g) => `• ${g}`).join('\n'),
+    });
   }
 
   if (ownerMap.size === 0 && noOwnerGames.length === 0) {
@@ -60,21 +72,26 @@ function buildGameListEmbed(games: GameSuggestion[]): EmbedBuilder {
   if (games.length === 0) {
     return embed.setDescription('No games scheduled yet.');
   }
-  const lines = games.map(g => {
+  const lines = games.map((g) => {
     const link = `https://discord.com/channels/${g.guildId}/${g.channelId}/${g.messageId}`;
     const players = `${g.minPlayers}–${g.maxPlayers}p`;
-    const time = g.minPlaytime === g.maxPlaytime ? `${g.minPlaytime}min` : `${g.minPlaytime}–${g.maxPlaytime}min`;
+    const time =
+      g.minPlaytime === g.maxPlaytime
+        ? `${g.minPlaytime}min`
+        : `${g.minPlaytime}–${g.maxPlaytime}min`;
     const seats = `${g.seats.length}/${g.suggestedPlayers} seated`;
     return `**[${g.title}](${link})** — ${players} · ${time} · ${seats}`;
   });
   return embed
     .setDescription(lines.join('\n'))
-    .setFooter({ text: `${games.length} game${games.length !== 1 ? 's' : ''} scheduled · Join via the linked card` });
+    .setFooter({
+      text: `${games.length} game${games.length !== 1 ? 's' : ''} scheduled · Join via the linked card`,
+    });
 }
 
 export async function updateGameListPin(client: Client, eventId: string): Promise<void> {
   const all = loadGameNights();
-  const gameNight = all.find(gn => gn.id === eventId);
+  const gameNight = all.find((gn) => gn.id === eventId);
   if (!gameNight?.eventChannelId) return;
 
   const games = findGamesByChannel(gameNight.eventChannelId);
@@ -82,19 +99,27 @@ export async function updateGameListPin(client: Client, eventId: string): Promis
 
   let channel: TextChannel;
   try {
-    channel = await client.channels.fetch(gameNight.eventChannelId) as TextChannel;
-  } catch { return; }
+    channel = (await client.channels.fetch(gameNight.eventChannelId)) as TextChannel;
+  } catch {
+    return;
+  }
 
   if (gameNight.gameListPinMessageId) {
     try {
       const msg = await channel.messages.fetch(gameNight.gameListPinMessageId);
       await msg.edit({ embeds: [embed] });
       return;
-    } catch { /* message was deleted — fall through and repost */ }
+    } catch {
+      /* message was deleted — fall through and repost */
+    }
   }
 
   const msg = await channel.send({ embeds: [embed] });
-  try { await msg.pin(); } catch { /* may lack ManageMessages — embed still posts */ }
+  try {
+    await msg.pin();
+  } catch {
+    /* may lack ManageMessages — embed still posts */
+  }
 
   gameNight.gameListPinMessageId = msg.id;
   upsertGameNight(gameNight);
@@ -102,7 +127,7 @@ export async function updateGameListPin(client: Client, eventId: string): Promis
 
 export async function updateRequestPin(client: Client, eventId: string): Promise<void> {
   const all = loadGameNights();
-  const gameNight = all.find(gn => gn.id === eventId);
+  const gameNight = all.find((gn) => gn.id === eventId);
   if (!gameNight?.eventChannelId) return;
 
   const requests = getRequestsForEvent(eventId);
@@ -110,38 +135,56 @@ export async function updateRequestPin(client: Client, eventId: string): Promise
 
   // Resolve display names for all library owners of the requested games
   const library = loadLibraryForGuild(gameNight.guildId);
-  const ownerIds = [...new Set(requests.flatMap(r =>
-    library.filter(e => e.gameName.toLowerCase() === r.gameName.toLowerCase()).map(e => e.userId)
-  ))];
+  const ownerIds = [
+    ...new Set(
+      requests.flatMap((r) =>
+        library
+          .filter((e) => e.gameName.toLowerCase() === r.gameName.toLowerCase())
+          .map((e) => e.userId),
+      ),
+    ),
+  ];
   const nameMap: Record<string, string> = {};
   try {
     const guild = await client.guilds.fetch(gameNight.guildId);
-    await Promise.all(ownerIds.map(async uid => {
-      try {
-        nameMap[uid] = (await guild.members.fetch(uid)).displayName;
-      } catch {
-        nameMap[uid] = client.users.cache.get(uid)?.username ?? `User ${uid.slice(0, 6)}…`;
-      }
-    }));
-  } catch { /* guild unavailable — names fall back inside buildRequestEmbed */ }
+    await Promise.all(
+      ownerIds.map(async (uid) => {
+        try {
+          nameMap[uid] = (await guild.members.fetch(uid)).displayName;
+        } catch {
+          nameMap[uid] = client.users.cache.get(uid)?.username ?? `User ${uid.slice(0, 6)}…`;
+        }
+      }),
+    );
+  } catch {
+    /* guild unavailable — names fall back inside buildRequestEmbed */
+  }
 
   const embed = buildRequestEmbed(gameNight.guildId, requests, nameMap);
 
   let channel: TextChannel;
   try {
-    channel = await client.channels.fetch(gameNight.eventChannelId) as TextChannel;
-  } catch { return; }
+    channel = (await client.channels.fetch(gameNight.eventChannelId)) as TextChannel;
+  } catch {
+    return;
+  }
 
   if (gameNight.requestPinMessageId) {
     try {
       const msg = await channel.messages.fetch(gameNight.requestPinMessageId);
       await msg.edit({ embeds: [embed] });
       return;
-    } catch { /* message was deleted — fall through and repost */ }
+    } catch {
+      /* message was deleted — fall through and repost */
+    }
   }
 
   const msg = await channel.send({ embeds: [embed] });
-  try { await msg.pin(); } catch { /* may lack ManageMessages — embed still posts */ }
+  try {
+    await msg.pin();
+  } catch {
+    /* may lack ManageMessages — embed still posts */
+  }
 
   gameNight.requestPinMessageId = msg.id;
   upsertGameNight(gameNight);

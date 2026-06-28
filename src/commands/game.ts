@@ -15,23 +15,49 @@ import {
   TextChannel,
   TextInputBuilder,
   TextInputStyle,
+  MessageFlags,
 } from 'discord.js';
 import { randomUUID } from 'crypto';
-import { searchBGG, getBGGGame, BGGGame, BGGExpansion, BGGSearchResult, weightTag } from '../utils/bgg';
+import {
+  searchBGG,
+  getBGGGame,
+  BGGGame,
+  BGGExpansion,
+  BGGSearchResult,
+  weightTag,
+} from '../utils/bgg';
 import { searchCatalog, isCatalogLoaded } from '../utils/bggCatalog';
-import { loadGames, saveGames, upsertGame, GameSuggestion, GameExpansion, findGamesByChannel } from '../utils/gameStorage';
+import {
+  loadGames,
+  saveGames,
+  upsertGame,
+  GameSuggestion,
+  GameExpansion,
+  findGamesByChannel,
+} from '../utils/gameStorage';
 import { buildGameEmbed, buildGameButtons, buildBggAttachment } from '../utils/gameEmbeds';
 import { loadGameNights, GameNight } from '../utils/storage';
-import { findGamesByName, findGameNamesByPartial, getGameInfo, upsertGameInfo, addGame, addRequest, updateRequestCopies, GameInfo, GAME_TAGS } from '../utils/libraryStorage';
+import {
+  findGamesByName,
+  findGameNamesByPartial,
+  getGameInfo,
+  upsertGameInfo,
+  addGame,
+  addRequest,
+  updateRequestCopies,
+  GameInfo,
+  GAME_TAGS,
+} from '../utils/libraryStorage';
 import { updateRequestPin, updateGameListPin } from '../utils/requestPin';
 import { enrichFromBGG } from './library';
+import { getGuildConfig } from '../utils/config';
 
 const MANUAL_VALUE = '__manual__';
 const BGG_VALUE = '__bgg__';
 
 function findDuplicateGame(eventId: string, title: string): GameSuggestion | undefined {
   return loadGames().find(
-    g => g.eventId === eventId && g.title.toLowerCase() === title.toLowerCase()
+    (g) => g.eventId === eventId && g.title.toLowerCase() === title.toLowerCase(),
   );
 }
 
@@ -56,7 +82,10 @@ const pendingLibrarySuggest = new Map<string, PendingLibrarySuggest>();
 const pendingEventContext = new Map<string, string>();
 
 // Stores library game context while user picks expansions
-const pendingLibraryGame = new Map<string, { gameName: string; info: GameInfo | null; ownerIds: string[] }>();
+const pendingLibraryGame = new Map<
+  string,
+  { gameName: string; info: GameInfo | null; ownerIds: string[] }
+>();
 
 // Stores suggest intent while the user picks which event to add to
 const pendingEventSuggest = new Map<string, { title: string; withExpansions: boolean }>();
@@ -64,27 +93,30 @@ const pendingEventSuggest = new Map<string, { title: string; withExpansions: boo
 export const data = new SlashCommandBuilder()
   .setName('game')
   .setDescription('Suggest a game to play at a game night event')
-  .addSubcommand(sub =>
+  .addSubcommand((sub) =>
     sub
       .setName('suggest')
       .setDescription('Search for a game and add it to this event channel')
-      .addStringOption(opt =>
-        opt.setName('title').setDescription('Game title to search for').setRequired(true)
+      .addStringOption((opt) =>
+        opt.setName('title').setDescription('Game title to search for').setRequired(true),
       )
-      .addBooleanOption(opt =>
-        opt.setName('with_expansions').setDescription('Include expansions for this game?').setRequired(false)
-      )
+      .addBooleanOption((opt) =>
+        opt
+          .setName('with_expansions')
+          .setDescription('Include expansions for this game?')
+          .setRequired(false),
+      ),
   )
-  .addSubcommand(sub =>
-    sub.setName('list').setDescription('List all games scheduled for this event')
+  .addSubcommand((sub) =>
+    sub.setName('list').setDescription('List all games scheduled for this event'),
   )
-  .addSubcommand(sub =>
+  .addSubcommand((sub) =>
     sub
       .setName('cancel')
       .setDescription('Remove a game suggestion from the lineup')
-      .addStringOption(opt =>
-        opt.setName('title').setDescription('Title of the game to remove').setRequired(true)
-      )
+      .addStringOption((opt) =>
+        opt.setName('title').setDescription('Title of the game to remove').setRequired(true),
+      ),
   );
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -94,14 +126,17 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   else if (sub === 'cancel') await handleGameCancel(interaction);
 }
 
-function findGameNightForInteraction(userId: string, channelId: string | null): GameNight | undefined {
-  const active = loadGameNights().filter(gn => !gn.cancelled && !gn.archived);
+function findGameNightForInteraction(
+  userId: string,
+  channelId: string | null,
+): GameNight | undefined {
+  const active = loadGameNights().filter((gn) => !gn.cancelled && !gn.archived);
   if (channelId) {
-    const byChannel = active.find(gn => gn.eventChannelId === channelId);
+    const byChannel = active.find((gn) => gn.eventChannelId === channelId);
     if (byChannel) return byChannel;
   }
   const storedId = pendingEventContext.get(userId);
-  if (storedId) return active.find(gn => gn.id === storedId);
+  if (storedId) return active.find((gn) => gn.id === storedId);
   return undefined;
 }
 
@@ -119,16 +154,24 @@ async function buildBGGSearchReply(
 ): Promise<BGGSearchReply> {
   let results: BGGSearchResult[] = [];
   let bggFailed = false;
-  try { results = await searchBGG(title); } catch { bggFailed = true; }
+  try {
+    results = await searchBGG(title);
+  } catch {
+    bggFailed = true;
+  }
 
   if (results.length === 0) {
     // When BGG is unreachable, fall back to the local catalog before going to manual entry
     if (bggFailed && isCatalogLoaded()) {
       const catalogResults = searchCatalog(title, 5);
       if (catalogResults.length > 0) {
-        const options = catalogResults.map(r => {
-          const desc = [r.year ? `Published ${r.year}` : 'Year unknown', r.isExpansion ? 'Expansion' : '']
-            .filter(Boolean).join(' • ');
+        const options = catalogResults.map((r) => {
+          const desc = [
+            r.year ? `Published ${r.year}` : 'Year unknown',
+            r.isExpansion ? 'Expansion' : '',
+          ]
+            .filter(Boolean)
+            .join(' • ');
           return new StringSelectMenuOptionBuilder()
             .setLabel(r.name.slice(0, 100))
             .setValue(r.id)
@@ -138,7 +181,7 @@ async function buildBGGSearchReply(
           new StringSelectMenuOptionBuilder()
             .setLabel('None of these — enter details manually')
             .setValue(MANUAL_VALUE)
-            .setDescription('Fill in player count, duration, and a link yourself')
+            .setDescription('Fill in player count, duration, and a link yourself'),
         );
         const select = new StringSelectMenuBuilder()
           .setCustomId(withExpansions ? 'game_select_exp' : 'game_select')
@@ -159,17 +202,17 @@ async function buildBGGSearchReply(
     return { content, components: [manualEntryButton(title)] };
   }
 
-  const options = results.map(r =>
+  const options = results.map((r) =>
     new StringSelectMenuOptionBuilder()
       .setLabel(r.name.slice(0, 100))
       .setValue(r.id)
-      .setDescription(r.yearPublished ? `Published ${r.yearPublished}` : 'Year unknown')
+      .setDescription(r.yearPublished ? `Published ${r.yearPublished}` : 'Year unknown'),
   );
   options.push(
     new StringSelectMenuOptionBuilder()
       .setLabel('None of these — enter details manually')
       .setValue(MANUAL_VALUE)
-      .setDescription('Fill in player count, duration, and a link yourself')
+      .setDescription('Fill in player count, duration, and a link yourself'),
   );
 
   const select = new StringSelectMenuBuilder()
@@ -191,29 +234,32 @@ async function handleSuggest(interaction: ChatInputCommandInteraction): Promise<
   const withExpansions = interaction.options.getBoolean('with_expansions') ?? false;
 
   const gameNight = loadGameNights().find(
-    gn => gn.eventChannelId === interaction.channelId && !gn.cancelled && !gn.archived
+    (gn) => gn.eventChannelId === interaction.channelId && !gn.cancelled && !gn.archived,
   );
 
   if (!gameNight) {
     const now = new Date();
     const upcoming = loadGameNights()
-      .filter(gn => !gn.cancelled && !gn.archived && gn.eventChannelId && new Date(gn.startTimeISO) > now)
+      .filter(
+        (gn) =>
+          !gn.cancelled && !gn.archived && gn.eventChannelId && new Date(gn.startTimeISO) > now,
+      )
       .sort((a, b) => new Date(a.startTimeISO).getTime() - new Date(b.startTimeISO).getTime());
 
     if (upcoming.length === 0) {
       await interaction.reply({
         content: 'There are no upcoming events with channels to add games to.',
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
 
     pendingEventSuggest.set(interaction.user.id, { title, withExpansions });
-    const options = upcoming.map(gn =>
+    const options = upcoming.map((gn) =>
       new StringSelectMenuOptionBuilder()
         .setLabel(gn.date.slice(0, 100))
         .setValue(gn.id)
-        .setDescription(`${gn.time} @ ${gn.location || 'TBD'}`.slice(0, 100))
+        .setDescription(`${gn.time} @ ${gn.location || 'TBD'}`.slice(0, 100)),
     );
     const select = new StringSelectMenuBuilder()
       .setCustomId('game_event_select')
@@ -221,7 +267,7 @@ async function handleSuggest(interaction: ChatInputCommandInteraction): Promise<
       .addOptions(options);
     await interaction.reply({
       content: `Which event would you like to suggest **"${title}"** for?`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
       components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
     });
     return;
@@ -231,11 +277,24 @@ async function handleSuggest(interaction: ChatInputCommandInteraction): Promise<
   const libraryMatches = findGamesByName(interaction.guildId!, title);
   if (libraryMatches.length > 0) {
     const info = getGameInfo(title);
-    const ownerIds = libraryMatches.map(e => e.userId);
+    const ownerIds = libraryMatches.map((e) => e.userId);
     if (withExpansions && info?.objectid) {
-      await showLibraryExpansionPicker(interaction, gameNight, libraryMatches[0].gameName, info, ownerIds);
+      await showLibraryExpansionPicker(
+        interaction,
+        gameNight,
+        libraryMatches[0].gameName,
+        info,
+        ownerIds,
+      );
     } else {
-      await postLibraryGame(interaction, gameNight, libraryMatches[0].gameName, info ?? null, ownerIds, []);
+      await postLibraryGame(
+        interaction,
+        gameNight,
+        libraryMatches[0].gameName,
+        info ?? null,
+        ownerIds,
+        [],
+      );
     }
     return;
   }
@@ -243,14 +302,14 @@ async function handleSuggest(interaction: ChatInputCommandInteraction): Promise<
   // Partial match in library — prompt user to confirm which game
   const partials = findGameNamesByPartial(interaction.guildId!, title);
   if (partials.length > 0 && partials.length <= 25) {
-    const options = partials.map(name =>
-      new StringSelectMenuOptionBuilder().setLabel(name.slice(0, 100)).setValue(name)
+    const options = partials.map((name) =>
+      new StringSelectMenuOptionBuilder().setLabel(name.slice(0, 100)).setValue(name),
     );
     options.push(
       new StringSelectMenuOptionBuilder()
         .setLabel('Search BGG instead')
         .setValue(BGG_VALUE)
-        .setDescription('Search the BoardGameGeek database for this title')
+        .setDescription('Search the BoardGameGeek database for this title'),
     );
     const select = new StringSelectMenuBuilder()
       .setCustomId('library_suggest_select')
@@ -259,13 +318,13 @@ async function handleSuggest(interaction: ChatInputCommandInteraction): Promise<
     pendingLibrarySuggest.set(interaction.user.id, { title, withExpansions });
     await interaction.reply({
       content: `**"${title}"** wasn't an exact match — found ${partials.length} partial match${partials.length !== 1 ? 'es' : ''} in the library:`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
       components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
     });
     return;
   }
 
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   await interaction.editReply(await buildBGGSearchReply(title, withExpansions));
 }
 
@@ -276,7 +335,9 @@ export async function handleEventSelect(interaction: StringSelectMenuInteraction
   const pending = pendingEventSuggest.get(interaction.user.id);
   pendingEventSuggest.delete(interaction.user.id);
 
-  const gameNight = loadGameNights().find(gn => gn.id === eventId && !gn.cancelled && !gn.archived);
+  const gameNight = loadGameNights().find(
+    (gn) => gn.id === eventId && !gn.cancelled && !gn.archived,
+  );
   if (!gameNight) {
     await interaction.update({ content: 'That event is no longer available.', components: [] });
     return;
@@ -290,25 +351,38 @@ export async function handleEventSelect(interaction: StringSelectMenuInteraction
   const libraryMatches = findGamesByName(interaction.guildId!, title);
   if (libraryMatches.length > 0) {
     const info = getGameInfo(title);
-    const ownerIds = libraryMatches.map(e => e.userId);
+    const ownerIds = libraryMatches.map((e) => e.userId);
     if (withExpansions && info?.objectid) {
-      await showLibraryExpansionPicker(interaction, gameNight, libraryMatches[0].gameName, info, ownerIds);
+      await showLibraryExpansionPicker(
+        interaction,
+        gameNight,
+        libraryMatches[0].gameName,
+        info,
+        ownerIds,
+      );
     } else {
-      await postLibraryGame(interaction, gameNight, libraryMatches[0].gameName, info ?? null, ownerIds, []);
+      await postLibraryGame(
+        interaction,
+        gameNight,
+        libraryMatches[0].gameName,
+        info ?? null,
+        ownerIds,
+        [],
+      );
     }
     return;
   }
 
   const partials = findGameNamesByPartial(interaction.guildId!, title);
   if (partials.length > 0 && partials.length <= 25) {
-    const options = partials.map(name =>
-      new StringSelectMenuOptionBuilder().setLabel(name.slice(0, 100)).setValue(name)
+    const options = partials.map((name) =>
+      new StringSelectMenuOptionBuilder().setLabel(name.slice(0, 100)).setValue(name),
     );
     options.push(
       new StringSelectMenuOptionBuilder()
         .setLabel('Search BGG instead')
         .setValue(BGG_VALUE)
-        .setDescription('Search the BoardGameGeek database for this title')
+        .setDescription('Search the BoardGameGeek database for this title'),
     );
     const select = new StringSelectMenuBuilder()
       .setCustomId('library_suggest_select')
@@ -327,8 +401,8 @@ export async function handleEventSelect(interaction: StringSelectMenuInteraction
 }
 
 function buildTagPickerComponents(gameId: string) {
-  const tagOptions = GAME_TAGS.map(tag =>
-    new StringSelectMenuOptionBuilder().setLabel(tag).setValue(tag)
+  const tagOptions = GAME_TAGS.map((tag) =>
+    new StringSelectMenuOptionBuilder().setLabel(tag).setValue(tag),
   );
   const tagSelect = new StringSelectMenuBuilder()
     .setCustomId(`game_tags_${gameId}`)
@@ -363,12 +437,13 @@ function bringGameRow(): ActionRowBuilder<ButtonBuilder> {
 
 async function handleGameList(interaction: ChatInputCommandInteraction): Promise<void> {
   const isEventChannel = loadGameNights().some(
-    gn => !gn.cancelled && !gn.archived && gn.eventChannelId === interaction.channelId
+    (gn) => !gn.cancelled && !gn.archived && gn.eventChannelId === interaction.channelId,
   );
   if (!isEventChannel) {
     await interaction.reply({
-      content: 'Use `/game list` inside an event channel to see that event\'s game lineup. Try `/event list` to see upcoming events.',
-      ephemeral: true,
+      content:
+        "Use `/game list` inside an event channel to see that event's game lineup. Try `/event list` to see upcoming events.",
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -376,14 +451,20 @@ async function handleGameList(interaction: ChatInputCommandInteraction): Promise
   const games = findGamesByChannel(interaction.channelId!);
 
   if (games.length === 0) {
-    await interaction.reply({ content: 'No games have been added to the lineup yet.', ephemeral: true });
+    await interaction.reply({
+      content: 'No games have been added to the lineup yet.',
+      flags: MessageFlags.Ephemeral,
+    });
     return;
   }
 
-  const lines = games.map(g => {
+  const lines = games.map((g) => {
     const link = `https://discord.com/channels/${g.guildId}/${g.channelId}/${g.messageId}`;
     const players = `${g.minPlayers}–${g.maxPlayers}p`;
-    const time = g.minPlaytime === g.maxPlaytime ? `${g.minPlaytime}min` : `${g.minPlaytime}–${g.maxPlaytime}min`;
+    const time =
+      g.minPlaytime === g.maxPlaytime
+        ? `${g.minPlaytime}min`
+        : `${g.minPlaytime}–${g.maxPlaytime}min`;
     const seats = `${g.seats.length}/${g.suggestedPlayers} seated`;
     return `**[${g.title}](${link})** — ${players} · ${time} · ${seats}`;
   });
@@ -402,13 +483,13 @@ async function handleGameList(interaction: ChatInputCommandInteraction): Promise
 async function handleGameCancel(interaction: ChatInputCommandInteraction): Promise<void> {
   const title = interaction.options.getString('title', true).trim();
   const games = findGamesByChannel(interaction.channelId!);
-  const match = games.find(g => g.title.toLowerCase() === title.toLowerCase());
+  const match = games.find((g) => g.title.toLowerCase() === title.toLowerCase());
 
   if (!match) {
-    const titles = games.map(g => `**${g.title}**`).join(', ');
+    const titles = games.map((g) => `**${g.title}**`).join(', ');
     await interaction.reply({
       content: `No game called **"${title}"** found in the lineup.${titles ? ` Current games: ${titles}` : ''}`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -416,49 +497,69 @@ async function handleGameCancel(interaction: ChatInputCommandInteraction): Promi
   if (match.createdBy !== interaction.user.id) {
     await interaction.reply({
       content: `Only the person who suggested **${match.title}** can remove it. Ask a host or admin if you need it removed.`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
   try {
-    const channel = await interaction.client.channels.fetch(match.channelId) as TextChannel;
+    const channel = (await interaction.client.channels.fetch(match.channelId)) as TextChannel;
     const msg = await channel.messages.fetch(match.messageId);
     await msg.delete();
-  } catch { /* message may already be deleted */ }
+  } catch {
+    /* message may already be deleted */
+  }
 
-  const remaining = loadGames().filter(g => g.id !== match.id);
+  const remaining = loadGames().filter((g) => g.id !== match.id);
   saveGames(remaining);
-  try { await updateGameListPin(interaction.client, match.eventId); } catch { /* channel may not be accessible */ }
+  try {
+    await updateGameListPin(interaction.client, match.eventId);
+  } catch {
+    /* channel may not be accessible */
+  }
 
-  await interaction.reply({ content: `**${match.title}** has been removed from the lineup.`, ephemeral: true });
+  await interaction.reply({
+    content: `**${match.title}** has been removed from the lineup.`,
+    flags: MessageFlags.Ephemeral,
+  });
 }
 
-export async function handleHostGameCancel(interaction: ChatInputCommandInteraction): Promise<void> {
+export async function handleHostGameCancel(
+  interaction: ChatInputCommandInteraction,
+): Promise<void> {
   const title = interaction.options.getString('title', true).trim();
   const games = findGamesByChannel(interaction.channelId!);
-  const match = games.find(g => g.title.toLowerCase() === title.toLowerCase());
+  const match = games.find((g) => g.title.toLowerCase() === title.toLowerCase());
 
   if (!match) {
-    const titles = games.map(g => `**${g.title}**`).join(', ');
+    const titles = games.map((g) => `**${g.title}**`).join(', ');
     await interaction.reply({
       content: `No game called **"${title}"** found in the lineup.${titles ? ` Current games: ${titles}` : ''}`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
   try {
-    const channel = await interaction.client.channels.fetch(match.channelId) as TextChannel;
+    const channel = (await interaction.client.channels.fetch(match.channelId)) as TextChannel;
     const msg = await channel.messages.fetch(match.messageId);
     await msg.delete();
-  } catch { /* message may already be deleted */ }
+  } catch {
+    /* message may already be deleted */
+  }
 
-  const remaining = loadGames().filter(g => g.id !== match.id);
+  const remaining = loadGames().filter((g) => g.id !== match.id);
   saveGames(remaining);
-  try { await updateGameListPin(interaction.client, match.eventId); } catch { /* channel may not be accessible */ }
+  try {
+    await updateGameListPin(interaction.client, match.eventId);
+  } catch {
+    /* channel may not be accessible */
+  }
 
-  await interaction.reply({ content: `**${match.title}** has been removed from the lineup.`, ephemeral: true });
+  await interaction.reply({
+    content: `**${match.title}** has been removed from the lineup.`,
+    flags: MessageFlags.Ephemeral,
+  });
 }
 
 // ── Library match: expansion picker ──────────────────────────────────────────
@@ -471,14 +572,17 @@ async function showLibraryExpansionPicker(
   ownerIds: string[],
 ): Promise<void> {
   if (interaction.isChatInputCommand()) {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   } else {
     await interaction.deferUpdate();
   }
 
   let bggGame: BGGGame;
   try {
-    bggGame = await getBGGGame(info.objectid!);
+    bggGame = await getBGGGame(
+      info.objectid!,
+      getGuildConfig(interaction.guildId!).trustedVideoUploaders,
+    );
   } catch {
     await postLibraryGame(interaction, gameNight, gameName, info, ownerIds, []);
     return;
@@ -491,10 +595,8 @@ async function showLibraryExpansionPicker(
 
   pendingLibraryGame.set(interaction.user.id, { gameName, info, ownerIds });
 
-  const options = bggGame.expansions.map(exp =>
-    new StringSelectMenuOptionBuilder()
-      .setLabel(exp.name.slice(0, 100))
-      .setValue(exp.id)
+  const options = bggGame.expansions.map((exp) =>
+    new StringSelectMenuOptionBuilder().setLabel(exp.name.slice(0, 100)).setValue(exp.id),
   );
   const select = new StringSelectMenuBuilder()
     .setCustomId(`game_exp_lib_${info.objectid}`)
@@ -517,11 +619,17 @@ export async function handleLibraryExpansionSelect(
 
   const gameNight = findGameNightForInteraction(interaction.user.id, interaction.channelId);
   if (!gameNight) {
-    await interaction.update({ content: 'This event channel is no longer active.', components: [] });
+    await interaction.update({
+      content: 'This event channel is no longer active.',
+      components: [],
+    });
     return;
   }
   if (!pending) {
-    await interaction.update({ content: 'Session expired. Please try suggesting the game again.', components: [] });
+    await interaction.update({
+      content: 'Session expired. Please try suggesting the game again.',
+      components: [],
+    });
     return;
   }
 
@@ -530,14 +638,26 @@ export async function handleLibraryExpansionSelect(
   let selectedExpansions: GameExpansion[] = [];
   if (interaction.values.length > 0) {
     try {
-      const bggGame = await getBGGGame(bggId);
+      const bggGame = await getBGGGame(
+        bggId,
+        getGuildConfig(interaction.guildId!).trustedVideoUploaders,
+      );
       selectedExpansions = bggGame.expansions
-        .filter(e => interaction.values.includes(e.id))
-        .map(e => ({ id: e.id, name: e.name }));
-    } catch { /* proceed without expansions if BGG is unreachable */ }
+        .filter((e) => interaction.values.includes(e.id))
+        .map((e) => ({ id: e.id, name: e.name }));
+    } catch {
+      /* proceed without expansions if BGG is unreachable */
+    }
   }
 
-  await postLibraryGame(interaction, gameNight, pending.gameName, pending.info, pending.ownerIds, selectedExpansions);
+  await postLibraryGame(
+    interaction,
+    gameNight,
+    pending.gameName,
+    pending.info,
+    pending.ownerIds,
+    selectedExpansions,
+  );
 }
 
 // ── Library match: post directly ──────────────────────────────────────────────
@@ -554,7 +674,7 @@ async function postLibraryGame(
   if (duplicate) {
     const msg = duplicateReply(duplicate);
     if (interaction.isChatInputCommand()) {
-      await interaction.reply({ content: msg, ephemeral: true });
+      await interaction.reply({ content: msg, flags: MessageFlags.Ephemeral });
     } else {
       await interaction.update({ content: msg, components: [] });
     }
@@ -562,12 +682,12 @@ async function postLibraryGame(
   }
 
   const ownerAttending = ownerIds.some(
-    id => gameNight.rsvps.yes.includes(id) || gameNight.rsvps.maybe.includes(id)
+    (id) => gameNight.rsvps.yes.includes(id) || gameNight.rsvps.maybe.includes(id),
   );
   if (!ownerAttending) {
     const msg = `None of the owners of **${gameName}** are attending this event, so it can't be suggested.`;
     if (interaction.isChatInputCommand()) {
-      await interaction.reply({ content: msg, ephemeral: true });
+      await interaction.reply({ content: msg, flags: MessageFlags.Ephemeral });
     } else {
       await interaction.update({ content: msg, components: [] });
     }
@@ -576,14 +696,14 @@ async function postLibraryGame(
 
   if (!interaction.deferred && !interaction.replied) {
     if (interaction.isChatInputCommand()) {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     } else {
       await interaction.deferUpdate();
     }
   }
 
   if (info?.objectid) {
-    await enrichFromBGG(gameName);
+    await enrichFromBGG(gameName, false, getGuildConfig(interaction.guildId!).trustedVideoUploaders);
     info = getGameInfo(gameName) ?? info;
   }
 
@@ -621,8 +741,8 @@ async function postLibraryGame(
     createdBy: interaction.user.id,
   };
 
-  const channel = await interaction.client.channels.fetch(eventChannelId) as TextChannel;
-  const owners = ownerIds.map(id => `<@${id}>`).join(', ');
+  const channel = (await interaction.client.channels.fetch(eventChannelId)) as TextChannel;
+  const owners = ownerIds.map((id) => `<@${id}>`).join(', ');
   const msg = await channel.send({
     content: `Owned by: ${owners}`,
     embeds: [buildGameEmbed(game, {})],
@@ -634,8 +754,16 @@ async function postLibraryGame(
   upsertGame(game);
 
   addRequest(gameNight.id, gameName, interaction.user.id);
-  try { await updateRequestPin(interaction.client, gameNight.id); } catch { /* channel may not be accessible */ }
-  try { await updateGameListPin(interaction.client, gameNight.id); } catch { /* channel may not be accessible */ }
+  try {
+    await updateRequestPin(interaction.client, gameNight.id);
+  } catch {
+    /* channel may not be accessible */
+  }
+  try {
+    await updateGameListPin(interaction.client, gameNight.id);
+  } catch {
+    /* channel may not be accessible */
+  }
   pendingEventContext.delete(interaction.user.id);
 
   if (!game.tags?.length) {
@@ -644,17 +772,25 @@ async function postLibraryGame(
       components: buildTagPickerComponents(id),
     });
   } else {
-    await interaction.editReply({ content: `**${gameName}** has been added to the lineup!`, components: [] });
+    await interaction.editReply({
+      content: `**${gameName}** has been added to the lineup!`,
+      components: [],
+    });
   }
 }
 
 // ── Library partial-match select ──────────────────────────────────────────────
 
-export async function handleLibrarySuggestSelect(interaction: StringSelectMenuInteraction): Promise<void> {
+export async function handleLibrarySuggestSelect(
+  interaction: StringSelectMenuInteraction,
+): Promise<void> {
   const value = interaction.values[0];
   const gameNight = findGameNightForInteraction(interaction.user.id, interaction.channelId);
   if (!gameNight) {
-    await interaction.update({ content: 'This event channel is no longer active.', components: [] });
+    await interaction.update({
+      content: 'This event channel is no longer active.',
+      components: [],
+    });
     return;
   }
 
@@ -675,7 +811,7 @@ export async function handleLibrarySuggestSelect(interaction: StringSelectMenuIn
 
   const libraryMatches = findGamesByName(interaction.guildId!, value);
   const info = getGameInfo(value);
-  const ownerIds = libraryMatches.map(e => e.userId);
+  const ownerIds = libraryMatches.map((e) => e.userId);
 
   if (withExpansions && info?.objectid) {
     await showLibraryExpansionPicker(interaction, gameNight, value, info, ownerIds);
@@ -696,7 +832,10 @@ export async function handleGameSelect(interaction: StringSelectMenuInteraction)
 
   const gameNight = findGameNightForInteraction(interaction.user.id, interaction.channelId);
   if (!gameNight) {
-    await interaction.update({ content: 'This event channel is no longer active.', components: [] });
+    await interaction.update({
+      content: 'This event channel is no longer active.',
+      components: [],
+    });
     return;
   }
 
@@ -704,9 +843,12 @@ export async function handleGameSelect(interaction: StringSelectMenuInteraction)
 
   let bggGame: BGGGame;
   try {
-    bggGame = await getBGGGame(bggId);
+    bggGame = await getBGGGame(bggId, getGuildConfig(interaction.guildId!).trustedVideoUploaders);
   } catch {
-    await interaction.editReply({ content: 'Could not fetch game details. Try entering manually.', components: [] });
+    await interaction.editReply({
+      content: 'Could not fetch game details. Try entering manually.',
+      components: [],
+    });
     return;
   }
 
@@ -715,7 +857,9 @@ export async function handleGameSelect(interaction: StringSelectMenuInteraction)
 
 // ── Select: with expansions ───────────────────────────────────────────────────
 
-export async function handleGameSelectWithExp(interaction: StringSelectMenuInteraction): Promise<void> {
+export async function handleGameSelectWithExp(
+  interaction: StringSelectMenuInteraction,
+): Promise<void> {
   const bggId = interaction.values[0];
 
   if (bggId === MANUAL_VALUE) {
@@ -725,7 +869,10 @@ export async function handleGameSelectWithExp(interaction: StringSelectMenuInter
 
   const gameNight = findGameNightForInteraction(interaction.user.id, interaction.channelId);
   if (!gameNight) {
-    await interaction.update({ content: 'This event channel is no longer active.', components: [] });
+    await interaction.update({
+      content: 'This event channel is no longer active.',
+      components: [],
+    });
     return;
   }
 
@@ -733,9 +880,12 @@ export async function handleGameSelectWithExp(interaction: StringSelectMenuInter
 
   let bggGame: BGGGame;
   try {
-    bggGame = await getBGGGame(bggId);
+    bggGame = await getBGGGame(bggId, getGuildConfig(interaction.guildId!).trustedVideoUploaders);
   } catch {
-    await interaction.editReply({ content: 'Could not fetch game details. Try entering manually.', components: [] });
+    await interaction.editReply({
+      content: 'Could not fetch game details. Try entering manually.',
+      components: [],
+    });
     return;
   }
 
@@ -744,10 +894,8 @@ export async function handleGameSelectWithExp(interaction: StringSelectMenuInter
     return;
   }
 
-  const options = bggGame.expansions.map(exp =>
-    new StringSelectMenuOptionBuilder()
-      .setLabel(exp.name.slice(0, 100))
-      .setValue(exp.id)
+  const options = bggGame.expansions.map((exp) =>
+    new StringSelectMenuOptionBuilder().setLabel(exp.name.slice(0, 100)).setValue(exp.id),
   );
 
   const select = new StringSelectMenuBuilder()
@@ -771,7 +919,10 @@ export async function handleExpansionSelect(
 ): Promise<void> {
   const gameNight = findGameNightForInteraction(interaction.user.id, interaction.channelId);
   if (!gameNight) {
-    await interaction.update({ content: 'This event channel is no longer active.', components: [] });
+    await interaction.update({
+      content: 'This event channel is no longer active.',
+      components: [],
+    });
     return;
   }
 
@@ -779,13 +930,13 @@ export async function handleExpansionSelect(
 
   let bggGame: BGGGame;
   try {
-    bggGame = await getBGGGame(bggId);
+    bggGame = await getBGGGame(bggId, getGuildConfig(interaction.guildId!).trustedVideoUploaders);
   } catch {
     await interaction.editReply({ content: 'Could not fetch game details.', components: [] });
     return;
   }
 
-  const selectedExpansions = bggGame.expansions.filter(e => interaction.values.includes(e.id));
+  const selectedExpansions = bggGame.expansions.filter((e) => interaction.values.includes(e.id));
   await postBGGGame(interaction, gameNight, bggGame, selectedExpansions);
 }
 
@@ -799,15 +950,19 @@ export async function handleManualBtn(interaction: ButtonInteraction): Promise<v
 // ── Modal submission ──────────────────────────────────────────────────────────
 
 export async function handleManualGameSubmit(interaction: ModalSubmitInteraction): Promise<void> {
-  const active = loadGameNights().filter(gn => !gn.cancelled && !gn.archived);
-  const gameNight = active.find(gn => gn.eventChannelId === interaction.channelId)
-    ?? active.find(gn => gn.id === pendingEventContext.get(interaction.user.id));
+  const active = loadGameNights().filter((gn) => !gn.cancelled && !gn.archived);
+  const gameNight =
+    active.find((gn) => gn.eventChannelId === interaction.channelId) ??
+    active.find((gn) => gn.id === pendingEventContext.get(interaction.user.id));
   if (!gameNight) {
-    await interaction.reply({ content: 'This event channel is no longer active.', ephemeral: true });
+    await interaction.reply({
+      content: 'This event channel is no longer active.',
+      flags: MessageFlags.Ephemeral,
+    });
     return;
   }
 
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const title = interaction.fields.getTextInputValue('title').trim();
 
@@ -824,9 +979,10 @@ export async function handleManualGameSubmit(interaction: ModalSubmitInteraction
 
   const { min: minPlayers, max: maxPlayers } = parseRange(playersRaw, 2, 4);
   const { min: minPlaytime, max: maxPlaytime } = parseRange(durationRaw, 30, 60);
-  const suggestedPlayers = bestWithRaw && Number(bestWithRaw)
-    ? Number(bestWithRaw)
-    : Math.ceil((minPlayers + maxPlayers) / 2);
+  const suggestedPlayers =
+    bestWithRaw && Number(bestWithRaw)
+      ? Number(bestWithRaw)
+      : Math.ceil((minPlayers + maxPlayers) / 2);
 
   const eventChannelId = gameNight.eventChannelId ?? interaction.channelId!;
   const id = randomUUID().slice(0, 8);
@@ -853,7 +1009,7 @@ export async function handleManualGameSubmit(interaction: ModalSubmitInteraction
     createdBy: interaction.user.id,
   };
 
-  const channel = await interaction.client.channels.fetch(eventChannelId) as TextChannel;
+  const channel = (await interaction.client.channels.fetch(eventChannelId)) as TextChannel;
   const msg = await channel.send({
     embeds: [buildGameEmbed(game, {})],
     files: [buildBggAttachment()],
@@ -864,8 +1020,16 @@ export async function handleManualGameSubmit(interaction: ModalSubmitInteraction
   upsertGame(game);
 
   addRequest(gameNight.id, title, interaction.user.id);
-  try { await updateRequestPin(interaction.client, gameNight.id); } catch { /* channel may not be accessible */ }
-  try { await updateGameListPin(interaction.client, gameNight.id); } catch { /* channel may not be accessible */ }
+  try {
+    await updateRequestPin(interaction.client, gameNight.id);
+  } catch {
+    /* channel may not be accessible */
+  }
+  try {
+    await updateGameListPin(interaction.client, gameNight.id);
+  } catch {
+    /* channel may not be accessible */
+  }
   pendingEventContext.delete(interaction.user.id);
 
   pendingBrings.set(interaction.user.id, { gameName: title });
@@ -877,24 +1041,34 @@ export async function handleManualGameSubmit(interaction: ModalSubmitInteraction
 
 // ── Button: Join / Leave ──────────────────────────────────────────────────────
 
-export async function handleGameJoin(interaction: ButtonInteraction, gameId: string): Promise<void> {
+export async function handleGameJoin(
+  interaction: ButtonInteraction,
+  gameId: string,
+): Promise<void> {
   const { findGame, upsertGame: save } = await import('../utils/gameStorage');
   const game = findGame(gameId);
-  if (!game) { await interaction.reply({ content: 'Game not found.', ephemeral: true }); return; }
+  if (!game) {
+    await interaction.reply({ content: 'Game not found.', flags: MessageFlags.Ephemeral });
+    return;
+  }
 
   const userId = interaction.user.id;
   if (game.seats.includes(userId)) {
-    await interaction.reply({ content: "You're already in this game.", ephemeral: true });
+    await interaction.reply({ content: "You're already in this game.", flags: MessageFlags.Ephemeral });
     return;
   }
   if (game.seats.length >= game.maxPlayers) {
-    await interaction.reply({ content: 'This game is full.', ephemeral: true });
+    await interaction.reply({ content: 'This game is full.', flags: MessageFlags.Ephemeral });
     return;
   }
 
   game.seats.push(userId);
   save(game);
-  try { await updateGameListPin(interaction.client, game.eventId); } catch { /* no event channel */ }
+  try {
+    await updateGameListPin(interaction.client, game.eventId);
+  } catch {
+    /* no event channel */
+  }
 
   const nameMap = await resolveNames(interaction, [...game.seats, ...(game.waitlist ?? [])]);
   await interaction.update({
@@ -904,20 +1078,30 @@ export async function handleGameJoin(interaction: ButtonInteraction, gameId: str
   });
 }
 
-export async function handleGameLeave(interaction: ButtonInteraction, gameId: string): Promise<void> {
+export async function handleGameLeave(
+  interaction: ButtonInteraction,
+  gameId: string,
+): Promise<void> {
   const { findGame, upsertGame: save } = await import('../utils/gameStorage');
   const game = findGame(gameId);
-  if (!game) { await interaction.reply({ content: 'Game not found.', ephemeral: true }); return; }
-
-  const userId = interaction.user.id;
-  if (!game.seats.includes(userId)) {
-    await interaction.reply({ content: "You're not in this game.", ephemeral: true });
+  if (!game) {
+    await interaction.reply({ content: 'Game not found.', flags: MessageFlags.Ephemeral });
     return;
   }
 
-  game.seats = game.seats.filter(id => id !== userId);
+  const userId = interaction.user.id;
+  if (!game.seats.includes(userId)) {
+    await interaction.reply({ content: "You're not in this game.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  game.seats = game.seats.filter((id) => id !== userId);
   save(game);
-  try { await updateGameListPin(interaction.client, game.eventId); } catch { /* no event channel */ }
+  try {
+    await updateGameListPin(interaction.client, game.eventId);
+  } catch {
+    /* no event channel */
+  }
 
   const nameMap = await resolveNames(interaction, [...game.seats, ...(game.waitlist ?? [])]);
   await interaction.update({
@@ -929,24 +1113,33 @@ export async function handleGameLeave(interaction: ButtonInteraction, gameId: st
 
 // ── Waitlist ──────────────────────────────────────────────────────────────────
 
-export async function handleWaitlistJoin(interaction: ButtonInteraction, gameId: string): Promise<void> {
+export async function handleWaitlistJoin(
+  interaction: ButtonInteraction,
+  gameId: string,
+): Promise<void> {
   const { findGame, upsertGame: save } = await import('../utils/gameStorage');
   const game = findGame(gameId);
-  if (!game) { await interaction.reply({ content: 'Game not found.', ephemeral: true }); return; }
+  if (!game) {
+    await interaction.reply({ content: 'Game not found.', flags: MessageFlags.Ephemeral });
+    return;
+  }
 
   const userId = interaction.user.id;
   const waitlist = game.waitlist ?? [];
 
   if (game.seats.includes(userId)) {
-    await interaction.reply({ content: "You're already in this game.", ephemeral: true });
+    await interaction.reply({ content: "You're already in this game.", flags: MessageFlags.Ephemeral });
     return;
   }
   if (waitlist.includes(userId)) {
-    await interaction.reply({ content: "You're already on the waitlist.", ephemeral: true });
+    await interaction.reply({ content: "You're already on the waitlist.", flags: MessageFlags.Ephemeral });
     return;
   }
   if (game.seats.length < game.maxPlayers) {
-    await interaction.reply({ content: "There's still an open seat — use **Join** instead.", ephemeral: true });
+    await interaction.reply({
+      content: "There's still an open seat — use **Join** instead.",
+      flags: MessageFlags.Ephemeral,
+    });
     return;
   }
 
@@ -957,7 +1150,11 @@ export async function handleWaitlistJoin(interaction: ButtonInteraction, gameId:
   const nowHasGroup2 = game.waitlist.length >= game.minPlayers;
   if (nowHasGroup2 && !prevHadGroup2) {
     updateRequestCopies(game.eventId, game.title, 2);
-    try { await updateRequestPin(interaction.client, game.eventId); } catch { /* no event channel */ }
+    try {
+      await updateRequestPin(interaction.client, game.eventId);
+    } catch {
+      /* no event channel */
+    }
   }
 
   const nameMap = await resolveNames(interaction, [...game.seats, ...game.waitlist]);
@@ -968,27 +1165,37 @@ export async function handleWaitlistJoin(interaction: ButtonInteraction, gameId:
   });
 }
 
-export async function handleWaitlistLeave(interaction: ButtonInteraction, gameId: string): Promise<void> {
+export async function handleWaitlistLeave(
+  interaction: ButtonInteraction,
+  gameId: string,
+): Promise<void> {
   const { findGame, upsertGame: save } = await import('../utils/gameStorage');
   const game = findGame(gameId);
-  if (!game) { await interaction.reply({ content: 'Game not found.', ephemeral: true }); return; }
+  if (!game) {
+    await interaction.reply({ content: 'Game not found.', flags: MessageFlags.Ephemeral });
+    return;
+  }
 
   const userId = interaction.user.id;
   const waitlist = game.waitlist ?? [];
 
   if (!waitlist.includes(userId)) {
-    await interaction.reply({ content: "You're not on the waitlist.", ephemeral: true });
+    await interaction.reply({ content: "You're not on the waitlist.", flags: MessageFlags.Ephemeral });
     return;
   }
 
   const prevHadGroup2 = waitlist.length >= game.minPlayers;
-  game.waitlist = waitlist.filter(id => id !== userId);
+  game.waitlist = waitlist.filter((id) => id !== userId);
   save(game);
 
   const nowHasGroup2 = game.waitlist.length >= game.minPlayers;
   if (prevHadGroup2 && !nowHasGroup2) {
     updateRequestCopies(game.eventId, game.title, 1);
-    try { await updateRequestPin(interaction.client, game.eventId); } catch { /* no event channel */ }
+    try {
+      await updateRequestPin(interaction.client, game.eventId);
+    } catch {
+      /* no event channel */
+    }
   }
 
   const nameMap = await resolveNames(interaction, [...game.seats, ...game.waitlist]);
@@ -1007,7 +1214,7 @@ function manualEntryButton(title: string): ActionRowBuilder<ButtonBuilder> {
     new ButtonBuilder()
       .setCustomId(`game_manual_${encoded}`)
       .setLabel('Enter Game Details Manually')
-      .setStyle(ButtonStyle.Primary)
+      .setStyle(ButtonStyle.Primary),
   );
 }
 
@@ -1035,7 +1242,7 @@ async function showManualEntryModal(
           .setLabel('Player count (e.g. 2-5 or 4)')
           .setStyle(TextInputStyle.Short)
           .setPlaceholder('2-5')
-          .setRequired(true)
+          .setRequired(true),
       ),
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
@@ -1043,7 +1250,7 @@ async function showManualEntryModal(
           .setLabel('Best with (optional, e.g. 4)')
           .setStyle(TextInputStyle.Short)
           .setPlaceholder('Leave blank to auto-calculate')
-          .setRequired(false)
+          .setRequired(false),
       ),
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
@@ -1051,7 +1258,7 @@ async function showManualEntryModal(
           .setLabel('Duration in minutes (e.g. 45-90 or 60)')
           .setStyle(TextInputStyle.Short)
           .setPlaceholder('45-90')
-          .setRequired(true)
+          .setRequired(true),
       ),
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
@@ -1059,7 +1266,7 @@ async function showManualEntryModal(
           .setLabel('Link — rules, how-to-play, or BGG (optional)')
           .setStyle(TextInputStyle.Short)
           .setPlaceholder('https://...')
-          .setRequired(false)
+          .setRequired(false),
       ),
     );
 
@@ -1099,14 +1306,14 @@ async function postBGGGame(
     complexity: bggGame.weight != null ? weightTag(bggGame.weight) : undefined,
     howToPlayUrl: bggGame.howToPlayUrl,
     thumbnail: bggGame.thumbnail,
-    expansions: expansions.map(e => ({ id: e.id, name: e.name } as GameExpansion)),
+    expansions: expansions.map((e) => ({ id: e.id, name: e.name }) as GameExpansion),
     seats: [interaction.user.id],
     waitlist: [],
     createdAt: new Date().toISOString(),
     createdBy: interaction.user.id,
   };
 
-  const channel = await interaction.client.channels.fetch(eventChannelId) as TextChannel;
+  const channel = (await interaction.client.channels.fetch(eventChannelId)) as TextChannel;
   const msg = await channel.send({
     embeds: [buildGameEmbed(game, {})],
     files: [buildBggAttachment()],
@@ -1134,8 +1341,16 @@ async function postBGGGame(
   }
 
   addRequest(gameNight.id, bggGame.name, interaction.user.id);
-  try { await updateRequestPin(interaction.client, gameNight.id); } catch { /* channel may not be accessible */ }
-  try { await updateGameListPin(interaction.client, gameNight.id); } catch { /* channel may not be accessible */ }
+  try {
+    await updateRequestPin(interaction.client, gameNight.id);
+  } catch {
+    /* channel may not be accessible */
+  }
+  try {
+    await updateGameListPin(interaction.client, gameNight.id);
+  } catch {
+    /* channel may not be accessible */
+  }
   pendingEventContext.delete(interaction.user.id);
 
   const expNote = expansions.length > 0 ? ` with ${expansions.length} expansion(s)` : '';
@@ -1177,14 +1392,16 @@ export async function handleGameTagSelect(
       updatedAt: new Date().toISOString(),
     });
     try {
-      const cardChannel = await interaction.client.channels.fetch(game.channelId) as TextChannel;
+      const cardChannel = (await interaction.client.channels.fetch(game.channelId)) as TextChannel;
       const cardMsg = await cardChannel.messages.fetch(game.messageId);
       await cardMsg.edit({
         embeds: [buildGameEmbed(game, {})],
         files: [buildBggAttachment()],
         components: [buildGameButtons(gameId, game.seats.length >= game.maxPlayers)],
       });
-    } catch { /* card may have been deleted */ }
+    } catch {
+      /* card may have been deleted */
+    }
   }
   const pending = pendingBrings.get(interaction.user.id);
   if (pending) {
@@ -1212,11 +1429,18 @@ export async function handleGameTagSkip(
   }
 }
 
-function parseRange(input: string, defaultMin: number, defaultMax: number): { min: number; max: number } {
+function parseRange(
+  input: string,
+  defaultMin: number,
+  defaultMax: number,
+): { min: number; max: number } {
   const rangeMatch = input.match(/(\d+)\s*[-–]\s*(\d+)/);
   if (rangeMatch) return { min: Number(rangeMatch[1]), max: Number(rangeMatch[2]) };
   const singleMatch = input.match(/(\d+)/);
-  if (singleMatch) { const n = Number(singleMatch[1]); return { min: n, max: n }; }
+  if (singleMatch) {
+    const n = Number(singleMatch[1]);
+    return { min: n, max: n };
+  }
   return { min: defaultMin, max: defaultMax };
 }
 
@@ -1227,12 +1451,14 @@ async function resolveNames(
   const nameMap: Record<string, string> = {};
   if (!interaction.guild) return nameMap;
   await Promise.all(
-    userIds.map(async id => {
+    userIds.map(async (id) => {
       try {
         const member = await interaction.guild!.members.fetch(id);
         nameMap[id] = member.displayName;
-      } catch { /* fall back to mention */ }
-    })
+      } catch {
+        /* fall back to mention */
+      }
+    }),
   );
   return nameMap;
 }
@@ -1253,5 +1479,8 @@ export async function handleBringConfirm(interaction: ButtonInteraction): Promis
 
 export async function handleBringCancel(interaction: ButtonInteraction): Promise<void> {
   pendingBrings.delete(interaction.user.id);
-  await interaction.update({ content: 'No problem — the game has still been added to the lineup.', components: [] });
+  await interaction.update({
+    content: 'No problem — the game has still been added to the lineup.',
+    components: [],
+  });
 }

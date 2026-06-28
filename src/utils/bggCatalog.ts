@@ -16,7 +16,11 @@ let wordIndex = new Map<string, number[]>();
 let _loaded = false;
 
 export function normalizeName(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function tokenize(s: string): string[] {
@@ -30,8 +34,10 @@ function parseCsvLine(line: string): string[] {
   for (let i = 0; i < line.length; i++) {
     const ch = line[i];
     if (ch === '"') {
-      if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
-      else inQuotes = !inQuotes;
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else inQuotes = !inQuotes;
     } else if (ch === ',' && !inQuotes) {
       fields.push(current.trim());
       current = '';
@@ -47,7 +53,7 @@ function buildIndexes(csvText: string): void {
   const lines = csvText.split(/\r?\n/);
   if (lines.length < 2) return;
 
-  const headers = parseCsvLine(lines[0]).map(h => h.toLowerCase());
+  const headers = parseCsvLine(lines[0]).map((h) => h.toLowerCase());
   const idIdx = headers.indexOf('id');
   const nameIdx = headers.indexOf('name');
   const yearIdx = headers.indexOf('yearpublished');
@@ -69,7 +75,7 @@ function buildIndexes(csvText: string): void {
     const name = fields[nameIdx]?.trim();
     if (!id || !name) continue;
 
-    const year = yearIdx !== -1 ? (parseInt(fields[yearIdx], 10) || null) : null;
+    const year = yearIdx !== -1 ? parseInt(fields[yearIdx], 10) || null : null;
     const rankRaw = rankIdx !== -1 ? parseInt(fields[rankIdx], 10) : NaN;
     const rank = !isNaN(rankRaw) && rankRaw > 0 ? rankRaw : null;
     const isExpansion = isExpIdx !== -1 ? fields[isExpIdx]?.trim() === '1' : false;
@@ -106,7 +112,9 @@ export async function loadBGGCatalog(): Promise<void> {
 
   let zipFile: string | undefined;
   try {
-    zipFile = fs.readdirSync(dir).find(f => f.startsWith('boardgames_ranks') && f.endsWith('.zip'));
+    zipFile = fs
+      .readdirSync(dir)
+      .find((f) => f.startsWith('boardgames_ranks') && f.endsWith('.zip'));
   } catch {
     console.warn('[BGGCatalog] Could not read BGG/backup-data/');
     return;
@@ -119,7 +127,7 @@ export async function loadBGGCatalog(): Promise<void> {
 
   try {
     const zip = new AdmZip(path.join(dir, zipFile));
-    const csvEntry = zip.getEntries().find(e => e.entryName.endsWith('.csv'));
+    const csvEntry = zip.getEntries().find((e) => e.entryName.endsWith('.csv'));
     if (!csvEntry) {
       console.warn('[BGGCatalog] No CSV file found inside zip');
       return;
@@ -157,7 +165,7 @@ export function searchCatalog(query: string, limit = 5): BGGCatalogEntry[] {
   const tokens = tokenize(query);
   if (tokens.length === 0) return [];
 
-  const sets = tokens.map(t => new Set(wordIndex.get(t) ?? []));
+  const sets = tokens.map((t) => new Set(wordIndex.get(t) ?? []));
   sets.sort((a, b) => a.size - b.size);
 
   const candidates = new Set(sets[0]);
@@ -167,7 +175,7 @@ export function searchCatalog(query: string, limit = 5): BGGCatalogEntry[] {
     }
   }
 
-  return sortResults([...candidates].map(idx => entries[idx])).slice(0, limit);
+  return sortResults([...candidates].map((idx) => entries[idx])).slice(0, limit);
 }
 
 // For tests only — load catalog from raw CSV text without needing a zip file

@@ -8,7 +8,7 @@ function makeRole(name: string): Role {
 
 function makeGuild(existingRoleNames: string[]): Guild {
   const roleMap = new Map<Snowflake, Role>(
-    existingRoleNames.map((name, i) => [String(i), makeRole(name)])
+    existingRoleNames.map((name, i) => [String(i), makeRole(name)]),
   );
   const collection = {
     map: (fn: (r: Role) => unknown) => [...roleMap.values()].map(fn),
@@ -34,7 +34,7 @@ describe('handleGuildCreate', () => {
 
     expect(guild.roles.create).toHaveBeenCalledTimes(2);
     const names = (guild.roles.create as ReturnType<typeof vi.fn>).mock.calls.map(
-      (call: unknown[]) => (call[0] as { name: string }).name
+      (call: unknown[]) => (call[0] as { name: string }).name,
     );
     expect(names).toContain('Admin');
     expect(names).toContain('Host');
@@ -45,7 +45,7 @@ describe('handleGuildCreate', () => {
     await handleGuildCreate(guild);
 
     const names = (guild.roles.create as ReturnType<typeof vi.fn>).mock.calls.map(
-      (call: unknown[]) => (call[0] as { name: string }).name
+      (call: unknown[]) => (call[0] as { name: string }).name,
     );
     expect(names).not.toContain('Admin');
     expect(names).toContain('Host');
@@ -57,7 +57,7 @@ describe('handleGuildCreate', () => {
     await handleGuildCreate(guild);
 
     const names = (guild.roles.create as ReturnType<typeof vi.fn>).mock.calls.map(
-      (call: unknown[]) => (call[0] as { name: string }).name
+      (call: unknown[]) => (call[0] as { name: string }).name,
     );
     expect(names).toContain('Admin');
     expect(names).not.toContain('Host');
@@ -80,7 +80,9 @@ describe('handleGuildCreate', () => {
 
   it('handles role creation failure gracefully without throwing', async () => {
     const guild = makeGuild([]);
-    (guild.roles.create as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Missing permissions'));
+    (guild.roles.create as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('Missing permissions'),
+    );
 
     await expect(handleGuildCreate(guild)).resolves.not.toThrow();
   });

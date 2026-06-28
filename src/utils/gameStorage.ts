@@ -42,24 +42,24 @@ export function saveGames(games: GameSuggestion[]): void {
 }
 
 export function findGame(id: string): GameSuggestion | undefined {
-  return loadGames().find(g => g.id === id);
+  return loadGames().find((g) => g.id === id);
 }
 
 export function findGamesByChannel(channelId: string): GameSuggestion[] {
-  return loadGames().filter(g => g.channelId === channelId);
+  return loadGames().filter((g) => g.channelId === channelId);
 }
 
 export function findGamesByEvent(eventId: string): GameSuggestion[] {
-  return loadGames().filter(g => g.eventId === eventId);
+  return loadGames().filter((g) => g.eventId === eventId);
 }
 
 export function removeGamesByEvent(eventId: string): void {
-  saveGames(loadGames().filter(g => g.eventId !== eventId));
+  saveGames(loadGames().filter((g) => g.eventId !== eventId));
 }
 
 export function upsertGame(game: GameSuggestion): void {
   const all = loadGames();
-  const idx = all.findIndex(g => g.id === game.id);
+  const idx = all.findIndex((g) => g.id === game.id);
   if (idx >= 0) all[idx] = game;
   else all.push(game);
   saveGames(all);

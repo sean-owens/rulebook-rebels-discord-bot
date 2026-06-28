@@ -7,24 +7,28 @@ export async function cleanupCancelledNight(client: Client, gn: GameNight): Prom
   // Delete individual game card messages first (they may be in channels other than eventChannelId)
   const games = findGamesByEvent(gn.id);
   await Promise.allSettled(
-    games.map(async game => {
+    games.map(async (game) => {
       if (!game.channelId || !game.messageId) return;
       // Skip messages inside the event channel — they'll be gone when the channel is deleted
       if (game.channelId === gn.eventChannelId) return;
       try {
-        const ch = await client.channels.fetch(game.channelId) as TextChannel;
+        const ch = (await client.channels.fetch(game.channelId)) as TextChannel;
         const msg = await ch.messages.fetch(game.messageId);
         await msg.delete();
-      } catch { /* already deleted or channel gone */ }
-    })
+      } catch {
+        /* already deleted or channel gone */
+      }
+    }),
   );
 
   // Delete the event channel (removes all pinned messages, game cards, and user chat within it)
   if (gn.eventChannelId) {
     try {
-      const ch = await client.channels.fetch(gn.eventChannelId) as TextChannel;
+      const ch = (await client.channels.fetch(gn.eventChannelId)) as TextChannel;
       await ch.delete('Event cancelled');
-    } catch { /* already deleted */ }
+    } catch {
+      /* already deleted */
+    }
   }
 
   // Delete the RSVP embed in the announcements channel
@@ -42,7 +46,9 @@ export async function cleanupCancelledNight(client: Client, gn: GameNight): Prom
         const msg = await (ch as TextChannel).messages.fetch(gn.messageId);
         await msg.delete();
       }
-    } catch { /* already deleted/archived */ }
+    } catch {
+      /* already deleted/archived */
+    }
   }
 
   // Purge all stored game suggestions and library requests for this event
