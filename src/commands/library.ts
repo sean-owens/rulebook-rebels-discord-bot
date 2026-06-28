@@ -39,8 +39,12 @@ import {
 import { loadGameNights } from '../utils/storage';
 import { getGameRoles } from '../utils/gameRoles';
 import { updateRequestPin } from '../utils/requestPin';
-import { getBGGGame, weightTag } from '../utils/bgg';
+import AdmZip from 'adm-zip';
+import { getBGGGame, weightTag, fetchBggOwnedCollection } from '../utils/bgg';
 import { searchCatalog, isCatalogLoaded, normalizeName, BGGCatalogEntry } from '../utils/bggCatalog';
+import { getBggAccount } from '../utils/bggAccountStorage';
+import { mergeUserCollection, UserCollectionEntry } from '../utils/userCollectionStorage';
+import { GENRE_TAG_DEFINITIONS } from '../utils/tagDefinitions';
 
 const HEADER_PATTERNS = new Set(['game', 'name', 'game name', 'title', 'board game', 'boardgame']);
 
@@ -51,6 +55,97 @@ interface PendingAdd {
 }
 const pendingAdds = new Map<string, PendingAdd>();
 const pendingEdits = new Map<string, string>(); // userId -> canonical gameName
+
+const VALID_TAGS: string[] = GENRE_TAG_DEFINITIONS.map(t => t.name);
+
+interface PendingFix {
+  info: GameInfo;
+  unmatchedTagInputs: string[];
+}
+const pendingEditFixes = new Map<string, PendingFix>();
+
+interface PendingRequestConfirm {
+  canonicalName: string;
+  eventId: string;
+  eventDate: string;
+  ownerIds: string[];
+  attendingOwnerIds: string[];
+}
+const pendingRequestConfirms = new Map<string, PendingRequestConfirm>();
+
+function pickPreferredOwner(eventId: string, attendingOwnerIds: string[]): string {
+  const requests = getRequestsForEvent(eventId);
+  const bringCounts = new Map<string, number>(attendingOwnerIds.map(id => [id, 0]));
+  for (const req of requests) {
+    if (req.confirmedBy && bringCounts.has(req.confirmedBy)) {
+      bringCounts.set(req.confirmedBy, (bringCounts.get(req.confirmedBy) ?? 0) + 1);
+    }
+  }
+  let minCount = Infinity, chosen = attendingOwnerIds[0];
+  for (const [id, count] of bringCounts) {
+    if (count < minCount) { minCount = count; chosen = id; }
+  }
+  return chosen;
+}
+
+function buildExpansionNote(guildId: string, userId: string, gameName: string): string {
+  const info = getGameInfo(gameName);
+  if (!info?.bggExpansions?.length) return '';
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const userExpNames = new Set(
+    loadLibraryForGuild(guildId).filter(e => e.userId === userId && e.isExpansion).map(e => norm(e.gameName))
+  );
+  const ownedExps = info.bggExpansions.filter(name => userExpNames.has(norm(name)));
+  if (ownedExps.length === 0) return '';
+  return ` (with ${ownedExps.join(', ')})`;
+}
+
+function fuzzyMatchComplexity(input: string): Complexity | null {
+  const s = input.toLowerCase().trim();
+  if (!s) return null;
+  const light = ['light', 'lite', 'easy', 'simple', 'beginner'];
+  const med = ['medium', 'moderate', 'normal', 'mid', 'intermediate'];
+  const heavy = ['heavy', 'hard', 'complex', 'difficult', 'expert', 'advanced'];
+  if (s === 'l' || light.some(k => s.startsWith(k) || k.startsWith(s))) return 'Light';
+  if (s === 'm' || med.some(k => s.startsWith(k) || k.startsWith(s))) return 'Medium';
+  if (s === 'h' || heavy.some(k => s.startsWith(k) || k.startsWith(s))) return 'Heavy';
+  return null;
+}
+
+function fuzzyMatchTag(input: string): string | null {
+  const s = input.toLowerCase().trim();
+  if (!s) return null;
+  const exact = VALID_TAGS.find(t => t.toLowerCase() === s);
+  if (exact) return exact;
+  const stripped = s.replace(/[^a-z]/g, '');
+  const strippedMatch = VALID_TAGS.find(t => t.toLowerCase().replace(/[^a-z]/g, '') === stripped);
+  if (strippedMatch) return strippedMatch;
+  const partial = VALID_TAGS.find(t => {
+    const tl = t.toLowerCase();
+    return tl.startsWith(s) || (s.length >= 3 && tl.split(/[\s/&]+/).some(w => w.startsWith(s)));
+  });
+  return partial ?? null;
+}
+
+function buildTagSelectRow(gameName: string): ActionRowBuilder<StringSelectMenuBuilder> {
+  return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId('library_edit_tags_select')
+      .setPlaceholder(`Select tags for "${gameName.slice(0, 40)}"...`)
+      .setMinValues(0)
+      .setMaxValues(VALID_TAGS.length)
+      .addOptions(VALID_TAGS.map(tag => new StringSelectMenuOptionBuilder().setLabel(tag).setValue(tag)))
+  );
+}
+
+function buildTagSkipRow(): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId('library_edit_tags_skip')
+      .setLabel('Skip — keep matched tags only')
+      .setStyle(ButtonStyle.Secondary)
+  );
+}
 
 export const data = new SlashCommandBuilder()
   .setName('library')
@@ -85,12 +180,18 @@ export const data = new SlashCommandBuilder()
         opt.setName('game').setDescription('Name of the game to request').setRequired(true)
       )
   )
-  .addSubcommand(sub =>
-    sub
+  .addSubcommandGroup(group =>
+    group
       .setName('import')
-      .setDescription('Import a CSV of games you own into the library')
-      .addAttachmentOption(opt =>
-        opt.setName('file').setDescription('CSV file — one game per line, or game name in the first column').setRequired(true)
+      .setDescription('Import your game collection')
+      .addSubcommand(sub => sub.setName('bgg').setDescription('Import your owned collection from BoardGameGeek'))
+      .addSubcommand(sub =>
+        sub
+          .setName('csv')
+          .setDescription('Import games from a CSV file')
+          .addAttachmentOption(opt =>
+            opt.setName('file').setDescription('CSV file — one game per line, or game name in the first column').setRequired(true)
+          )
       )
   )
   .addSubcommand(sub =>
@@ -193,12 +294,17 @@ export const data = new SlashCommandBuilder()
 
 function buildBringLines(guildId: string, requests: ReturnType<typeof getRequestsForEvent>, userId: string): string[] {
   return requests
-    .filter(req => findGamesByName(guildId, req.gameName).some(e => e.userId === userId))
+    .filter(req => {
+      if (!findGamesByName(guildId, req.gameName).some(e => e.userId === userId)) return false;
+      if (req.preferredOwnerId && req.preferredOwnerId !== userId) return false;
+      return true;
+    })
     .map(req => {
       const copies = req.copiesNeeded ?? 1;
       const confirmed = req.confirmedBy === userId ? ' ✅ confirmed' : '';
       const copiesNote = copies > 1 ? ` *(${copies} copies needed)*` : '';
-      return `• **${req.gameName}**${copiesNote}${confirmed}`;
+      const expansionNote = req.preferredOwnerId === userId ? buildExpansionNote(guildId, userId, req.gameName) : '';
+      return `• **${req.gameName}**${expansionNote}${copiesNote}${confirmed}`;
     });
 }
 
@@ -247,8 +353,9 @@ async function handleBring(interaction: ChatInputCommandInteraction): Promise<vo
     }
 
     // result === 'confirmed'
+    const expansionNote = buildExpansionNote(interaction.guildId!, interaction.user.id, match.gameName);
     await interaction.reply({
-      content: `✅ Got it — you're confirmed to bring **${match.gameName}** to the event on ${event.date}!`,
+      content: `✅ Got it — you're confirmed to bring **${match.gameName}**${expansionNote} to the event on ${event.date}!`,
       ephemeral: true,
     });
 
@@ -462,14 +569,20 @@ async function handleClear(interaction: ChatInputCommandInteraction): Promise<vo
 }
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+  const group = interaction.options.getSubcommandGroup(false);
   const sub = interaction.options.getSubcommand();
+
+  if (group === 'import') {
+    if (sub === 'bgg') await handleImportBgg(interaction);
+    else if (sub === 'csv') await handleImportCsv(interaction);
+    return;
+  }
 
   if (sub === 'list') await handleList(interaction);
   else if (sub === 'mine') await handleMine(interaction);
   else if (sub === 'add') await handleAdd(interaction);
   else if (sub === 'remove') await handleRemove(interaction);
   else if (sub === 'request') await handleRequest(interaction);
-  else if (sub === 'import') await handleImport(interaction);
   else if (sub === 'view') await handleView(interaction);
   else if (sub === 'edit') await handleEdit(interaction);
   else if (sub === 'clear') await handleClear(interaction);
@@ -531,7 +644,7 @@ function buildListButtons(pageIdx: number, totalPages: number): ActionRowBuilder
 const LIST_PAGE_CHARS = 1000;
 
 async function handleList(interaction: ChatInputCommandInteraction): Promise<void> {
-  const entries = loadLibraryForGuild(interaction.guildId!);
+  const entries = loadLibraryForGuild(interaction.guildId!).filter(e => !e.isExpansion);
 
   if (entries.length === 0) {
     await interaction.reply({
@@ -668,13 +781,25 @@ function buildGameViewEmbed(guildId: string, gameName: string, userId: string, c
     embed.addFields({ name: 'Tags', value: info.tags.join(' • ') });
   }
   if (info?.bggExpansions?.length) {
-    const ownedLower = new Set((info.expansions ?? []).map(e => e.toLowerCase()));
-    const lines = info.bggExpansions.map(name =>
-      ownedLower.has(name.toLowerCase()) ? `✅ ${name}` : name
-    );
-    const value = lines.join('\n');
+    const guildLibrary = loadLibraryForGuild(guildId);
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const ownerMap = new Map<string, string[]>();
+    for (const e of guildLibrary) {
+      const key = norm(e.gameName);
+      if (!ownerMap.has(key)) ownerMap.set(key, []);
+      ownerMap.get(key)!.push(e.userId);
+    }
+    const ownedExpansions = info.bggExpansions
+      .map(name => ({ name, owners: ownerMap.get(norm(name)) }))
+      .filter(({ owners }) => !!owners);
+    const value = ownedExpansions.length > 0
+      ? ownedExpansions.map(({ name, owners }) => {
+          const mentions = [...new Set(owners!)].map(id => `<@${id}>`).join(', ');
+          return `${name} — ${mentions}`;
+        }).join('\n')
+      : '*None in library*';
     embed.addFields({
-      name: 'Expansions',
+      name: 'Expansions in Library',
       value: value.length > 1024 ? value.slice(0, 1021) + '…' : value,
     });
   } else if (info?.expansions?.length) {
@@ -764,7 +889,7 @@ export async function handleLibraryViewSelect(interaction: StringSelectMenuInter
 }
 
 async function handleMine(interaction: ChatInputCommandInteraction): Promise<void> {
-  const entries = getGamesByUser(interaction.guildId!, interaction.user.id);
+  const entries = getGamesByUser(interaction.guildId!, interaction.user.id).filter(e => !e.isExpansion);
 
   if (entries.length === 0) {
     await interaction.reply({
@@ -785,9 +910,140 @@ async function handleMine(interaction: ChatInputCommandInteraction): Promise<voi
   await interaction.reply({ embeds: [embed], ephemeral: true });
 }
 
+function buildEditModal(gameName: string, existing?: GameInfo | null, titlePrefix = 'Edit'): ModalBuilder {
+  const modal = new ModalBuilder()
+    .setCustomId('library_edit_modal')
+    .setTitle(`${titlePrefix}: ${gameName}`.slice(0, 45));
+
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId('players')
+        .setLabel('Players (e.g. 2-5)')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setValue(
+          existing?.minPlayers != null && existing?.maxPlayers != null
+            ? `${existing.minPlayers}-${existing.maxPlayers}`
+            : existing?.minPlayers != null ? String(existing.minPlayers) : ''
+        )
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId('playtime')
+        .setLabel('Play time (minutes, e.g. 90)')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setValue(existing?.playTime != null ? String(existing.playTime) : '')
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId('tags')
+        .setLabel('Tags (e.g. Co-op, Deck Building, Party)')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('Co-op, Deck Building, Worker Placement, Party...')
+        .setRequired(false)
+        .setValue(existing?.tags?.join(', ') ?? '')
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId('expansions')
+        .setLabel('Expansions You Own (comma-separated)')
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(false)
+        .setValue(existing?.expansions?.join(', ') ?? '')
+        .setPlaceholder(
+          existing?.bggExpansions?.length
+            ? `BGG has: ${existing.bggExpansions.slice(0, 3).join(', ')}${existing.bggExpansions.length > 3 ? '…' : ''}`
+            : 'Seafarers, Cities & Knights…'
+        )
+    ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId('complexity')
+        .setLabel('Complexity (Light, Medium, or Heavy)')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setValue(existing?.complexity ?? '')
+        .setPlaceholder('Light, Medium, or Heavy')
+    ),
+  );
+
+  return modal;
+}
+
+// Shared helper: builds and sends the BGG catalog match UI for partial/multiple matches.
+// Works for both the initial slash command reply and a select-menu update.
+async function showCatalogUI(
+  interaction: ChatInputCommandInteraction | StringSelectMenuInteraction,
+  gameName: string,
+  catalogResults: BGGCatalogEntry[],
+  userId: string,
+): Promise<void> {
+  const top = catalogResults[0];
+  const isChatCmd = interaction.isChatInputCommand();
+  const send = async (content: string, components: ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[]) => {
+    if (isChatCmd) await (interaction as ChatInputCommandInteraction).reply({ content, components, ephemeral: true });
+    else await (interaction as StringSelectMenuInteraction).update({ content, components });
+  };
+
+  if (catalogResults.length === 1) {
+    const yearNote = top.year ? ` (${top.year})` : '';
+    const expNote = top.isExpansion ? ' — expansion' : '';
+    pendingAdds.set(userId, { gameName: top.name, objectid: top.id, originalInput: gameName });
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId('library_add_bgg_confirm').setLabel(`Yes, use "${top.name.slice(0, 55)}"`).setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('library_add_bgg_dismiss').setLabel('No, add as typed').setStyle(ButtonStyle.Secondary),
+    );
+    await send(`Found **${top.name}**${yearNote}${expNote} on BGG — is that the game you mean?`, [row]);
+    return;
+  }
+
+  pendingAdds.set(userId, { gameName, originalInput: gameName });
+  const options = catalogResults.map(r => {
+    const desc = [r.year ? `Published ${r.year}` : 'Year unknown', r.isExpansion ? 'Expansion' : ''].filter(Boolean).join(' • ');
+    return new StringSelectMenuOptionBuilder().setLabel(r.name.slice(0, 100)).setValue(`${r.id}|${r.name.slice(0, 90)}`).setDescription(desc.slice(0, 100));
+  });
+  options.push(new StringSelectMenuOptionBuilder().setLabel('None of these — add as typed').setValue('__none__').setDescription(`Add as "${gameName.slice(0, 80)}"`));
+  const select = new StringSelectMenuBuilder().setCustomId('library_add_bgg_select').setPlaceholder('Choose the correct game...').addOptions(options);
+  await send(`Found **${catalogResults.length}** possible matches for **"${gameName}"** on BGG — which did you mean?`, [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)]);
+}
+
+async function addGameWithBGGDetails(
+  guildId: string,
+  userId: string,
+  gameName: string,
+  objectid: string,
+  interaction: ButtonInteraction | StringSelectMenuInteraction,
+): Promise<void> {
+  await interaction.deferUpdate();
+  addGame(guildId, userId, gameName, objectid);
+  let msg = `Added **${gameName}** to your library!`;
+  try {
+    const bggGame = await getBGGGame(objectid);
+    const info: GameInfo = {
+      gameName,
+      objectid,
+      minPlayers: bggGame.minPlayers,
+      maxPlayers: bggGame.maxPlayers,
+      bestPlayers: bggGame.suggestedPlayers,
+      playTime: bggGame.maxPlaytime,
+      weight: bggGame.weight ?? undefined,
+      complexity: bggGame.weight ? weightTag(bggGame.weight) : undefined,
+      tags: bggGame.tags.length > 0 ? bggGame.tags : undefined,
+      bggExpansions: bggGame.expansions.map(e => e.name),
+      updatedAt: new Date().toISOString(),
+    };
+    upsertGameInfo(info);
+    msg = `Added **${gameName}** to your library with details from BGG!`;
+  } catch {
+    // BGG fetch failed — game still added, details can be filled in with /library edit
+  }
+  await interaction.editReply({ content: msg, components: [] });
+}
+
 async function handleAdd(interaction: ChatInputCommandInteraction): Promise<void> {
   const gameName = interaction.options.getString('game', true).trim();
-
   if (!gameName) {
     await interaction.reply({ content: 'Please provide a game name.', ephemeral: true });
     return;
@@ -795,49 +1051,25 @@ async function handleAdd(interaction: ChatInputCommandInteraction): Promise<void
 
   const guildId = interaction.guildId!;
   const userId = interaction.user.id;
-
-  // Resolve canonical name/id from BGG catalog before any library checks.
-  // Exact normalized match (e.g. "brass birmingham" → "Brass: Birmingham") is applied silently.
-  // Token-only matches (e.g. "arkham" → multiple results) are presented to the user.
-  let resolvedName = gameName;
-  let resolvedObjectid: string | undefined;
-  let catalogSuggestions: BGGCatalogEntry[] = [];
-
-  if (isCatalogLoaded()) {
-    const catalogResults = searchCatalog(gameName, 5);
-    if (catalogResults.length > 0) {
-      const top = catalogResults[0];
-      if (normalizeName(top.name) === normalizeName(gameName)) {
-        resolvedName = top.name;
-        resolvedObjectid = top.id;
-      } else {
-        catalogSuggestions = catalogResults;
-      }
-    }
-  }
-
-  // Check if user already owns this game (by canonical name)
   const userGames = getGamesByUser(guildId, userId);
-  const alreadyOwns = userGames.some(e => e.gameName.toLowerCase() === resolvedName.toLowerCase());
-  if (alreadyOwns) {
-    await interaction.reply({ content: `**${resolvedName}** is already in your library.`, ephemeral: true });
+  const library = loadLibraryForGuild(guildId);
+
+  // 1a. Exact match in the user's own library
+  if (userGames.some(e => e.gameName.toLowerCase() === gameName.toLowerCase())) {
+    await interaction.reply({ content: `**${gameName}** is already in your library.`, ephemeral: true });
     return;
   }
 
-  // Check if anyone else in the group owns a game by the canonical name
-  const existing = findGamesByName(guildId, resolvedName).filter(e => e.userId !== userId);
-  if (existing.length > 0) {
-    const canonical = existing[0].gameName;
-    const objectid = existing[0].objectid ?? resolvedObjectid;
-    const owners = [...new Set(existing.map(e => `<@${e.userId}>`))].join(', ');
-
-    pendingAdds.set(userId, { gameName: canonical, objectid });
-
+  // 1b. Exact match in guild library owned by others
+  const exactOthers = library.filter(e => e.gameName.toLowerCase() === gameName.toLowerCase() && e.userId !== userId);
+  if (exactOthers.length > 0) {
+    const canonical = exactOthers[0].gameName;
+    const owners = [...new Set(exactOthers.map(e => `<@${e.userId}>`))].join(', ');
+    pendingAdds.set(userId, { gameName: canonical, objectid: exactOthers[0].objectid });
     const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId('library_add_confirm').setLabel('Yes, I own it too').setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId('library_add_cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary),
     );
-
     await interaction.reply({
       content: `**${canonical}** is already in the group library (owned by ${owners}). Are you adding your own copy?`,
       components: [row],
@@ -846,68 +1078,109 @@ async function handleAdd(interaction: ChatInputCommandInteraction): Promise<void
     return;
   }
 
-  // Catalog found matches with a different canonical name — ask the user to confirm
-  if (catalogSuggestions.length > 0) {
-    if (catalogSuggestions.length === 1) {
-      const top = catalogSuggestions[0];
-      const yearNote = top.year ? ` (${top.year})` : '';
-      const expNote = top.isExpansion ? ' — expansion' : '';
-      pendingAdds.set(userId, { gameName: top.name, objectid: top.id, originalInput: gameName });
-
-      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder()
-          .setCustomId('library_add_bgg_confirm')
-          .setLabel(`Yes, use "${top.name.slice(0, 55)}"`)
-          .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-          .setCustomId('library_add_bgg_dismiss')
-          .setLabel('No, add as typed')
-          .setStyle(ButtonStyle.Secondary),
-      );
-
-      await interaction.reply({
-        content: `Found **${top.name}**${yearNote}${expNote} on BGG — is that the game you mean?`,
-        components: [row],
-        ephemeral: true,
-      });
-    } else {
-      pendingAdds.set(userId, { gameName: gameName, originalInput: gameName });
-
-      const options = catalogSuggestions.map(r => {
-        const desc = [r.year ? `Published ${r.year}` : 'Year unknown', r.isExpansion ? 'Expansion' : '']
-          .filter(Boolean).join(' • ');
-        return new StringSelectMenuOptionBuilder()
-          .setLabel(r.name.slice(0, 100))
-          .setValue(`${r.id}|${r.name.slice(0, 90)}`)
-          .setDescription(desc.slice(0, 100));
-      });
-      options.push(
-        new StringSelectMenuOptionBuilder()
-          .setLabel('None of these — add as typed')
-          .setValue('__none__')
-          .setDescription(`Add as "${gameName.slice(0, 80)}"`)
-      );
-
-      const select = new StringSelectMenuBuilder()
-        .setCustomId('library_add_bgg_select')
-        .setPlaceholder('Choose the correct game...')
-        .addOptions(options);
-
-      await interaction.reply({
-        content: `Found **${catalogSuggestions.length}** possible matches for **"${gameName}"** on BGG — which did you mean?`,
-        components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
-        ephemeral: true,
-      });
-    }
+  // 2. Partial/fuzzy match in guild library — confirm before going to BGG
+  const partials = findGameNamesByPartial(guildId, gameName);
+  if (partials.length > 0 && partials.length <= 25) {
+    pendingAdds.set(userId, { gameName, originalInput: gameName });
+    const options = partials.map(name =>
+      new StringSelectMenuOptionBuilder().setLabel(name.slice(0, 100)).setValue(`lib|${name.slice(0, 90)}`)
+    );
+    options.push(
+      new StringSelectMenuOptionBuilder()
+        .setLabel('None of these — search BGG')
+        .setValue('__bgg__')
+        .setDescription(`Search BGG for "${gameName.slice(0, 80)}"`)
+    );
+    await interaction.reply({
+      content: `Found similar games in the group library — is this what you're adding?`,
+      components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+        new StringSelectMenuBuilder().setCustomId('library_add_partial_select').setPlaceholder('Choose a game from the library...').addOptions(options)
+      )],
+      ephemeral: true,
+    });
     return;
   }
 
-  // No catalog suggestions — add directly (exact match silently corrects casing/attaches ID)
-  addGame(guildId, userId, resolvedName, resolvedObjectid);
-  await interaction.reply({
-    content: `Added **${resolvedName}** to your library. Other members can now request it for events.`,
-    ephemeral: true,
-  });
+  // 3. BGG catalog search
+  if (isCatalogLoaded()) {
+    const catalogResults = searchCatalog(gameName, 5);
+    if (catalogResults.length > 0) {
+      const top = catalogResults[0];
+      if (normalizeName(top.name) === normalizeName(gameName)) {
+        // Exact canonical match — re-check library with resolved name (catches punctuation differences like "brass birmingham" → "Brass: Birmingham")
+        if (userGames.some(e => e.gameName.toLowerCase() === top.name.toLowerCase())) {
+          await interaction.reply({ content: `**${top.name}** is already in your library.`, ephemeral: true });
+          return;
+        }
+        const canonicalOthers = library.filter(e => e.gameName.toLowerCase() === top.name.toLowerCase() && e.userId !== userId);
+        if (canonicalOthers.length > 0) {
+          const canonical = canonicalOthers[0].gameName;
+          const owners = [...new Set(canonicalOthers.map(e => `<@${e.userId}>`))].join(', ');
+          pendingAdds.set(userId, { gameName: canonical, objectid: canonicalOthers[0].objectid ?? top.id });
+          const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId('library_add_confirm').setLabel('Yes, I own it too').setStyle(ButtonStyle.Primary),
+            new ButtonBuilder().setCustomId('library_add_cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary),
+          );
+          await interaction.reply({
+            content: `**${canonical}** is already in the group library (owned by ${owners}). Are you adding your own copy?`,
+            components: [row],
+            ephemeral: true,
+          });
+          return;
+        }
+        await showCatalogUI(interaction, gameName, [top], userId);
+        return;
+      }
+      await showCatalogUI(interaction, gameName, catalogResults, userId);
+      return;
+    }
+  }
+
+  // 4. No matches anywhere — add as custom game
+  addGame(guildId, userId, gameName);
+  pendingEdits.set(userId, gameName);
+  await interaction.showModal(buildEditModal(gameName, undefined, 'Add Details'));
+}
+
+export async function handleLibraryAddPartialSelect(interaction: StringSelectMenuInteraction): Promise<void> {
+  const value = interaction.values[0];
+  const pending = pendingAdds.get(interaction.user.id);
+  const originalInput = pending?.originalInput ?? pending?.gameName ?? '';
+  const guildId = interaction.guildId!;
+  const userId = interaction.user.id;
+  pendingAdds.delete(userId);
+
+  if (value === '__bgg__') {
+    if (isCatalogLoaded()) {
+      const catalogResults = searchCatalog(originalInput, 5);
+      if (catalogResults.length > 0) {
+        const top = catalogResults[0];
+        if (normalizeName(top.name) === normalizeName(originalInput)) {
+          await showCatalogUI(interaction, originalInput, [top], userId);
+          return;
+        }
+        await showCatalogUI(interaction, originalInput, catalogResults, userId);
+        return;
+      }
+    }
+    // No BGG match — add as custom
+    addGame(guildId, userId, originalInput);
+    pendingEdits.set(userId, originalInput);
+    await interaction.showModal(buildEditModal(originalInput, undefined, 'Add Details'));
+    return;
+  }
+
+  // User picked a game from the library partial list — add their copy
+  const name = value.startsWith('lib|') ? value.slice(4) : value;
+  const userGames = getGamesByUser(guildId, userId);
+  if (userGames.some(e => e.gameName.toLowerCase() === name.toLowerCase())) {
+    await interaction.update({ content: `**${name}** is already in your library.`, components: [] });
+    return;
+  }
+  const libGames = loadLibraryForGuild(guildId).filter(e => e.gameName.toLowerCase() === name.toLowerCase() && e.userId !== userId);
+  addGame(guildId, userId, name, libGames[0]?.objectid);
+  pendingEdits.set(userId, name);
+  await interaction.showModal(buildEditModal(name, getGameInfo(name), 'Add Details'));
 }
 
 export async function handleAddConfirm(interaction: ButtonInteraction): Promise<void> {
@@ -936,11 +1209,13 @@ export async function handleAddBggConfirm(interaction: ButtonInteraction): Promi
     return;
   }
   pendingAdds.delete(interaction.user.id);
-  addGame(interaction.guildId!, interaction.user.id, pending.gameName, pending.objectid);
-  await interaction.update({
-    content: `Added **${pending.gameName}** to your library. Other members can now request it for events.`,
-    components: [],
-  });
+  if (pending.objectid) {
+    await addGameWithBGGDetails(interaction.guildId!, interaction.user.id, pending.gameName, pending.objectid, interaction);
+  } else {
+    addGame(interaction.guildId!, interaction.user.id, pending.gameName);
+    pendingEdits.set(interaction.user.id, pending.gameName);
+    await interaction.showModal(buildEditModal(pending.gameName, undefined, 'Add Details'));
+  }
 }
 
 export async function handleAddBggDismiss(interaction: ButtonInteraction): Promise<void> {
@@ -952,10 +1227,8 @@ export async function handleAddBggDismiss(interaction: ButtonInteraction): Promi
   pendingAdds.delete(interaction.user.id);
   const nameToAdd = pending.originalInput ?? pending.gameName;
   addGame(interaction.guildId!, interaction.user.id, nameToAdd);
-  await interaction.update({
-    content: `Added **${nameToAdd}** to your library. Other members can now request it for events.`,
-    components: [],
-  });
+  pendingEdits.set(interaction.user.id, nameToAdd);
+  await interaction.showModal(buildEditModal(nameToAdd, undefined, 'Add Details'));
 }
 
 export async function handleAddBggSelect(interaction: StringSelectMenuInteraction): Promise<void> {
@@ -967,10 +1240,8 @@ export async function handleAddBggSelect(interaction: StringSelectMenuInteractio
   if (value === '__none__') {
     if (originalInput) {
       addGame(interaction.guildId!, interaction.user.id, originalInput);
-      await interaction.update({
-        content: `Added **${originalInput}** to your library. Other members can now request it for events.`,
-        components: [],
-      });
+      pendingEdits.set(interaction.user.id, originalInput);
+      await interaction.showModal(buildEditModal(originalInput, undefined, 'Add Details'));
     } else {
       await interaction.update({ content: 'Cancelled. No changes were made to your library.', components: [] });
     }
@@ -1004,18 +1275,31 @@ export async function handleAddBggSelect(interaction: StringSelectMenuInteractio
     return;
   }
 
-  addGame(interaction.guildId!, interaction.user.id, name, id);
-  await interaction.update({
-    content: `Added **${name}** to your library. Other members can now request it for events.`,
-    components: [],
-  });
+  await addGameWithBGGDetails(interaction.guildId!, interaction.user.id, name, id, interaction);
 }
 
 async function handleRemove(interaction: ChatInputCommandInteraction): Promise<void> {
   const gameName = interaction.options.getString('game', true).trim();
-  const result = removeGame(interaction.guildId!, interaction.user.id, gameName);
+  const guildId = interaction.guildId!;
+  const userId = interaction.user.id;
+  const result = removeGame(guildId, userId, gameName);
 
   if (result === 'not_found') {
+    const userGameNames = new Set(
+      getGamesByUser(guildId, userId).map(e => e.gameName.toLowerCase())
+    );
+    const partials = findGameNamesByPartial(guildId, gameName)
+      .filter(name => userGameNames.has(name.toLowerCase()));
+
+    if (partials.length > 0) {
+      await interaction.reply({
+        content: `**"${gameName}"** wasn't an exact match. Did you mean one of these?`,
+        components: [buildPartialMatchSelect(partials, 'library_remove_select', 'Pick a game to remove...')],
+        ephemeral: true,
+      });
+      return;
+    }
+
     await interaction.reply({
       content: `**${gameName}** wasn't found in your library. Check your games with \`/library mine\`.`,
       ephemeral: true,
@@ -1027,6 +1311,88 @@ async function handleRemove(interaction: ChatInputCommandInteraction): Promise<v
     content: `Removed **${gameName}** from your library.`,
     ephemeral: true,
   });
+}
+
+export async function handleRemoveSelect(interaction: StringSelectMenuInteraction): Promise<void> {
+  const gameName = interaction.values[0];
+  if (gameName === '__none__') {
+    await interaction.update({ content: 'No game removed. Try again with a different name.', components: [] });
+    return;
+  }
+  const result = removeGame(interaction.guildId!, interaction.user.id, gameName);
+  if (result === 'not_found') {
+    await interaction.update({ content: `**${gameName}** wasn't found in your library.`, components: [] });
+    return;
+  }
+  await interaction.update({ content: `Removed **${gameName}** from your library.`, components: [] });
+}
+
+async function showCopySelect(
+  interaction: ChatInputCommandInteraction | StringSelectMenuInteraction,
+  canonicalName: string,
+  eventId: string,
+  eventDate: string,
+  ownerIds: string[],
+  attendingOwnerIds: string[],
+  guildId: string,
+): Promise<boolean> {
+  if (attendingOwnerIds.length <= 1) return false;
+
+  const gameInfo = getGameInfo(canonicalName);
+  if (!gameInfo?.bggExpansions?.length) return false;
+
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const guildLibrary = loadLibraryForGuild(guildId);
+
+  const hasExpansions = attendingOwnerIds.some(ownerId =>
+    guildLibrary.some(e => e.userId === ownerId && e.isExpansion &&
+      gameInfo.bggExpansions!.some(exp => norm(exp) === norm(e.gameName)))
+  );
+  if (!hasExpansions) return false;
+
+  const displayNames = new Map<string, string>();
+  await Promise.all(attendingOwnerIds.map(async ownerId => {
+    try {
+      const member = await interaction.guild?.members.fetch(ownerId);
+      displayNames.set(ownerId, member?.displayName ?? `User …${ownerId.slice(-4)}`);
+    } catch {
+      displayNames.set(ownerId, `User …${ownerId.slice(-4)}`);
+    }
+  }));
+
+  const options = attendingOwnerIds.map(ownerId => {
+    const ownerExps = gameInfo.bggExpansions!.filter(name =>
+      guildLibrary.some(e => e.userId === ownerId && e.isExpansion && norm(e.gameName) === norm(name))
+    );
+    const desc = ownerExps.length > 0 ? `Base + ${ownerExps.join(', ')}`.slice(0, 100) : 'Base game only';
+    return new StringSelectMenuOptionBuilder()
+      .setValue(ownerId)
+      .setLabel(`${displayNames.get(ownerId)}'s copy`.slice(0, 100))
+      .setDescription(desc);
+  });
+  options.push(
+    new StringSelectMenuOptionBuilder()
+      .setValue('__bot__')
+      .setLabel('Bot decides')
+      .setDescription('Spread game-bringing load evenly among attending owners')
+  );
+
+  pendingRequestConfirms.set(interaction.user.id, { canonicalName, eventId, eventDate, ownerIds, attendingOwnerIds });
+
+  const select = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId('library_request_copy_select')
+      .setPlaceholder('Choose which copy to request...')
+      .addOptions(options)
+  );
+
+  const content = `**${canonicalName}** is available for the event on ${eventDate}. Which copy would you like?`;
+  if (interaction.isChatInputCommand()) {
+    await interaction.reply({ content, ephemeral: true, components: [select] });
+  } else {
+    await (interaction as StringSelectMenuInteraction).update({ content, components: [select] });
+  }
+  return true;
 }
 
 async function handleRequest(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -1092,32 +1458,32 @@ async function handleRequest(interaction: ChatInputCommandInteraction): Promise<
 
   const event = upcoming.find(gn => gn.eventChannelId === interaction.channelId) ?? upcoming[0];
 
+  const canonicalName = matches[0].gameName;
   const ownerIds = matches.map(e => e.userId);
-  const ownerAttending = ownerIds.some(
-    id => event.rsvps.yes.includes(id) || event.rsvps.maybe.includes(id)
-  );
-  if (!ownerAttending) {
+  const attendingOwnerIds = ownerIds.filter(id => event.rsvps.yes.includes(id) || event.rsvps.maybe.includes(id));
+
+  if (attendingOwnerIds.length === 0) {
     await interaction.reply({
-      content: `None of the owners of **${matches[0].gameName}** are attending the event on ${event.date}, so it can't be requested.`,
+      content: `None of the owners of **${canonicalName}** are attending the event on ${event.date}, so it can't be requested.`,
       ephemeral: true,
     });
     return;
   }
 
-  const result = addRequest(event.id, gameName, interaction.user.id);
+  const showed = await showCopySelect(interaction, canonicalName, event.id, event.date, ownerIds, attendingOwnerIds, interaction.guildId!);
+  if (showed) return;
+
+  const result = addRequest(event.id, canonicalName, interaction.user.id);
 
   if (result === 'duplicate') {
     await interaction.reply({
-      content: `**${gameName}** has already been requested for the event on ${event.date}.`,
+      content: `**${canonicalName}** has already been requested for the event on ${event.date}.`,
       ephemeral: true,
     });
     return;
   }
 
-  // Use the canonical casing from the library
-  const canonicalName = matches[0].gameName;
-  const owners = matches.map(e => `<@${e.userId}>`);
-
+  const owners = ownerIds.map(id => `<@${id}>`);
   await interaction.reply({
     content: `<@${interaction.user.id}> requested **${canonicalName}** for the event on ${event.date}. Owner${owners.length > 1 ? 's' : ''}: ${owners.join(', ')}`,
   });
@@ -1150,28 +1516,29 @@ export async function handleLibraryRequestSelect(interaction: StringSelectMenuIn
 
   const event = upcoming.find(gn => gn.eventChannelId === interaction.channelId) ?? upcoming[0];
 
+  const canonicalName = matches[0]?.gameName ?? gameName;
   const ownerIds = matches.map(e => e.userId);
-  const ownerAttending = ownerIds.some(
-    id => event.rsvps.yes.includes(id) || event.rsvps.maybe.includes(id)
-  );
-  if (!ownerAttending) {
+  const attendingOwnerIds = ownerIds.filter(id => event.rsvps.yes.includes(id) || event.rsvps.maybe.includes(id));
+
+  if (attendingOwnerIds.length === 0) {
     await interaction.update({
-      content: `None of the owners of **${matches[0]?.gameName ?? gameName}** are attending the event on ${event.date}, so it can't be requested.`,
+      content: `None of the owners of **${canonicalName}** are attending the event on ${event.date}, so it can't be requested.`,
       components: [],
     });
     return;
   }
 
-  const result = addRequest(event.id, gameName, interaction.user.id);
-  const canonicalName = matches[0]?.gameName ?? gameName;
-  const owners = matches.map(e => `<@${e.userId}>`);
+  const showed = await showCopySelect(interaction, canonicalName, event.id, event.date, ownerIds, attendingOwnerIds, interaction.guildId!);
+  if (showed) return;
+
+  const result = addRequest(event.id, canonicalName, interaction.user.id);
 
   if (result === 'duplicate') {
     await interaction.update({ content: `**${canonicalName}** has already been requested for the event on ${event.date}.`, components: [] });
     return;
   }
 
-  // Dismiss the ephemeral select menu, then post a public confirmation
+  const owners = ownerIds.map(id => `<@${id}>`);
   await interaction.update({ content: '✓ Request submitted!', components: [] });
   await interaction.followUp({
     content: `<@${interaction.user.id}> requested **${canonicalName}** for the event on ${event.date}. Owner${owners.length !== 1 ? 's' : ''}: ${owners.join(', ')}`,
@@ -1181,6 +1548,39 @@ export async function handleLibraryRequestSelect(interaction: StringSelectMenuIn
   try {
     await updateRequestPin(interaction.client, event.id);
   } catch { /* channel may not be accessible */ }
+}
+
+export async function handleLibraryRequestCopySelect(interaction: StringSelectMenuInteraction): Promise<void> {
+  const pending = pendingRequestConfirms.get(interaction.user.id);
+  if (!pending) {
+    await interaction.update({ content: 'This prompt has expired — try `/library request` again.', components: [] });
+    return;
+  }
+  pendingRequestConfirms.delete(interaction.user.id);
+
+  const selected = interaction.values[0];
+  const preferredOwnerId = selected === '__bot__'
+    ? pickPreferredOwner(pending.eventId, pending.attendingOwnerIds)
+    : selected;
+
+  const result = addRequest(pending.eventId, pending.canonicalName, interaction.user.id, preferredOwnerId);
+
+  if (result === 'duplicate') {
+    await interaction.update({
+      content: `**${pending.canonicalName}** has already been requested for the event on ${pending.eventDate}.`,
+      components: [],
+    });
+    return;
+  }
+
+  const owners = pending.ownerIds.map(id => `<@${id}>`);
+  await interaction.update({ content: '✓ Request submitted!', components: [] });
+  await interaction.followUp({
+    content: `<@${interaction.user.id}> requested **${pending.canonicalName}** for the event on ${pending.eventDate}. Owner${owners.length !== 1 ? 's' : ''}: ${owners.join(', ')} — bringing: <@${preferredOwnerId}>`,
+    ephemeral: false,
+  });
+
+  try { await updateRequestPin(interaction.client, pending.eventId); } catch { /* channel not accessible */ }
 }
 
 function parseCsvLine(line: string): string[] {
@@ -1203,32 +1603,161 @@ function parseCsvLine(line: string): string[] {
   return fields;
 }
 
-async function handleImport(interaction: ChatInputCommandInteraction): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
+async function handleImportBgg(interaction: ChatInputCommandInteraction): Promise<void> {
+  const guildId = interaction.guildId!;
+  const userId = interaction.user.id;
 
+  const bggAccount = getBggAccount(guildId, userId);
+  if (!bggAccount) {
+    await interaction.reply({
+      content: 'You don\'t have a BoardGameGeek account linked on this server. Use `/bgg link` to connect one, then run `/library import bgg`.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+  await interaction.editReply('Fetching your BoardGameGeek collection…');
+
+  let games;
+  try {
+    games = await fetchBggOwnedCollection(bggAccount.bggUsername);
+  } catch (err) {
+    console.error('[library import bgg] fetchBggOwnedCollection failed:', err);
+    games = null;
+  }
+
+  if (!games) {
+    await interaction.editReply('Could not reach BoardGameGeek right now. Please try again in a moment, or use `/library import csv` instead.');
+    return;
+  }
+
+  let addedGames = 0;
+  let addedExpansions = 0;
+  let skipped = 0;
+  const collectionEntries: UserCollectionEntry[] = [];
+
+  for (const game of games) {
+    if (!game.gameName) continue;
+
+    const result = addGame(guildId, userId, game.gameName, game.bggGameId, game.isExpansion);
+    if (result === 'added') {
+      if (game.isExpansion) addedExpansions++;
+      else addedGames++;
+    } else {
+      skipped++;
+    }
+
+    const existing = getGameInfo(game.gameName);
+    upsertGameInfo({
+      gameName: game.gameName,
+      objectid: game.bggGameId,
+      minPlayers: existing?.minPlayers ?? game.minPlayers ?? undefined,
+      maxPlayers: existing?.maxPlayers ?? game.maxPlayers ?? undefined,
+      playTime: existing?.playTime ?? game.playingTime ?? undefined,
+      weight: existing?.weight,
+      complexity: existing?.complexity,
+      tags: existing?.tags,
+      expansions: existing?.expansions,
+      updatedAt: new Date().toISOString(),
+    });
+
+    collectionEntries.push({
+      bggGameId: game.bggGameId,
+      gameName: game.gameName,
+      bggOwn: game.own,
+      bggForTrade: game.forTrade,
+      bggWantToPlay: game.wantToPlay,
+      bggWishlisted: game.wishlisted,
+      bggUserRating: game.userRating,
+      bggNumPlays: game.numPlays,
+      bggSyncedAt: new Date().toISOString(),
+    });
+  }
+
+  mergeUserCollection(guildId, userId, collectionEntries);
+
+  const parts: string[] = [];
+  if (addedGames > 0) parts.push(`**${addedGames}** game${addedGames !== 1 ? 's' : ''} added`);
+  if (addedExpansions > 0) parts.push(`**${addedExpansions}** expansion${addedExpansions !== 1 ? 's' : ''} added`);
+  if (skipped > 0) parts.push(`**${skipped}** already in your library`);
+  await interaction.editReply(`BoardGameGeek import complete — ${parts.join(', ')}.`);
+}
+
+async function handleImportCsv(interaction: ChatInputCommandInteraction): Promise<void> {
+  const guildId = interaction.guildId!;
+  const userId = interaction.user.id;
   const attachment = interaction.options.getAttachment('file', true);
+
+  await interaction.deferReply({ ephemeral: true });
 
   if (attachment.size > 512_000) {
     await interaction.editReply('That file is too large. Please upload a CSV under 500 KB.');
     return;
   }
 
-  let text: string;
+  let buffer: Buffer;
   try {
     const res = await fetch(attachment.url);
-    text = await res.text();
+    buffer = Buffer.from(await res.arrayBuffer());
   } catch {
     await interaction.editReply('Failed to download the file. Please try again.');
     return;
   }
 
-  const lines = text.split(/\r?\n/).filter(l => l.trim());
-  if (lines.length === 0) {
+  const isZip = attachment.name.toLowerCase().endsWith('.zip');
+  let csvTexts: string[];
+
+  if (isZip) {
+    try {
+      const zip = new AdmZip(buffer);
+      csvTexts = zip.getEntries()
+        .filter(e => !e.isDirectory && e.entryName.toLowerCase().endsWith('.csv'))
+        .map(e => e.getData().toString('utf8'));
+    } catch {
+      await interaction.editReply('Could not read that ZIP file. Make sure it\'s a valid ZIP containing CSV files.');
+      return;
+    }
+    if (csvTexts.length === 0) {
+      await interaction.editReply('No CSV files were found inside that ZIP.');
+      return;
+    }
+  } else {
+    csvTexts = [buffer.toString('utf8')];
+  }
+
+  let added = 0;
+  let skipped = 0;
+  let expansions = 0;
+
+  for (const text of csvTexts) {
+    const result = processCsvText(text, guildId, userId);
+    added += result.added;
+    skipped += result.skipped;
+    expansions += result.expansions;
+  }
+
+  if (added === 0 && skipped === 0 && expansions === 0) {
     await interaction.editReply('No games were found in that file. Make sure it has one game name per line.');
     return;
   }
 
-  // Detect BGG format by checking header row for known BGG columns
+  const parts: string[] = [];
+  if (added > 0) parts.push(`**${added}** game${added !== 1 ? 's' : ''} added`);
+  if (skipped > 0) parts.push(`**${skipped}** already in your library`);
+  if (expansions > 0) parts.push(`**${expansions}** expansion${expansions !== 1 ? 's' : ''} skipped`);
+  await interaction.editReply(`Import complete — ${parts.join(', ')}.`);
+}
+
+function processCsvText(text: string, guildId: string, userId: string): { added: number; skipped: number; expansions: number } {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  let added = 0;
+  let skipped = 0;
+  let expansions = 0;
+
+  if (lines.length === 0) return { added, skipped, expansions };
+
+  // Detect BGG CSV format by checking header row for known BGG columns
   const headers = parseCsvLine(lines[0]).map(h => h.toLowerCase());
   const isBgg = headers.includes('own') && headers.includes('objectname');
   const nameIdx = isBgg ? headers.indexOf('objectname') : 0;
@@ -1240,11 +1769,6 @@ async function handleImport(interaction: ChatInputCommandInteraction): Promise<v
   const bestPlayersIdx = isBgg ? headers.indexOf('bggbestplayers') : -1;
   const playTimeIdx = isBgg ? headers.indexOf('playingtime') : -1;
   const weightIdx = isBgg ? headers.indexOf('avgweight') : -1;
-
-  const userId = interaction.user.id;
-  let added = 0;
-  let skipped = 0;
-  let expansions = 0;
 
   const dataLines = isBgg ? lines.slice(1) : lines;
 
@@ -1258,7 +1782,7 @@ async function handleImport(interaction: ChatInputCommandInteraction): Promise<v
     if (typeIdx !== -1 && fields[typeIdx] === 'expansion') { expansions++; continue; }
 
     const objectid = idIdx !== -1 ? fields[idIdx]?.trim() || undefined : undefined;
-    const result = addGame(interaction.guildId!, userId, gameName, objectid);
+    const result = addGame(guildId, userId, gameName, objectid);
     if (result === 'added') added++;
     else skipped++;
 
@@ -1286,16 +1810,7 @@ async function handleImport(interaction: ChatInputCommandInteraction): Promise<v
     }
   }
 
-  if (added === 0 && skipped === 0 && expansions === 0) {
-    await interaction.editReply('No games were found in that file. Make sure it has one game name per line.');
-    return;
-  }
-
-  const parts: string[] = [];
-  if (added > 0) parts.push(`**${added}** game${added !== 1 ? 's' : ''} added`);
-  if (skipped > 0) parts.push(`**${skipped}** already in your library`);
-  if (expansions > 0) parts.push(`**${expansions}** expansion${expansions !== 1 ? 's' : ''} skipped`);
-  await interaction.editReply(`Import complete — ${parts.join(', ')}.`);
+  return { added, skipped, expansions };
 }
 
 async function handleEdit(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -1326,66 +1841,7 @@ async function handleEdit(interaction: ChatInputCommandInteraction): Promise<voi
   const existing = getGameInfo(canonical);
 
   pendingEdits.set(interaction.user.id, canonical);
-
-  const modal = new ModalBuilder()
-    .setCustomId('library_edit_modal')
-    .setTitle(`Edit: ${canonical}`.slice(0, 45));
-
-  modal.addComponents(
-    new ActionRowBuilder<TextInputBuilder>().addComponents(
-      new TextInputBuilder()
-        .setCustomId('players')
-        .setLabel('Players (e.g. 2-5)')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(false)
-        .setValue(
-          existing?.minPlayers != null && existing?.maxPlayers != null
-            ? `${existing.minPlayers}-${existing.maxPlayers}`
-            : existing?.minPlayers != null ? String(existing.minPlayers) : ''
-        )
-    ),
-    new ActionRowBuilder<TextInputBuilder>().addComponents(
-      new TextInputBuilder()
-        .setCustomId('playtime')
-        .setLabel('Play time (minutes, e.g. 90)')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(false)
-        .setValue(existing?.playTime != null ? String(existing.playTime) : '')
-    ),
-    new ActionRowBuilder<TextInputBuilder>().addComponents(
-      new TextInputBuilder()
-        .setCustomId('tags')
-        .setLabel('Tags (e.g. Co-op, Deck Building, Party)')
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder('Co-op, Deck Building, Worker Placement, Party...')
-        .setRequired(false)
-        .setValue(existing?.tags?.join(', ') ?? '')
-    ),
-    new ActionRowBuilder<TextInputBuilder>().addComponents(
-      new TextInputBuilder()
-        .setCustomId('expansions')
-        .setLabel('Expansions You Own (comma-separated)')
-        .setStyle(TextInputStyle.Paragraph)
-        .setRequired(false)
-        .setValue(existing?.expansions?.join(', ') ?? '')
-        .setPlaceholder(
-          existing?.bggExpansions?.length
-            ? `BGG has: ${existing.bggExpansions.slice(0, 3).join(', ')}${existing.bggExpansions.length > 3 ? '…' : ''}`
-            : 'Seafarers, Cities & Knights…'
-        )
-    ),
-    new ActionRowBuilder<TextInputBuilder>().addComponents(
-      new TextInputBuilder()
-        .setCustomId('complexity')
-        .setLabel('Complexity (Light, Medium, or Heavy)')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(false)
-        .setValue(existing?.complexity ?? '')
-        .setPlaceholder('Light, Medium, or Heavy')
-    ),
-  );
-
-  await interaction.showModal(modal);
+  await interaction.showModal(buildEditModal(canonical, existing));
 }
 
 export async function handleEditModal(interaction: ModalSubmitInteraction): Promise<void> {
@@ -1414,18 +1870,27 @@ export async function handleEditModal(interaction: ModalSubmitInteraction): Prom
   }
 
   const playTime = playtimeRaw ? parseInt(playtimeRaw, 10) || existing?.playTime : existing?.playTime;
-  const tags = tagsRaw
-    ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean)
-    : existing?.tags;
+
+  // Fuzzy-match each tag; collect unrecognized inputs for follow-up
+  const unmatchedTagInputs: string[] = [];
+  const resolvedTags: string[] = tagsRaw
+    ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean).reduce<string[]>((acc, raw) => {
+        const matched = fuzzyMatchTag(raw);
+        if (matched) { if (!acc.includes(matched)) acc.push(matched); }
+        else unmatchedTagInputs.push(raw);
+        return acc;
+      }, [])
+    : (existing?.tags ?? []);
+
   const expansions = expansionsRaw
     ? expansionsRaw.split(',').map(e => e.trim()).filter(Boolean)
     : existing?.expansions;
 
-  const normalizedComplexity = complexityRaw.charAt(0).toUpperCase() + complexityRaw.slice(1).toLowerCase();
-  const complexity: Complexity | undefined =
-    normalizedComplexity === 'Light' || normalizedComplexity === 'Medium' || normalizedComplexity === 'Heavy'
-      ? normalizedComplexity
-      : existing?.complexity;
+  // Fuzzy-match complexity; fall back to existing if input unrecognized
+  const resolvedComplexity: Complexity | undefined = complexityRaw
+    ? (fuzzyMatchComplexity(complexityRaw) ?? existing?.complexity)
+    : existing?.complexity;
+  const complexityNeedsPrompt = !!(complexityRaw && !fuzzyMatchComplexity(complexityRaw));
 
   const info: GameInfo = {
     gameName,
@@ -1435,24 +1900,89 @@ export async function handleEditModal(interaction: ModalSubmitInteraction): Prom
     bestPlayers: existing?.bestPlayers,
     playTime,
     weight: existing?.weight,
-    complexity,
-    tags,
+    complexity: resolvedComplexity,
+    tags: resolvedTags,
     expansions,
     bggExpansions: existing?.bggExpansions,
     updatedAt: new Date().toISOString(),
   };
 
-  upsertGameInfo(info);
-
-  const complexityWarning =
-    complexityRaw && normalizedComplexity !== 'Light' && normalizedComplexity !== 'Medium' && normalizedComplexity !== 'Heavy'
-      ? `\n⚠️ **"${complexityRaw}"** isn't a valid complexity — use Light, Medium, or Heavy. The previous value was kept.`
+  // Complexity unrecognized — prompt for selection; defer tag fix to afterward if needed
+  if (complexityNeedsPrompt) {
+    pendingEditFixes.set(interaction.user.id, { info, unmatchedTagInputs });
+    const tagNote = unmatchedTagInputs.length > 0
+      ? `\n\nSome tags also weren't recognized (**${unmatchedTagInputs.join(', ')}**) — you'll pick from available tags next.`
       : '';
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId('library_edit_complexity_light').setLabel('Light').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('library_edit_complexity_medium').setLabel('Medium').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('library_edit_complexity_heavy').setLabel('Heavy').setStyle(ButtonStyle.Danger),
+    );
+    await interaction.reply({
+      content: `**"${complexityRaw}"** didn't match a complexity — which best fits **${gameName}**?${tagNote}`,
+      components: [row],
+      ephemeral: true,
+    });
+    return;
+  }
 
-  await interaction.reply({
-    content: `Updated details for **${gameName}**.${complexityWarning}`,
-    ephemeral: true,
-  });
+  // Unrecognized tags — prompt with full tag select
+  if (unmatchedTagInputs.length > 0) {
+    pendingEditFixes.set(interaction.user.id, { info, unmatchedTagInputs });
+    await interaction.reply({
+      content: `Some tags weren't recognized: **${unmatchedTagInputs.join(', ')}**\nSelect from available tags to add them (or skip):`,
+      components: [buildTagSelectRow(gameName), buildTagSkipRow()],
+      ephemeral: true,
+    });
+    return;
+  }
+
+  upsertGameInfo(info);
+  await interaction.reply({ content: `Details saved for **${gameName}**.`, ephemeral: true });
+}
+
+export async function handleComplexityFix(interaction: ButtonInteraction, complexity: Complexity): Promise<void> {
+  const pending = pendingEditFixes.get(interaction.user.id);
+  if (!pending) {
+    await interaction.update({ content: 'This session has expired. Please run `/library edit` again.', components: [] });
+    return;
+  }
+  const updatedInfo = { ...pending.info, complexity };
+  if (pending.unmatchedTagInputs.length > 0) {
+    pendingEditFixes.set(interaction.user.id, { info: updatedInfo, unmatchedTagInputs: pending.unmatchedTagInputs });
+    await interaction.update({
+      content: `Got it — **${complexity}** for **${updatedInfo.gameName}**.\nSome tags weren't recognized: **${pending.unmatchedTagInputs.join(', ')}**\nSelect from available tags to add them (or skip):`,
+      components: [buildTagSelectRow(updatedInfo.gameName), buildTagSkipRow()],
+    });
+    return;
+  }
+  pendingEditFixes.delete(interaction.user.id);
+  upsertGameInfo(updatedInfo);
+  await interaction.update({ content: `Details saved for **${updatedInfo.gameName}**.`, components: [] });
+}
+
+export async function handleTagsFix(interaction: StringSelectMenuInteraction): Promise<void> {
+  const pending = pendingEditFixes.get(interaction.user.id);
+  if (!pending) {
+    await interaction.update({ content: 'This session has expired. Please run `/library edit` again.', components: [] });
+    return;
+  }
+  pendingEditFixes.delete(interaction.user.id);
+  const selected = interaction.values;
+  const merged = [...(pending.info.tags ?? []), ...selected.filter(t => !pending.info.tags?.includes(t))];
+  upsertGameInfo({ ...pending.info, tags: merged.length > 0 ? merged : pending.info.tags });
+  await interaction.update({ content: `Details saved for **${pending.info.gameName}**.`, components: [] });
+}
+
+export async function handleTagsSkip(interaction: ButtonInteraction): Promise<void> {
+  const pending = pendingEditFixes.get(interaction.user.id);
+  if (!pending) {
+    await interaction.update({ content: 'This session has expired. Please run `/library edit` again.', components: [] });
+    return;
+  }
+  pendingEditFixes.delete(interaction.user.id);
+  upsertGameInfo(pending.info);
+  await interaction.update({ content: `Details saved for **${pending.info.gameName}**.`, components: [] });
 }
 
 async function handleRandom(interaction: ChatInputCommandInteraction): Promise<void> {

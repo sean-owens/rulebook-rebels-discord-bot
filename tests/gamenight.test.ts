@@ -78,6 +78,13 @@ describe('parseDateTime', () => {
     expect(d.getDate()).toBe(22);
   });
 
+  it('parses ordinal day suffixes (1st, 2nd, 3rd, 30th)', () => {
+    expect(parseDateTime('June 30th', '8am').getDate()).toBe(30);
+    expect(parseDateTime('July 1st', '7pm').getDate()).toBe(1);
+    expect(parseDateTime('August 2nd', '7pm').getDate()).toBe(2);
+    expect(parseDateTime('September 3rd', '7pm').getDate()).toBe(3);
+  });
+
   // ── Error cases ────────────────────────────────────────────────────────────
 
   it('throws when the date string has no recognisable month', () => {

@@ -4,7 +4,9 @@ import { execute as executeGameNight } from '../commands/gamenight';
 import { execute as executeWelcome } from '../commands/welcome';
 import { execute as executeGameTags, handleAutocomplete as handleGameTagsAutocomplete } from '../commands/gametags';
 import { execute as executeMyRoles, handleMyRolesTag, handleMyRolesDiff, handleMyRolesNext, handleMyRolesBackDiff, handleMyRolesPage, handleMyRolesSubmit } from '../commands/myroles';
-import { execute as executeLibrary, handleAddConfirm, handleAddCancel, handleAddBggConfirm, handleAddBggDismiss, handleAddBggSelect, handleEditModal, handleLibraryViewSelect, handleLibraryRequestSelect, handleUnrequestEventSelect, handleUnrequestSelect, handleUnrequestAll, handleLibraryListNav } from '../commands/library';
+import { execute as executeLibrary, handleAddConfirm, handleAddCancel, handleAddBggConfirm, handleAddBggDismiss, handleAddBggSelect, handleLibraryAddPartialSelect, handleEditModal, handleComplexityFix, handleTagsFix, handleTagsSkip, handleRemoveSelect, handleLibraryViewSelect, handleLibraryRequestSelect, handleLibraryRequestCopySelect, handleUnrequestEventSelect, handleUnrequestSelect, handleUnrequestAll, handleLibraryListNav } from '../commands/library';
+import { Complexity } from '../utils/libraryStorage';
+import { execute as executeBgg } from '../commands/bgg';
 import {
   execute as executeGame,
   handleGameSelect,
@@ -39,14 +41,19 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
       else if (interaction.commandName === 'gametags') await executeGameTags(interaction);
       else if (interaction.commandName === 'myroles') await executeMyRoles(interaction);
       else if (interaction.commandName === 'library') await executeLibrary(interaction);
+      else if (interaction.commandName === 'bgg') await executeBgg(interaction);
 
     } else if (interaction.isStringSelectMenu()) {
       const id = interaction.customId;
       if (id === 'game_event_select') await handleEventSelect(interaction);
       else if (id === 'library_suggest_select') await handleLibrarySuggestSelect(interaction);
       else if (id === 'library_add_bgg_select') await handleAddBggSelect(interaction);
+      else if (id === 'library_add_partial_select') await handleLibraryAddPartialSelect(interaction);
+      else if (id === 'library_remove_select') await handleRemoveSelect(interaction);
+      else if (id === 'library_edit_tags_select') await handleTagsFix(interaction);
       else if (id === 'library_view_select') await handleLibraryViewSelect(interaction);
       else if (id === 'library_request_select') await handleLibraryRequestSelect(interaction);
+      else if (id === 'library_request_copy_select') await handleLibraryRequestCopySelect(interaction);
       else if (id === 'library_unrequest_event_select') await handleUnrequestEventSelect(interaction);
       else if (id.startsWith('library_unrequest_select_')) await handleUnrequestSelect(interaction, id.slice('library_unrequest_select_'.length));
       else if (id === 'game_select') await handleGameSelect(interaction);
@@ -88,6 +95,14 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handleAddBggConfirm(interaction);
       } else if (id === 'library_add_bgg_dismiss') {
         await handleAddBggDismiss(interaction);
+      } else if (id === 'library_edit_complexity_light') {
+        await handleComplexityFix(interaction, 'Light' as Complexity);
+      } else if (id === 'library_edit_complexity_medium') {
+        await handleComplexityFix(interaction, 'Medium' as Complexity);
+      } else if (id === 'library_edit_complexity_heavy') {
+        await handleComplexityFix(interaction, 'Heavy' as Complexity);
+      } else if (id === 'library_edit_tags_skip') {
+        await handleTagsSkip(interaction);
       } else if (id.startsWith('library_unrequest_all_')) {
         await handleUnrequestAll(interaction, id.slice('library_unrequest_all_'.length));
       } else if (id.startsWith('game_tags_skip_')) {

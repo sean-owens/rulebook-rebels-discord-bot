@@ -129,7 +129,7 @@ export function parseDateTime(dateStr: string, timeStr: string): Date {
   let year = new Date().getFullYear();
   for (const part of parts) {
     if (MONTH_NAMES[part] !== undefined) month = MONTH_NAMES[part];
-    else if (/^\d{1,2}$/.test(part)) day = parseInt(part, 10);
+    else if (/^\d{1,2}(st|nd|rd|th)?$/.test(part)) day = parseInt(part, 10);
     else if (/^\d{4}$/.test(part)) year = parseInt(part, 10);
   }
   if (month === -1 || day === -1) throw new Error(`Invalid date: "${dateStr}"`);

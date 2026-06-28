@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { readJson, writeJson } from './db';
+import { GENRE_TAG_DEFINITIONS } from './tagDefinitions';
 
 const LIBRARY_FILE = 'library.json';
 const REQUESTS_FILE = 'library_requests.json';
@@ -10,6 +11,7 @@ export interface LibraryEntry {
   userId: string;
   gameName: string;
   objectid?: string;
+  isExpansion?: boolean;
   addedAt: string;
 }
 
@@ -21,6 +23,7 @@ export interface GameRequest {
   createdAt: string;
   copiesNeeded?: number;
   confirmedBy?: string;
+  preferredOwnerId?: string;
 }
 
 export function loadLibrary(): LibraryEntry[] {
@@ -35,7 +38,7 @@ export function loadLibraryForGuild(guildId: string): LibraryEntry[] {
   return loadLibrary().filter(e => e.guildId === guildId);
 }
 
-export function addGame(guildId: string, userId: string, gameName: string, objectid?: string): 'added' | 'duplicate' {
+export function addGame(guildId: string, userId: string, gameName: string, objectid?: string, isExpansion?: boolean): 'added' | 'duplicate' {
   const entries = loadLibrary();
   const exists = entries.some(e => {
     if (e.guildId !== guildId || e.userId !== userId) return false;
@@ -45,6 +48,7 @@ export function addGame(guildId: string, userId: string, gameName: string, objec
   if (exists) return 'duplicate';
   const entry: LibraryEntry = { guildId, userId, gameName, addedAt: new Date().toISOString() };
   if (objectid) entry.objectid = objectid;
+  if (isExpansion) entry.isExpansion = true;
   entries.push(entry);
   saveLibrary(entries);
   return 'added';
@@ -65,7 +69,9 @@ export function findGameNamesByPartial(guildId: string, term: string): string[] 
   for (const e of loadLibrary().filter(e => e.guildId === guildId)) {
     const key = e.gameName.toLowerCase();
     const normalizedKey = normalizeName(e.gameName);
-    if ((key.includes(term.toLowerCase()) || normalizedKey.includes(normalizedTerm)) && !seen.has(key)) {
+    const forward = key.includes(term.toLowerCase()) || normalizedKey.includes(normalizedTerm);
+    const reverse = normalizedKey.length >= 3 && normalizedTerm.includes(normalizedKey);
+    if ((forward || reverse) && !seen.has(key)) {
       seen.add(key);
       names.push(e.gameName);
     }
@@ -103,13 +109,15 @@ function saveRequests(requests: GameRequest[]): void {
   writeJson(REQUESTS_FILE, requests);
 }
 
-export function addRequest(eventId: string, gameName: string, requestedBy: string): 'added' | 'duplicate' {
+export function addRequest(eventId: string, gameName: string, requestedBy: string, preferredOwnerId?: string): 'added' | 'duplicate' {
   const requests = loadRequests();
   const exists = requests.some(
     r => r.eventId === eventId && r.gameName.toLowerCase() === gameName.toLowerCase()
   );
   if (exists) return 'duplicate';
-  requests.push({ id: randomUUID(), eventId, gameName, requestedBy, createdAt: new Date().toISOString() });
+  const req: GameRequest = { id: randomUUID(), eventId, gameName, requestedBy, createdAt: new Date().toISOString() };
+  if (preferredOwnerId) req.preferredOwnerId = preferredOwnerId;
+  requests.push(req);
   saveRequests(requests);
   return 'added';
 }
@@ -169,35 +177,8 @@ export function confirmBring(
   return 'confirmed';
 }
 
-export const GAME_TAGS = [
-  'Co-op',
-  'Competitive',
-  'Semi-Co-op',
-  'Team vs Team',
-  'Solo Friendly',
-  'Deck Building',
-  'Engine Building',
-  'Worker Placement',
-  'Area Control',
-  'Tile Placement',
-  'Drafting',
-  'Auction',
-  'Trick Taking',
-  'Roll & Write',
-  'Push Your Luck',
-  'Hand Management',
-  'Social Deduction',
-  'Hidden Roles',
-  'Bluffing',
-  'Party',
-  'Abstract',
-  'Economic',
-  'Dungeon Crawler',
-  'Legacy',
-  'Gateway / Family',
-] as const;
-
-export type GameTag = typeof GAME_TAGS[number];
+export type GameTag = typeof GENRE_TAG_DEFINITIONS[number]['name'];
+export const GAME_TAGS: readonly GameTag[] = GENRE_TAG_DEFINITIONS.map(t => t.name);
 
 export type Complexity = 'Light' | 'Medium' | 'Heavy';
 

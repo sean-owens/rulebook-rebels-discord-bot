@@ -1,5 +1,5 @@
 import { AutocompleteInteraction, ChatInputCommandInteraction, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
-import { GAME_TAGS } from '../utils/libraryStorage';
+import { GENRE_TAG_DEFINITIONS, DIFFICULTY_TAG_DEFINITIONS } from '../utils/tagDefinitions';
 
 const COLOR_PALETTE = [
   { name: 'Red',         value: '#e74c3c' },
@@ -131,65 +131,56 @@ async function handleRemove(interaction: ChatInputCommandInteraction): Promise<v
   await interaction.editReply(`Tag **${name}** removed.`);
 }
 
-const DIFFICULTY_TAGS = [
-  { name: 'Light',  color: '#95a5a6' },
-  { name: 'Medium', color: '#f0b232' },
-  { name: 'Heavy',  color: '#e74c3c' },
-];
-
 async function handleSync(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
 
   const existing = getGameRoles(interaction.guildId!);
   const existingNames = new Set(existing.map(r => r.name.toLowerCase()));
 
-  const genreToCreate = GAME_TAGS.filter(tag => !existingNames.has(tag.toLowerCase()));
-  const diffToCreate = DIFFICULTY_TAGS.filter(tag => !existingNames.has(tag.name.toLowerCase()));
+  const genreToCreate = GENRE_TAG_DEFINITIONS.filter(tag => !existingNames.has(tag.name.toLowerCase()));
+  const diffToCreate = DIFFICULTY_TAG_DEFINITIONS.filter(tag => !existingNames.has(tag.name.toLowerCase()));
 
   if (genreToCreate.length === 0 && diffToCreate.length === 0) {
-    await interaction.editReply(`All ${GAME_TAGS.length} genre tags and ${DIFFICULTY_TAGS.length} difficulty roles already exist.`);
+    await interaction.editReply(`All ${GENRE_TAG_DEFINITIONS.length} genre tags and ${DIFFICULTY_TAG_DEFINITIONS.length} difficulty roles already exist.`);
     return;
   }
 
   let created = 0;
   const failed: string[] = [];
 
-  for (let i = 0; i < genreToCreate.length; i++) {
-    const tag = genreToCreate[i];
-    const color = parseInt(COLOR_PALETTE[i % COLOR_PALETTE.length].value.replace('#', ''), 16);
+  for (const tag of genreToCreate) {
+    const color = parseInt(tag.color.replace('#', ''), 16);
     try {
       const discordRole = await interaction.guild!.roles.create({
-        name: tag,
+        name: tag.name,
         color,
         mentionable: false,
         reason: `Game tag sync by ${interaction.user.tag}`,
       });
-      addGameRole(interaction.guildId!, { roleId: discordRole.id, name: tag, type: 'genre' });
+      addGameRole(interaction.guildId!, { roleId: discordRole.id, name: tag.name, type: 'genre' });
       created++;
     } catch {
-      failed.push(tag);
+      failed.push(tag.name);
     }
   }
 
-  for (const diff of diffToCreate) {
-    const color = parseInt(diff.color.replace('#', ''), 16);
+  for (const tag of diffToCreate) {
+    const color = parseInt(tag.color.replace('#', ''), 16);
     try {
       const discordRole = await interaction.guild!.roles.create({
-        name: diff.name,
+        name: tag.name,
         color,
         mentionable: false,
         reason: `Difficulty role sync by ${interaction.user.tag}`,
       });
-      addGameRole(interaction.guildId!, { roleId: discordRole.id, name: diff.name, type: 'difficulty' });
+      addGameRole(interaction.guildId!, { roleId: discordRole.id, name: tag.name, type: 'difficulty' });
       created++;
     } catch {
-      failed.push(diff.name);
+      failed.push(tag.name);
     }
   }
 
-  const skippedGenre = GAME_TAGS.length - genreToCreate.length;
-  const skippedDiff = DIFFICULTY_TAGS.length - diffToCreate.length;
-  const skipped = skippedGenre + skippedDiff;
+  const skipped = (GENRE_TAG_DEFINITIONS.length - genreToCreate.length) + (DIFFICULTY_TAG_DEFINITIONS.length - diffToCreate.length);
   const parts: string[] = [];
   if (created > 0) parts.push(`**${created}** role${created !== 1 ? 's' : ''} created`);
   if (skipped > 0) parts.push(`**${skipped}** already existed`);

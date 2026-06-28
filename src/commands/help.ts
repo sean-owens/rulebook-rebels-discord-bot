@@ -45,6 +45,14 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         name: '🏷️  /myroles',
         value: 'Set your game genre preferences so others can see what you like to play.',
       },
+      {
+        name: '🎲  /bgg',
+        value: [
+          '`link` — Connect your BoardGameGeek account to this server',
+          '`unlink` — Remove your linked BoardGameGeek account',
+          '`profile` — View your currently linked BoardGameGeek account',
+        ].join('\n'),
+      },
       ...(interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ? [{
         name: '🔧  Admin only',
         value: [

@@ -1,5 +1,11 @@
 # Rulebook Rebels Discord Bot — Developer Guidelines
 
+## 0. Collaboration Principles
+
+**Challenge design decisions.** The goal is a great product, not agreement. If a proposed approach has real tradeoffs, risks, or better alternatives, say so directly before implementing. Pushback is a valid and expected response — accepting everything uncritically skews the design. Present the concern clearly, explain why it matters, and offer a recommendation. Then let the user decide.
+
+---
+
 ## 1. Quality Standards
 
 ### 1a. Testing
@@ -84,7 +90,29 @@ Update the relevant section(s) **in the same change** as the code — not after.
 
 ---
 
-## 4. Local Development Workflow
+## 4. BGG API Rules
+
+All code that touches the BoardGameGeek API must follow these rules, which come directly from BGG's terms of use.
+
+### Request discipline
+- **All BGG API requests must be made server-side** (i.e. from the bot process). Never make BGG requests from a client or browser context.
+- **Cache results wherever practical.** Repeated lookups for the same game or user data should be served from local storage rather than hitting the API again. The BGG backup data in `BGG/backup-data/` exists for this reason.
+- **Keep request volume to a minimum.** Batch or debounce where possible; never poll BGG in a loop without a strong reason.
+- **Monitor usage** at `https://boardgamegeek.com/applications` → "Usage" to stay within license limits.
+
+### Powered by BGG attribution
+Because this bot is public-facing, BGG legal **requires** that all Discord embeds or responses that display BGG data include a "Powered by BGG" logo or attribution that links back to `https://boardgamegeek.com`. This is a legal requirement, not a suggestion — do not ship BGG-data-bearing embeds without it.
+
+The logo lives at `BGG/images/powered_by_BGG_01_SM.png`. Pattern for every BGG-data embed:
+```ts
+const attachment = new AttachmentBuilder('BGG/images/powered_by_BGG_01_SM.png');
+embed.setImage('attachment://powered_by_BGG_01_SM.png');
+// include attachment in the reply: { embeds: [embed], files: [attachment] }
+```
+
+---
+
+## 5. Local Development Workflow
 
 Every code change — no matter how small — must go through the full local cycle before being considered done:
 
@@ -94,7 +122,7 @@ npx vitest run     # run the full test suite, all tests must pass
 npm run deploy     # re-register slash commands with Discord (required if command definitions changed)
 ```
 
-Then restart the bot so the running process reflects the new code.
+Then restart the bot and confirm the process started cleanly before considering the change done. Discord-side command validation is handled by the user.
 
 ### Rules
 - **Never skip the build.** A passing test suite on uncompiled code is not sufficient — `tsc` catches type errors that Vitest does not.
@@ -102,3 +130,5 @@ Then restart the bot so the running process reflects the new code.
 - **Re-deploy when command definitions change.** Any change to a command's name, subcommands, options, or option descriptions requires `npm run deploy` to take effect in Discord. When in doubt, re-deploy.
 - **Always cycle the bot process on restart.** Before launching a new bot instance locally, check for any existing `ts-node src/index.ts` processes and kill them all first. Only then start a single fresh process. This prevents duplicate bot instances from competing over the same gateway connection.
 - **Do not commit or merge to Git unless explicitly instructed.** Work stays local until the user gives the go-ahead. This applies to all branches.
+- **Confirm the process is running after deploy.** After restarting the bot, verify the process started cleanly with no crash or startup error. Discord-side command validation is the user's responsibility.
+- **Always start the bot with logging.** Use `npx ts-node src/index.ts > bot.log 2>&1` (or equivalent) so stdout and stderr are captured. When diagnosing issues, read `bot.log` — errors from interaction handlers appear there. Never start the bot in a mode where output is silently discarded.

@@ -8,6 +8,11 @@ setup notes for adding to server:
 - create introductions channel (text)
 - create announcements channel (forum)
 
+- /gametags sync
+    - Creates Discord roles for all default genre and difficulty tags at once
+    - Members can then assign themselves tags via /myroles
+    - Custom tags can be added afterward with /gametags add
+
 - /welcome config
     - Needs: 
         - Welcome channel -> #introductions

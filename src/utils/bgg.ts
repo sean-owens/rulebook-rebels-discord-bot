@@ -73,6 +73,8 @@ function bggHeaders(): Record<string, string> {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'application/xml, text/xml, */*',
   };
+  const apiKey = process.env.BGG_API_KEY;
+  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
   const cookie = process.env.BGG_SESSION_COOKIE;
   if (cookie) headers['Cookie'] = cookie;
   return headers;
@@ -101,6 +103,200 @@ export async function searchBGG(query: string): Promise<BGGSearchResult[]> {
       yearPublished: item.yearpublished?.['@_value'] ? Number(item.yearpublished['@_value']) : null,
     };
   });
+}
+
+export interface BGGUser {
+  id: string;
+  username: string;
+}
+
+export interface BGGCollectionGame {
+  bggGameId: string;
+  gameName: string;
+  yearPublished: number | null;
+  thumbnail: string | null;
+  minPlayers: number | null;
+  maxPlayers: number | null;
+  minPlaytime: number | null;
+  maxPlaytime: number | null;
+  playingTime: number | null;
+  avgRating: number | null;
+  bggRank: number | null;
+  own: boolean;
+  forTrade: boolean;
+  wantToPlay: boolean;
+  wishlisted: boolean;
+  userRating: number | null;
+  numPlays: number;
+  isExpansion?: boolean;
+}
+
+function decodeEntities(str: string): string {
+  return str
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'");
+}
+
+async function fetchCollectionPage(username: string, subtype: 'boardgame' | 'boardgameexpansion'): Promise<BGGCollectionGame[] | null> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const url = subtype === 'boardgame'
+      ? `https://boardgamegeek.com/xmlapi2/collection?username=${encodeURIComponent(username)}&own=1&subtype=boardgame&excludesubtype=boardgameexpansion&stats=1`
+      : `https://boardgamegeek.com/xmlapi2/collection?username=${encodeURIComponent(username)}&own=1&subtype=boardgameexpansion&stats=1`;
+    const res = await fetch(url, { headers: bggHeaders() });
+    if (res.status === 202) {
+      console.log(`[BGG collection] 202 queued (attempt ${attempt + 1}), retrying…`);
+      if (attempt === 0) await new Promise(r => setTimeout(r, 3000));
+      continue;
+    }
+    if (!res.ok) {
+      console.error(`[BGG collection] HTTP ${res.status} for ${url}`);
+      return null;
+    }
+    const xml = await res.text();
+    const parsed = parser.parse(xml);
+    const raw = parsed?.items?.item ?? [];
+    const items: any[] = Array.isArray(raw) ? raw : [raw];
+
+    return items
+      .filter(item => item['@_subtype'] === subtype)
+      .map(item => {
+        const status = item.status ?? {};
+        const stats = item.stats ?? {};
+        const ratingVal = parseFloat(item.stats?.rating?.['@_value']);
+        const avgVal = parseFloat(item.stats?.rating?.average?.['@_value']);
+        const ranks: any[] = Array.isArray(stats.rating?.ranks?.rank)
+          ? stats.rating.ranks.rank
+          : stats.rating?.ranks?.rank ? [stats.rating.ranks.rank] : [];
+        const overallRank = ranks.find(r => r['@_name'] === 'boardgame');
+        const rankVal = parseInt(overallRank?.['@_value'], 10);
+        const rawName = typeof item.name === 'string' ? item.name : String(item.name?.['#text'] ?? item.name ?? '');
+
+        return {
+          bggGameId: String(item['@_objectid']),
+          gameName: decodeEntities(rawName),
+          yearPublished: parseInt(item.yearpublished, 10) || null,
+          thumbnail: item.thumbnail ? `https:${item.thumbnail}` : null,
+          minPlayers: parseInt(stats['@_minplayers'], 10) || null,
+          maxPlayers: parseInt(stats['@_maxplayers'], 10) || null,
+          minPlaytime: parseInt(stats['@_minplaytime'], 10) || null,
+          maxPlaytime: parseInt(stats['@_maxplaytime'], 10) || null,
+          playingTime: parseInt(stats['@_playingtime'], 10) || null,
+          avgRating: isNaN(avgVal) ? null : Math.round(avgVal * 10) / 10,
+          bggRank: isNaN(rankVal) ? null : rankVal,
+          own: status['@_own'] === 1 || status['@_own'] === '1',
+          forTrade: status['@_fortrade'] === 1 || status['@_fortrade'] === '1',
+          wantToPlay: status['@_wanttoplay'] === 1 || status['@_wanttoplay'] === '1',
+          wishlisted: status['@_wishlistitem'] === 1 || status['@_wishlistitem'] === '1',
+          userRating: isNaN(ratingVal) ? null : ratingVal,
+          numPlays: parseInt(item.numplays, 10) || 0,
+          isExpansion: subtype === 'boardgameexpansion',
+        };
+      });
+  }
+  return null;
+}
+
+export async function fetchBggOwnedCollection(username: string): Promise<BGGCollectionGame[] | null> {
+  try {
+    const baseGames = await fetchCollectionPage(username, 'boardgame');
+    if (!baseGames) return null;
+    const expansions = await fetchCollectionPage(username, 'boardgameexpansion');
+    return [...baseGames, ...(expansions ?? [])];
+  } catch (err) {
+    console.error('[BGG collection] fetchCollectionPage threw:', err);
+    return null;
+  }
+}
+
+export interface BGGUserProfile {
+  username: string;
+  memberSince: string | null;
+  baseGames: number | null;
+  expansions: number | null;
+  topGames: { rank: number; name: string }[];
+}
+
+async function fetchCollectionCount(username: string, subtype: 'boardgame' | 'boardgameexpansion'): Promise<number | null> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const url = subtype === 'boardgame'
+      ? `https://boardgamegeek.com/xmlapi2/collection?username=${encodeURIComponent(username)}&own=1&subtype=boardgame&excludesubtype=boardgameexpansion`
+      : `https://boardgamegeek.com/xmlapi2/collection?username=${encodeURIComponent(username)}&own=1&subtype=boardgameexpansion`;
+    const res = await fetch(url, { headers: bggHeaders() });
+    if (res.status === 202) {
+      if (attempt === 0) await new Promise(r => setTimeout(r, 3000));
+      continue;
+    }
+    if (!res.ok) return null;
+    const xml = await res.text();
+    const parsed = parser.parse(xml);
+    return parseInt(parsed?.items?.['@_totalitems'] ?? '0', 10) || 0;
+  }
+  return null;
+}
+
+export async function getBggUserProfile(username: string): Promise<BGGUserProfile | null> {
+  const userUrl = `https://boardgamegeek.com/xmlapi2/user?name=${encodeURIComponent(username)}&top=1`;
+
+  const [userRes, baseGames, expansions] = await Promise.all([
+    fetch(userUrl, { headers: bggHeaders() }),
+    fetchCollectionCount(username, 'boardgame'),
+    fetchCollectionCount(username, 'boardgameexpansion'),
+  ]);
+
+  if (userRes.status === 404) return null;
+  if (!userRes.ok) throw new Error(`BGG returned ${userRes.status} for ${userUrl}`);
+
+  const xml = await userRes.text();
+  const parsed = parser.parse(xml);
+  const user = parsed?.user;
+  if (!user || String(user['@_id'] ?? '0') === '0') return null;
+
+  const memberSince = user.yearregistered?.['@_value']
+    ? String(user.yearregistered['@_value'])
+    : null;
+
+  const rawTop = user.top?.item ?? [];
+  const topItems: any[] = Array.isArray(rawTop) ? rawTop : [rawTop];
+  const topGames = topItems
+    .filter(i => i?.['@_name'])
+    .map(i => ({ rank: Number(i['@_rank']), name: String(i['@_name']) }))
+    .sort((a, b) => a.rank - b.rank)
+    .slice(0, 5);
+
+  return { username: String(user['@_name'] ?? username), memberSince, baseGames, expansions, topGames };
+}
+
+const pendingUserValidations = new Map<string, Promise<BGGUser | null>>();
+
+export async function validateBggUser(username: string): Promise<BGGUser | null> {
+  const key = username.toLowerCase();
+  const inflight = pendingUserValidations.get(key);
+  if (inflight) return inflight;
+
+  const promise = (async () => {
+    try {
+      const url = `https://boardgamegeek.com/xmlapi2/user?name=${encodeURIComponent(username)}`;
+      const res = await fetch(url, { headers: bggHeaders() });
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error(`BGG returned ${res.status} for ${url}`);
+      const xml = await res.text();
+      const parsed = parser.parse(xml);
+      const user = parsed?.user;
+      const id = String(user?.['@_id'] ?? '0');
+      if (!user || id === '0') return null;
+      return { id, username: String(user['@_name'] ?? username) };
+    } finally {
+      pendingUserValidations.delete(key);
+    }
+  })();
+
+  pendingUserValidations.set(key, promise);
+  return promise;
 }
 
 export async function getBGGGame(id: string): Promise<BGGGame> {

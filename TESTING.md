@@ -215,48 +215,64 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 4a. `/library add`
 
-**What it does:** Adds a game you own to the shared library. When the BGG catalog is loaded, the bot resolves canonical game names and BGG IDs automatically.
+**What it does:** Adds a game you own to the shared library. Follows a priority order: checks your own library, then the group library, then the BGG catalog. When BGG finds an exact match, shows a confirm prompt before adding so the user can verify it's the right game. If confirmed, BGG details are loaded automatically and no "add details" modal appears.
 
-#### Basic add
-- [ ] `/library add game:Wingspan` — confirm "Added **Wingspan** to your library" (exact catalog match — ID attached silently)
-- [ ] Add the same game again — confirm "already in your library" duplicate message
-
-#### Canonical name correction (exact normalized match)
-- [ ] `/library add game:brass birmingham` — confirm bot adds it as **Brass: Birmingham** (colon and casing corrected, no prompt)
-- [ ] `/library add game:pandemic legacy season 1` — confirm added as **Pandemic Legacy: Season 1**
-
-#### BGG suggestion UI (token match — different canonical name)
-- [ ] `/library add game:arkham` — confirm a "which did you mean?" select menu appears listing matches such as Arkham Horror and Arkham Horror: The Card Game, with base games listed before expansions
-- [ ] Select a game from the dropdown — confirm it is added with the canonical BGG name and a success message
-- [ ] Select "None of these — add as typed" — confirm the game is added under the original typed name
-
-#### Single BGG suggestion (confirm/dismiss)
-- [ ] Type a name that produces exactly one token match that differs from the typed name — confirm a "Found **X** on BGG — is that the game you mean?" message with **Yes** and **No, add as typed** buttons
-- [ ] Click **Yes** — confirm game is added using the canonical BGG name
-- [ ] Click **No, add as typed** — confirm game is added under the original typed name
+#### Basic add — already owned
+- [ ] `/library add game:Wingspan` when you already own it — confirm "already in your library" duplicate message
+- [ ] Case-insensitive: `/library add game:wingspan` when you own "Wingspan" — same duplicate message
 
 #### Others already own the game
-- [ ] When the canonical BGG name is already in the library (owned by someone else), confirm the "are you adding your own copy?" prompt still appears using the canonical name
+- [ ] When another user owns the game (exact name match), confirm "already in the group library — adding your copy?" prompt with **Yes, add my copy** and **Cancel** buttons
+- [ ] Click **Yes, add my copy** — confirm game is added
+
+#### Partial match in group library
+- [ ] `/library add game:wing` when "Wingspan" is in the group library — confirm a "similar games in the group library" select menu appears
+- [ ] Select a match — confirm "adding your copy?" flow
+- [ ] Select "None of these — search BGG" — confirm BGG catalog search continues
+
+#### BGG exact match (confirm prompt)
+- [ ] `/library add game:Wingspan` on an empty library — confirm a "Found **Wingspan** on BGG — is that the game?" confirm prompt appears with **Yes** and **No** buttons (game is NOT added yet)
+- [ ] Click **Yes** — confirm game is added with BGG details (players, play time, weight, tags); no "add details" modal appears
+- [ ] Click **No** — confirm BGG is dismissed and the "add details" modal appears for custom entry
+
+#### BGG multiple matches (select UI)
+- [ ] `/library add game:arkham` — confirm a "which did you mean?" select menu appears listing matches such as Arkham Horror and Arkham Horror: The Card Game
+- [ ] Select a game from the dropdown — confirm "Found **X** on BGG — is that the game?" confirm prompt appears
+- [ ] Confirm **Yes** — confirm game is added with BGG details, no modal
+
+#### Single BGG partial match (confirm/dismiss)
+- [ ] Type a name that produces exactly one token match that differs from the typed name (e.g. `wingsspan`) — confirm a "Found **Wingspan** on BGG" single-match confirm appears
+- [ ] Click **Yes** — confirm added with BGG details
+- [ ] Click **No, add as typed** — confirm added under the original typed name with the "add details" modal
+
+#### No matches anywhere — custom game
+- [ ] `/library add game:My Custom Game` with nothing matching in library or BGG catalog — confirm game is added immediately and the "add details" modal appears
 
 ### 4b. `/library remove`
 
-**What it does:** Removes one of your games from the library.
+**What it does:** Removes one of your games from the library. Supports fuzzy/partial name matching — if the exact name isn't found, shows a select menu of similar games you own.
 
-- [ ] `/library remove game:Catan` — confirm "removed from your library"
-- [ ] Attempt to remove a game not in your library — confirm "not found" error
+- [ ] `/library remove game:Catan` (exact match) — confirm "Removed **Catan** from your library"
+- [ ] `/library remove game:cat` (partial match for "Catan") — confirm a select menu of matching games appears
+- [ ] `/library remove game:rooty` (partial reverse match — input contains the game name "Root") — confirm "Root" appears in the select menu
+- [ ] Select a game from the partial match menu — confirm it is removed
+- [ ] Select "None of these" from the partial match menu — confirm "No game removed" message
+- [ ] Attempt to remove a game not in your library with no partial matches — confirm "not found" error
 
 ### 4c. `/library mine`
 
-**What it does:** Lists all games you've added to the library.
+**What it does:** Lists all base games you've added to the library. Expansions imported via `/library import bgg` are excluded from this list (they appear in `/library view` under "Expansions in Library" instead).
 
-- [ ] Run `/library mine` with games added — confirm all your games are listed
+- [ ] Run `/library mine` with games added — confirm all your base games are listed
+- [ ] If you have imported BGG expansions — confirm they do NOT appear in `/library mine`
 - [ ] Run `/library mine` with no games — confirm "You haven't added any games" message
 
 ### 4d. `/library list`
 
-**What it does:** Shows the full library grouped by game, with all owners listed. Games with complexity data show a colored dot (🟢 Light, 🟡 Medium, 🔴 Heavy) and a legend. Paginates with Previous/Next buttons when the library is large.
+**What it does:** Shows all base games in the library grouped by game, with all owners listed. Expansions imported via `/library import bgg` are excluded. Games with complexity data show a colored dot (🟢 Light, 🟡 Medium, 🔴 Heavy) and a legend. Paginates with Previous/Next buttons when the library is large.
 
-- [ ] Run `/library list` — confirm all library games appear with owners
+- [ ] Run `/library list` — confirm all library base games appear with owners
+- [ ] If you have imported BGG expansions — confirm they do NOT appear in `/library list`
 - [ ] Confirm games with complexity set show 🟢/🟡/🔴 icons before the name
 - [ ] Confirm a legend appears at the bottom explaining icon colors
 - [ ] Games without complexity data should appear without an icon
@@ -271,16 +287,17 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 4e. `/library view`
 
-**What it does:** Shows full details for a specific game. Lazily enriches from BGG on first view (tags, expansions, weight, complexity, best player count). Complexity links to the matching Discord difficulty role.
+**What it does:** Shows full details for a specific game. Lazily enriches from BGG on first view (tags, expansions, weight, complexity, best player count). Complexity links to the matching Discord difficulty role. The "Expansions in Library" field shows only expansions that someone in the guild actually owns (imported via `/library import bgg`) with owner mentions.
 
-- [ ] `/library view game:Wingspan` — confirm embed shows:
-  - Player range (e.g. 1–5)
+- [ ] `/library view game:Root` (game with BGG data and owned expansions) — confirm embed shows:
+  - Player range
   - Best With player count (if available)
   - Play time
   - Complexity with a clickable role mention (e.g. @Medium)
   - Tags
-  - BGG Expansions
-  - Owners
+  - **Expansions in Library** — each owned expansion listed with owner mention (e.g. `Root: The Riverfolk Expansion — @snwns1`)
+- [ ] `/library view game:Wingspan` where no expansions are in the guild library — confirm "Expansions in Library" field shows `*None in library*`
+- [ ] `/library view game:Wingspan` where a game has no BGG expansion data at all — confirm no Expansions field appears
 - [ ] View a game with no BGG data — confirm enrichment runs and data appears on second view
 - [ ] View a game where you are an owner — confirm edit footer hint appears
 - [ ] View a game that doesn't exist in the library — confirm "not found" message
@@ -306,14 +323,24 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 4h. `/library request`
 
-**What it does:** Requests a specific game be brought to an event. When run inside an event channel it targets that specific event; when run elsewhere it targets the soonest upcoming event. Appears in the event's request pin. When a game isn't in the library, the BGG catalog is used to improve the error message.
+**What it does:** Requests a specific game be brought to an event. When run inside an event channel it targets that specific event; when run elsewhere it targets the soonest upcoming event. If the game has expansions in the guild library, shows a copy preference select before submitting. Appears in the event's request pin. When a game isn't in the library, the BGG catalog is used to improve the error message.
 
-- [ ] `/library request game:Catan` from a non-event channel — confirm request targets the **soonest** upcoming event and the confirmation message names that event's date
-- [ ] `/library request game:Catan` from **inside** a specific event channel (e.g. June 29) — confirm request targets **that event**, not the nearest one
-- [ ] Request the same game twice for the same event — confirm duplicate is blocked and error message names the event date
-- [ ] Request with a slight punctuation variant (e.g. `Wonderlands War` when the library has `Wonderland's War`) — confirm the partial-match picker appears with the correct game listed
-- [ ] Request a game that exists in the BGG catalog but isn't in the library (e.g. `/library request game:Gloomhaven` when no one has added it) — confirm the error message says "**Gloomhaven** isn't in the group library yet — ask someone who owns it to add it with `/library add`"
-- [ ] Request a mistyped name that matches a BGG entry (e.g. `/library request game:gloomhaven` lowercase) — confirm the canonical BGG name appears in the "not in library" message
+#### Basic request (no expansions in library)
+- [ ] `/library request game:Catan` from a non-event channel — confirm request targets the **soonest** upcoming event and the public confirmation names that event's date and the owner(s)
+- [ ] `/library request game:Catan` from **inside** a specific event channel — confirm request targets **that event**, not the nearest one
+- [ ] Request the same game twice for the same event — confirm duplicate is blocked
+- [ ] Request with a slight punctuation variant (e.g. `Wonderlands War` when library has `Wonderland's War`) — confirm the partial-match picker appears
+- [ ] Request a game that exists in the BGG catalog but isn't in the library — confirm error message says "isn't in the group library yet — ask someone who owns it to add it with `/library add`"
+- [ ] None of the game's owners are RSVP'd to the event — confirm "None of the owners are attending" error
+
+#### Request with expansion copy select
+- [ ] Request a game where at least one attending owner has expansions in the guild library (imported via `/library import bgg`) — confirm an **ephemeral** "Which copy would you like?" select appears with:
+  - One option per attending owner: `{DisplayName}'s copy` with description listing their expansions (or "Base game only" if they have none)
+  - `Bot decides` option with description "Spread game-bringing load evenly among attending owners"
+- [ ] Select a specific owner's copy — confirm the public announcement includes "— bringing: @owner"
+- [ ] Select **Bot decides** — confirm the bot assigns the owner with fewest confirmed bring assignments for that event; public announcement shows that owner
+- [ ] With multiple attending owners who have identical expansion sets — confirm **Bot decides** picks the one with fewer brings already confirmed
+- [ ] Request a game where attending owners own the base game but NONE have expansions in the library — confirm the copy select does NOT appear; request goes through immediately
 
 ### 4i. `/library unrequest`
 
@@ -324,26 +351,46 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 4j. `/library bring`
 
-**What it does:** Shows which of your library games have been requested for upcoming events. When run with `game:<name>`, confirms you're bringing that game — it marks the request with ✅ in the request pin.
+**What it does:** Shows which of your library games have been requested for upcoming events. Only shows requests where you are the preferred owner (or where no preference was set). When run with `game:<name>`, confirms you're bringing that game and shows which expansions to include — it marks the request with ✅ in the request pin.
 
 #### Viewing requested games
-- [ ] Add a game to your library, have another user request it via `/library request`
+- [ ] Add a game to your library, have another user request it via `/library request` (selecting your copy)
 - [ ] Run `/library bring` — confirm the requested game appears in the list
+- [ ] If you own expansions for the game — confirm they appear in the list entry (e.g. `• **Root** (with Riverfolk Expansion, Clockwork Expansion)`)
+- [ ] If another owner was selected as the preferred owner — confirm the game does NOT appear in your bring list
 - [ ] Run `/library bring` when none of your games are requested — confirm "None of your games have been requested" message
 - [ ] Run `/library bring` inside a specific event channel — confirm only requests for that event are shown
 - [ ] Run `/library bring` outside an event channel — confirm requests are grouped across all upcoming events
 
 #### Confirming you're bringing a game
-- [ ] Run `/library bring game:Wingspan` (where Wingspan is in your library and has been requested) — confirm you see the game details and a "Confirm" button
+- [ ] Run `/library bring game:Root` (where Root is in your library, has been requested with your copy preferred, and you own expansions) — confirm success message includes expansion list (e.g. `✅ Got it — you're confirmed to bring **Root** (with Riverfolk Expansion) to the event on [date]!`)
+- [ ] Run `/library bring game:Wingspan` (no expansions in library) — confirm standard success message with no expansion note
 - [ ] Click Confirm — confirm the request pin in the event channel now shows ✅ next to the game name
 - [ ] Run `/library bring game:Wingspan` when the game hasn't been requested — confirm "That game hasn't been requested" error
 - [ ] Run `/library bring game:Wingspan` when Wingspan is NOT in your library — confirm "You don't own that game" error
 
-### 4k. `/library import` (Admin only)
+### 4k. `/library import`
+
+#### `/library import bgg`
+
+**What it does:** Imports all owned games AND expansions from your linked BoardGameGeek collection. Base games are added as regular library entries. Expansions are added with an `isExpansion` flag — they appear in `/library view` under "Expansions in Library" but are excluded from `/library list` and `/library mine`. Requires a linked BGG account (`/bgg link`).
+
+- [ ] Run `/library import bgg` without a linked BGG account — confirm "You don't have a BoardGameGeek account linked" error
+- [ ] Run `/library import bgg` with a linked account — confirm:
+  - Progress message "Fetching your BoardGameGeek collection…" appears
+  - On success: "BoardGameGeek import complete — **X** games added, **Y** expansions added, **Z** already in your library"
+  - Games from your BGG "owned" collection are added to the library
+  - Expansions from your BGG collection are also added (if any are marked as owned)
+- [ ] After import, run `/library mine` — confirm only base games appear, not expansions
+- [ ] After import, run `/library list` — confirm only base games appear
+- [ ] After import, run `/library view game:Root` (or another game with owned expansions) — confirm "Expansions in Library" shows your imported expansions with your mention
+- [ ] Run `/library import bgg` a second time — confirm all entries show as "already in your library" (no duplicates)
+
+#### `/library import csv` (Admin only)
 
 **What it does:** Bulk-imports games from a CSV file. Reads columns: game name, owner Discord ID, BGG ID, player counts, play time, BGG best players (`bggbestplayers`), and weight (`avgweight`).
 
-- [ ] Run `/library import` with a valid CSV — confirm games are added to the library
+- [ ] Run `/library import csv` with a valid CSV — confirm games are added to the library
 - [ ] Confirm `bestPlayers` is populated from the `bggbestplayers` column
 - [ ] Confirm `complexity` is derived from the `avgweight` column (≤2.0 = Light, ≤3.5 = Medium, >3.5 = Heavy)
 - [ ] Run with malformed CSV — confirm appropriate error message
@@ -483,7 +530,29 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ---
 
-## 8. Edge Cases and Error Handling
+## 8. `/bgg` — BGG Account Linking
+
+**What it does:** Lets members link their BoardGameGeek username to their account on this server. The username is validated against the BGG API before saving. No password is stored.
+
+### 8a. `/bgg link`
+- [ ] Run `/bgg link username:validuser` — confirm BGG API validates the account and a success embed appears showing the linked username with a BGG profile link and "Powered by BGG" footer
+- [ ] Run `/bgg link username:nonexistentuser` — confirm "We couldn't verify that BoardGameGeek account" message
+- [ ] Run `/bgg link` with the same username already linked — confirm "already linked" message with no API call made
+- [ ] Run `/bgg link` twice rapidly with a different username — confirm cooldown message with seconds remaining on second attempt
+- [ ] Run `/bgg link` twice with different valid usernames — confirm the second link shows "BoardGameGeek Account Updated" with old → new username
+- [ ] Simulate BGG being unreachable — confirm "We couldn't verify that BoardGameGeek account" message
+
+### 8b. `/bgg unlink`
+- [ ] Run `/bgg unlink` after linking — confirm account is removed and success message shown
+- [ ] Run `/bgg unlink` with no account linked — confirm "You don't have a BGG account linked" message
+
+### 8c. `/bgg profile`
+- [ ] Run `/bgg profile` after linking — confirm embed shows linked username, BGG profile link, linked date, and "Powered by BGG" footer
+- [ ] Run `/bgg profile` with no account linked — confirm "You don't have a BGG account linked" message with hint to use `/bgg link`
+
+---
+
+## 9. Edge Cases and Error Handling
 
 - [ ] Run any command in a DM (outside a server) — confirm graceful failure
 - [ ] Run `/game suggest` in a channel with no active event and no upcoming events — confirm "There are no upcoming events" message

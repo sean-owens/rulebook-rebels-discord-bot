@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { BGG_TO_TAG, searchBGG, getBGGGame } from '../src/utils/bgg';
+import { BGG_TO_TAG, searchBGG, getBGGGame, validateBggUser, getBggUserProfile, fetchBggOwnedCollection } from '../src/utils/bgg';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -194,5 +194,267 @@ describe('getBGGGame', () => {
   it('throws when the API returns a non-OK status', async () => {
     mockFetch('', 404);
     await expect(getBGGGame('0')).rejects.toThrow('404');
+  });
+});
+
+// ── validateBggUser ───────────────────────────────────────────────────────────
+
+describe('validateBggUser', () => {
+  const VALID_USER_XML = `<?xml version="1.0" encoding="utf-8"?>
+<user id="12345" name="boardgamefan" termsofuse="https://boardgamegeek.com/xmlapi/termsofuse">
+  <firstname value="Board" />
+  <lastname value="Fan" />
+  <avatarlink value="N/A" />
+  <yearregistered value="2010" />
+  <lastlogin value="2024-01-01" />
+  <stateorprovince value="" />
+  <country value="United States" />
+  <webaddress value="" />
+  <xboxaccount value="" />
+  <wiiaccount value="" />
+  <psnaccount value="" />
+  <battlenetaccount value="" />
+  <steamaccount value="" />
+  <traderating value="0" />
+</user>`;
+
+  const NOT_FOUND_XML = `<?xml version="1.0" encoding="utf-8"?>
+<user id="0" name="" termsofuse="https://boardgamegeek.com/xmlapi/termsofuse">
+</user>`;
+
+  it('returns user info for a valid username', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, status: 200, text: () => Promise.resolve(VALID_USER_XML),
+    }));
+    const result = await validateBggUser('boardgamefan');
+    expect(result).not.toBeNull();
+    expect(result?.id).toBe('12345');
+    expect(result?.username).toBe('boardgamefan');
+  });
+
+  it('returns null for an unknown username (id=0 in response)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, status: 200, text: () => Promise.resolve(NOT_FOUND_XML),
+    }));
+    const result = await validateBggUser('nosuchuser');
+    expect(result).toBeNull();
+  });
+
+  it('returns null when BGG responds with 404', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false, status: 404, text: () => Promise.resolve(''),
+    }));
+    const result = await validateBggUser('nosuchuser');
+    expect(result).toBeNull();
+  });
+
+  it('throws when the API returns a non-OK status other than 404', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false, status: 503, text: () => Promise.resolve(''),
+    }));
+    await expect(validateBggUser('anyone')).rejects.toThrow('503');
+  });
+});
+
+// ── getBggUserProfile ─────────────────────────────────────────────────────────
+
+describe('getBggUserProfile', () => {
+  const USER_WITH_TOP_XML = `<?xml version="1.0" encoding="utf-8"?>
+<user id="12345" name="boardgamefan" termsofuse="https://boardgamegeek.com/xmlapi/termsofuse">
+  <yearregistered value="2015" />
+  <top domain="boardgame">
+    <item rank="1" type="thing" id="174430" name="Gloomhaven" />
+    <item rank="2" type="thing" id="224517" name="Brass: Birmingham" />
+    <item rank="3" type="thing" id="342942" name="Ark Nova" />
+  </top>
+</user>`;
+
+  const COLLECTION_XML = `<?xml version="1.0" encoding="utf-8"?>
+<items totalitems="47" termsofuse="https://boardgamegeek.com/xmlapi/termsofuse" pubdate="Fri, 27 Jun 2025 00:00:00 +0000">
+</items>`;
+
+  it('returns member since, base game count, expansion count, and top games', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve(USER_WITH_TOP_XML) })  // user+top
+      .mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve(COLLECTION_XML) })     // base games
+      .mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve('<items totalitems="12"></items>') }); // expansions
+    vi.stubGlobal('fetch', fetchMock);
+
+    const profile = await getBggUserProfile('boardgamefan');
+    expect(profile).not.toBeNull();
+    expect(profile?.memberSince).toBe('2015');
+    expect(profile?.baseGames).toBe(47);
+    expect(profile?.expansions).toBe(12);
+    expect(profile?.topGames).toHaveLength(3);
+    expect(profile?.topGames[0]).toEqual({ rank: 1, name: 'Gloomhaven' });
+  });
+
+  it('returns null counts when BGG responds 202 twice for both collection calls', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve(USER_WITH_TOP_XML) })
+      .mockResolvedValue({ ok: false, status: 202, text: () => Promise.resolve('') });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const profilePromise = getBggUserProfile('boardgamefan');
+    await vi.runAllTimersAsync();
+    const profile = await profilePromise;
+    expect(profile?.baseGames).toBeNull();
+    expect(profile?.expansions).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it('returns null when the user is not found', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 404, text: () => Promise.resolve('') }));
+    const profile = await getBggUserProfile('nosuchuser');
+    expect(profile).toBeNull();
+  });
+
+  it('returns empty top games when user has none set', async () => {
+    const NO_TOP_XML = `<?xml version="1.0" encoding="utf-8"?>
+<user id="12345" name="boardgamefan" termsofuse="https://boardgamegeek.com/xmlapi/termsofuse">
+  <yearregistered value="2020" />
+</user>`;
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve(NO_TOP_XML) })
+      .mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve(COLLECTION_XML) })
+      .mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve('<items totalitems="0"></items>') });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const profile = await getBggUserProfile('boardgamefan');
+    expect(profile?.topGames).toHaveLength(0);
+  });
+});
+
+// ── fetchBggOwnedCollection ───────────────────────────────────────────────────
+
+describe('fetchBggOwnedCollection', () => {
+  const COLLECTION_XML = `<?xml version="1.0" encoding="utf-8"?>
+<items totalitems="2" termsofuse="https://boardgamegeek.com/xmlapi/termsofuse">
+  <item objecttype="thing" objectid="266192" subtype="boardgame" collid="111">
+    <name sortindex="1">Wingspan</name>
+    <yearpublished>2019</yearpublished>
+    <thumbnail>//cf.geekdo-images.com/thumb.jpg</thumbnail>
+    <stats minplayers="1" maxplayers="5" minplaytime="40" maxplaytime="70" playingtime="70" numowned="50000">
+      <rating value="8">
+        <average value="7.85"/>
+        <ranks>
+          <rank type="subtype" id="1" name="boardgame" friendlyname="Board Game Rank" value="12"/>
+        </ranks>
+      </rating>
+    </stats>
+    <status own="1" prevowned="0" fortrade="0" want="0" wanttoplay="1" wishlistitem="0" preordered="0" lastmodified="2023-01-01 00:00:00"/>
+    <numplays>5</numplays>
+  </item>
+  <item objecttype="thing" objectid="174430" subtype="boardgame" collid="222">
+    <name sortindex="1">Gloomhaven</name>
+    <yearpublished>2017</yearpublished>
+    <thumbnail>//cf.geekdo-images.com/thumb2.jpg</thumbnail>
+    <stats minplayers="1" maxplayers="4" minplaytime="60" maxplaytime="120" playingtime="120" numowned="80000">
+      <rating value="N/A">
+        <average value="8.50"/>
+        <ranks>
+          <rank type="subtype" id="1" name="boardgame" friendlyname="Board Game Rank" value="1"/>
+        </ranks>
+      </rating>
+    </stats>
+    <status own="1" prevowned="0" fortrade="1" want="0" wanttoplay="0" wishlistitem="0" preordered="0" lastmodified="2023-06-01 00:00:00"/>
+    <numplays>12</numplays>
+  </item>
+</items>`;
+
+  it('parses game names, IDs, players, and playtime', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve(COLLECTION_XML) }));
+    const games = await fetchBggOwnedCollection('boardgamefan');
+    expect(games).toHaveLength(2);
+    expect(games![0].gameName).toBe('Wingspan');
+    expect(games![0].bggGameId).toBe('266192');
+    expect(games![0].minPlayers).toBe(1);
+    expect(games![0].maxPlayers).toBe(5);
+    expect(games![0].playingTime).toBe(70);
+  });
+
+  it('decodes HTML entities in game names', async () => {
+    const xml = `<?xml version="1.0" encoding="utf-8"?>
+<items totalitems="1">
+  <item objecttype="thing" objectid="123" subtype="boardgame" collid="1">
+    <name sortindex="1">EXIT: The Pharaoh&#039;s Tomb &amp; More</name>
+    <stats minplayers="1" maxplayers="4" minplaytime="45" maxplaytime="45" playingtime="45" numowned="1000">
+      <rating value="N/A"><average value="7.0"/><ranks/></rating>
+    </stats>
+    <status own="1" fortrade="0" wanttoplay="0" wishlistitem="0"/>
+    <numplays>0</numplays>
+  </item>
+</items>`;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve(xml) }));
+    const games = await fetchBggOwnedCollection('boardgamefan');
+    expect(games![0].gameName).toBe("EXIT: The Pharaoh's Tomb & More");
+  });
+
+  it('returns both base games and expansions with correct isExpansion flag', async () => {
+    const xml = `<?xml version="1.0" encoding="utf-8"?>
+<items totalitems="2">
+  <item objecttype="thing" objectid="1" subtype="boardgame" collid="1">
+    <name sortindex="1">Base Game</name>
+    <stats minplayers="1" maxplayers="4" minplaytime="30" maxplaytime="60" playingtime="60" numowned="1000">
+      <rating value="N/A"><average value="7.0"/><ranks/></rating>
+    </stats>
+    <status own="1" fortrade="0" wanttoplay="0" wishlistitem="0"/>
+    <numplays>0</numplays>
+  </item>
+  <item objecttype="thing" objectid="2" subtype="boardgameexpansion" collid="2">
+    <name sortindex="1">Expansion Pack</name>
+    <stats minplayers="1" maxplayers="4" minplaytime="30" maxplaytime="60" playingtime="60" numowned="500">
+      <rating value="N/A"><average value="7.5"/><ranks/></rating>
+    </stats>
+    <status own="1" fortrade="0" wanttoplay="0" wishlistitem="0"/>
+    <numplays>0</numplays>
+  </item>
+</items>`;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve(xml) }));
+    const games = await fetchBggOwnedCollection('boardgamefan');
+    expect(games).toHaveLength(2);
+    expect(games![0].gameName).toBe('Base Game');
+    expect(games![0].isExpansion).toBe(false);
+    expect(games![1].gameName).toBe('Expansion Pack');
+    expect(games![1].isExpansion).toBe(true);
+  });
+
+  it('parses status flags correctly', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve(COLLECTION_XML) }));
+    const games = await fetchBggOwnedCollection('boardgamefan');
+    expect(games![0].own).toBe(true);
+    expect(games![0].forTrade).toBe(false);
+    expect(games![0].wantToPlay).toBe(true);
+    expect(games![1].forTrade).toBe(true);
+  });
+
+  it('parses user rating and num plays', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve(COLLECTION_XML) }));
+    const games = await fetchBggOwnedCollection('boardgamefan');
+    expect(games![0].userRating).toBe(8);
+    expect(games![0].numPlays).toBe(5);
+    expect(games![1].userRating).toBeNull(); // "N/A" rating
+    expect(games![1].numPlays).toBe(12);
+  });
+
+  it('prepends https: to thumbnail URLs', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve(COLLECTION_XML) }));
+    const games = await fetchBggOwnedCollection('boardgamefan');
+    expect(games![0].thumbnail).toBe('https://cf.geekdo-images.com/thumb.jpg');
+  });
+
+  it('returns null when BGG responds 202 twice', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 202, text: () => Promise.resolve('') }));
+    const promise = fetchBggOwnedCollection('boardgamefan');
+    await vi.runAllTimersAsync();
+    expect(await promise).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it('returns null on non-OK response', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 503, text: () => Promise.resolve('') }));
+    expect(await fetchBggOwnedCollection('boardgamefan')).toBeNull();
   });
 });
