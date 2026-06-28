@@ -23,6 +23,9 @@ export interface GameSuggestion {
   maxPlaytime: number;
   suggestedStartTime: string | null;
   tags?: string[];
+  complexity?: string;
+  howToPlayUrl?: string | null;
+  thumbnail?: string | null;
   expansions: GameExpansion[];
   seats: string[];
   waitlist: string[];

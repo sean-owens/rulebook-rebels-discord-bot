@@ -9,6 +9,9 @@ import {
   handleScheduledEventUserRemove,
 } from './events/scheduledEvents';
 import { handleGuildMemberAdd } from './events/guildMemberAdd';
+import { handleGuildCreate } from './events/guildCreate';
+import { handleGuildDelete } from './events/guildDelete';
+import { runRetentionCleanup } from './utils/guildLifecycle';
 import { loadBGGCatalog } from './utils/bggCatalog';
 
 loadBGGCatalog().catch(err => console.error('[BGGCatalog] Startup error:', err));
@@ -28,5 +31,10 @@ client.on('guildScheduledEventUpdate', handleScheduledEventUpdate);
 client.on('guildScheduledEventUserAdd', handleScheduledEventUserAdd);
 client.on('guildScheduledEventUserRemove', handleScheduledEventUserRemove);
 client.on('guildMemberAdd', handleGuildMemberAdd);
+client.on('guildCreate', handleGuildCreate);
+client.on('guildDelete', handleGuildDelete);
+
+runRetentionCleanup();
+setInterval(runRetentionCleanup, 24 * 60 * 60 * 1000);
 
 client.login(process.env.DISCORD_TOKEN);

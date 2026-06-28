@@ -190,10 +190,12 @@ export interface GameInfo {
   bestPlayers?: number;       // BGG community "best at" player count
   playTime?: number;
   weight?: number;            // BGG average weight (1–5 complexity scale)
-  complexity?: Complexity;    // derived from weight: Light ≤2.0, Medium ≤3.5, Heavy >3.5
+  complexity?: Complexity | null; // null = checked BGG, no weight data found
   tags?: string[];
   expansions?: string[];      // owner-noted expansions they personally own
   bggExpansions?: string[];   // full expansion list from BGG
+  howToPlayUrl?: string | null; // null = checked BGG, no instructional video found
+  thumbnail?: string | null;
   updatedAt: string;
 }
 

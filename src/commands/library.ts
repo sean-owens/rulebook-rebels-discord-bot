@@ -213,10 +213,7 @@ export const data = new SlashCommandBuilder()
   .addSubcommand(sub =>
     sub
       .setName('clear')
-      .setDescription('Remove all of your games from the library (admins can target another user)')
-      .addUserOption(opt =>
-        opt.setName('user').setDescription('Admin only: clear a specific user\'s library entries').setRequired(false)
-      )
+      .setDescription('Remove all of your own games from the library')
   )
   .addSubcommand(sub =>
     sub
@@ -290,7 +287,8 @@ export const data = new SlashCommandBuilder()
             { name: 'Heavy', value: 'Heavy' },
           )
       )
-  );
+  )
+  ;
 
 function buildBringLines(guildId: string, requests: ReturnType<typeof getRequestsForEvent>, userId: string): string[] {
   return requests
@@ -455,8 +453,8 @@ async function buildUnrequestUI(
   };
 }
 
-async function handleUnrequest(interaction: ChatInputCommandInteraction): Promise<void> {
-  const isMod = interaction.memberPermissions?.has(PermissionFlagsBits.ManageMessages) ?? false;
+export async function handleUnrequest(interaction: ChatInputCommandInteraction, forHost = false): Promise<void> {
+  const isMod = forHost || (interaction.memberPermissions?.has(PermissionFlagsBits.ManageEvents) ?? false);
   const now = new Date();
   const upcoming = loadGameNights()
     .filter(gn => !gn.cancelled && !gn.archived && new Date(gn.startTimeISO) > now)
@@ -504,7 +502,7 @@ async function handleUnrequest(interaction: ChatInputCommandInteraction): Promis
 
 export async function handleUnrequestEventSelect(interaction: StringSelectMenuInteraction): Promise<void> {
   const eventId = interaction.values[0];
-  const isMod = interaction.memberPermissions?.has(PermissionFlagsBits.ManageMessages) ?? false;
+  const isMod = interaction.memberPermissions?.has(PermissionFlagsBits.ManageEvents) ?? false;
   const allRequests = getRequestsForEvent(eventId);
   const visible = isMod ? allRequests : allRequests.filter(r => r.requestedBy === interaction.user.id);
 
@@ -530,7 +528,7 @@ export async function handleUnrequestSelect(interaction: StringSelectMenuInterac
 }
 
 export async function handleUnrequestAll(interaction: ButtonInteraction, eventId: string): Promise<void> {
-  const isMod = interaction.memberPermissions?.has(PermissionFlagsBits.ManageMessages) ?? false;
+  const isMod = interaction.memberPermissions?.has(PermissionFlagsBits.ManageEvents) ?? false;
   const removed = removeAllRequestsForEvent(eventId, isMod ? undefined : interaction.user.id);
   try { await updateRequestPin(interaction.client, eventId); } catch { /* ok */ }
 
@@ -547,23 +545,22 @@ export async function handleUnrequestAll(interaction: ButtonInteraction, eventId
 }
 
 async function handleClear(interaction: ChatInputCommandInteraction): Promise<void> {
-  const targetUser = interaction.options.getUser('user');
-
-  if (targetUser && targetUser.id !== interaction.user.id) {
-    if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
-      await interaction.reply({ content: 'Only administrators can clear another user\'s library entries.', ephemeral: true });
-      return;
-    }
-  }
-
-  const userId = targetUser?.id ?? interaction.user.id;
-  const displayName = targetUser ? `<@${userId}>` : 'your';
-  const count = clearUserLibrary(interaction.guildId!, userId);
-
+  const count = clearUserLibrary(interaction.guildId!, interaction.user.id);
   await interaction.reply({
     content: count > 0
-      ? `Removed **${count}** game${count !== 1 ? 's' : ''} from ${displayName} library.`
-      : `${displayName === 'your' ? 'You have' : `<@${userId}> has`} no games in the library to remove.`,
+      ? `Removed **${count}** game${count !== 1 ? 's' : ''} from your library.`
+      : 'You have no games in the library to remove.',
+    ephemeral: true,
+  });
+}
+
+export async function handleAdminLibraryClear(interaction: ChatInputCommandInteraction): Promise<void> {
+  const targetUser = interaction.options.getUser('user', true);
+  const count = clearUserLibrary(interaction.guildId!, targetUser.id);
+  await interaction.reply({
+    content: count > 0
+      ? `Removed **${count}** game${count !== 1 ? 's' : ''} from <@${targetUser.id}>'s library.`
+      : `<@${targetUser.id}> has no games in the library to remove.`,
     ephemeral: true,
   });
 }
@@ -711,21 +708,68 @@ export async function handleLibraryListNav(interaction: ButtonInteraction, direc
   });
 }
 
-async function enrichFromBGG(canonical: string): Promise<void> {
+export async function handleSync(interaction: ChatInputCommandInteraction): Promise<void> {
+  if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+    await interaction.reply({ content: 'Only admins can sync game data.', ephemeral: true });
+    return;
+  }
+
+  const input = interaction.options.getString('game', true).trim();
+  const guildId = interaction.guildId!;
+
+  const exact = findGamesByName(guildId, input);
+  const canonical = exact.length > 0 ? exact[0].gameName : null;
+
+  if (!canonical) {
+    const partials = findGameNamesByPartial(guildId, input);
+    const hint = partials.length > 0 ? `\nDid you mean: ${partials.slice(0, 5).map(n => `**${n}**`).join(', ')}?` : '';
+    await interaction.reply({ content: `No game called **"${input}"** found in the library.${hint}`, ephemeral: true });
+    return;
+  }
+
   const info = getGameInfo(canonical);
-  if (!info?.objectid || (info.tags?.length && info.bggExpansions !== undefined && info.bestPlayers !== undefined && info.complexity !== undefined)) return;
+  if (!info?.objectid) {
+    await interaction.reply({ content: `**${canonical}** has no BGG ID — nothing to sync.`, ephemeral: true });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  try {
+    await enrichFromBGG(canonical, true);
+  } catch {
+    await interaction.editReply('Could not reach BoardGameGeek right now. Please try again in a moment.');
+    return;
+  }
+
+  const embed = buildGameViewEmbed(guildId, canonical, interaction.user.id, resolveComplexityMention(canonical, guildId));
+  if (embed) {
+    await interaction.editReply({ content: `✅ **${canonical}** synced from BoardGameGeek.`, embeds: [embed] });
+  } else {
+    await interaction.editReply(`✅ **${canonical}** synced from BoardGameGeek.`);
+  }
+}
+
+export async function enrichFromBGG(canonical: string, force = false): Promise<void> {
+  const info = getGameInfo(canonical);
+  if (!info?.objectid) return;
+  if (!force && info.tags !== undefined && info.bggExpansions !== undefined && info.bestPlayers !== undefined && info.complexity !== undefined && info.howToPlayUrl !== undefined && info.thumbnail !== undefined) return;
   try {
     const bggGame = await getBGGGame(info.objectid);
     upsertGameInfo({
       ...info,
+      // user-editable fields: preserve existing, fall back to BGG
       minPlayers: info.minPlayers ?? bggGame.minPlayers,
       maxPlayers: info.maxPlayers ?? bggGame.maxPlayers,
-      bestPlayers: info.bestPlayers ?? (bggGame.suggestedPlayers || undefined),
       playTime: info.playTime ?? bggGame.maxPlaytime,
-      weight: info.weight ?? (bggGame.weight ?? undefined),
-      complexity: info.complexity ?? (bggGame.weight ? weightTag(bggGame.weight) : undefined),
-      tags: bggGame.tags.length > 0 ? bggGame.tags : info.tags,
-      bggExpansions: bggGame.expansions.map(e => e.name),
+      complexity: info.complexity ?? (bggGame.weight ? weightTag(bggGame.weight) : null),
+      tags: bggGame.tags.length > 0 ? bggGame.tags : (info.tags ?? []),
+      // BGG-only fields: always write fresh on force, fill-in on lazy
+      bestPlayers: force ? (bggGame.suggestedPlayers || undefined) : (info.bestPlayers ?? (bggGame.suggestedPlayers || undefined)),
+      weight: force ? (bggGame.weight ?? undefined) : (info.weight ?? (bggGame.weight ?? undefined)),
+      bggExpansions: force ? bggGame.expansions.map(e => e.name) : (info.bggExpansions ?? bggGame.expansions.map(e => e.name)),
+      howToPlayUrl: force ? bggGame.howToPlayUrl : (info.howToPlayUrl !== undefined ? info.howToPlayUrl : bggGame.howToPlayUrl),
+      thumbnail: force ? bggGame.thumbnail : (info.thumbnail !== undefined ? info.thumbnail : bggGame.thumbnail),
       updatedAt: new Date().toISOString(),
     });
   } catch {
@@ -762,8 +806,9 @@ function buildGameViewEmbed(guildId: string, gameName: string, userId: string, c
 
   const embed = new EmbedBuilder()
     .setTitle(canonical)
-    .setColor(0x5865f2)
-    .addFields({ name: `Owner${owners.length > 1 ? 's' : ''}`, value: owners.join('\n') });
+    .setColor(0x5865f2);
+  if (info?.thumbnail) embed.setThumbnail(info.thumbnail);
+  embed.addFields({ name: `Owner${owners.length > 1 ? 's' : ''}`, value: owners.join('\n') });
 
   if (info?.minPlayers != null && info?.maxPlayers != null) {
     embed.addFields({ name: 'Players', value: `${info.minPlayers}–${info.maxPlayers}`, inline: true });
@@ -805,6 +850,13 @@ function buildGameViewEmbed(guildId: string, gameName: string, userId: string, c
   } else if (info?.expansions?.length) {
     embed.addFields({ name: 'Expansions', value: info.expansions.join('\n') });
   }
+  const resourceParts: string[] = [];
+  if (info?.howToPlayUrl) resourceParts.push(`[📹 How to Play](${info.howToPlayUrl})`);
+  if (objectid) resourceParts.push(`[📖 Rules & Files](https://boardgamegeek.com/boardgame/${objectid}/files)`);
+  if (resourceParts.length > 0) {
+    embed.addFields({ name: 'Resources', value: resourceParts.join(' • ') });
+  }
+
   if (objectid) {
     embed.addFields({ name: 'BGG ID', value: objectid, inline: true });
   }
@@ -1887,7 +1939,7 @@ export async function handleEditModal(interaction: ModalSubmitInteraction): Prom
     : existing?.expansions;
 
   // Fuzzy-match complexity; fall back to existing if input unrecognized
-  const resolvedComplexity: Complexity | undefined = complexityRaw
+  const resolvedComplexity: Complexity | null | undefined = complexityRaw
     ? (fuzzyMatchComplexity(complexityRaw) ?? existing?.complexity)
     : existing?.complexity;
   const complexityNeedsPrompt = !!(complexityRaw && !fuzzyMatchComplexity(complexityRaw));

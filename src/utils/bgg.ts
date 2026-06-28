@@ -24,6 +24,7 @@ export interface BGGGame {
   thumbnail: string | null;
   expansions: BGGExpansion[];
   tags: string[];
+  howToPlayUrl: string | null;
 }
 
 export function weightTag(weight: number): 'Light' | 'Medium' | 'Heavy' {
@@ -300,7 +301,7 @@ export async function validateBggUser(username: string): Promise<BGGUser | null>
 }
 
 export async function getBGGGame(id: string): Promise<BGGGame> {
-  const url = `https://boardgamegeek.com/xmlapi2/thing?id=${id}&stats=1`;
+  const url = `https://boardgamegeek.com/xmlapi2/thing?id=${id}&stats=1&videos=1`;
   const xml = await fetchXML(url);
   const parsed = parser.parse(xml);
 
@@ -352,6 +353,13 @@ export async function getBGGGame(id: string): Promise<BGGGame> {
   const rawWeight = item.statistics?.ratings?.averageweight?.['@_value'];
   const weight = rawWeight != null && Number(rawWeight) > 0 ? Number(rawWeight) : null;
 
+  // Instructional video: prefer English, fall back to any language
+  const rawVideos = item.videos?.video ?? [];
+  const videoList: any[] = Array.isArray(rawVideos) ? rawVideos : [rawVideos];
+  const instructional = videoList.filter(v => String(v['@_category'] ?? '').toLowerCase() === 'instructional');
+  const preferred = instructional.find(v => String(v['@_language'] ?? '').toLowerCase().startsWith('english')) ?? instructional[0] ?? null;
+  const howToPlayUrl = preferred ? String(preferred['@_link']) : null;
+
   return {
     id,
     name: primaryName,
@@ -362,8 +370,9 @@ export async function getBGGGame(id: string): Promise<BGGGame> {
     minPlaytime: Number(item.minplaytime?.['@_value'] ?? 30),
     maxPlaytime: Number(item.maxplaytime?.['@_value'] ?? 60),
     weight,
-    thumbnail: item.thumbnail ?? null,
+    thumbnail: item.thumbnail ? (String(item.thumbnail).startsWith('//') ? `https:${item.thumbnail}` : String(item.thumbnail)) : null,
     expansions,
     tags,
+    howToPlayUrl,
   };
 }

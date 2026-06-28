@@ -17,13 +17,14 @@ import {
   TextInputStyle,
 } from 'discord.js';
 import { randomUUID } from 'crypto';
-import { searchBGG, getBGGGame, BGGGame, BGGExpansion, BGGSearchResult } from '../utils/bgg';
+import { searchBGG, getBGGGame, BGGGame, BGGExpansion, BGGSearchResult, weightTag } from '../utils/bgg';
 import { searchCatalog, isCatalogLoaded } from '../utils/bggCatalog';
 import { loadGames, saveGames, upsertGame, GameSuggestion, GameExpansion, findGamesByChannel } from '../utils/gameStorage';
-import { buildGameEmbed, buildGameButtons } from '../utils/gameEmbeds';
+import { buildGameEmbed, buildGameButtons, buildBggAttachment } from '../utils/gameEmbeds';
 import { loadGameNights, GameNight } from '../utils/storage';
 import { findGamesByName, findGameNamesByPartial, getGameInfo, upsertGameInfo, addGame, addRequest, updateRequestCopies, GameInfo, GAME_TAGS } from '../utils/libraryStorage';
 import { updateRequestPin, updateGameListPin } from '../utils/requestPin';
+import { enrichFromBGG } from './library';
 
 const MANUAL_VALUE = '__manual__';
 const BGG_VALUE = '__bgg__';
@@ -53,6 +54,9 @@ const pendingLibrarySuggest = new Map<string, PendingLibrarySuggest>();
 
 // Stores the selected eventId for users suggesting from outside an event channel
 const pendingEventContext = new Map<string, string>();
+
+// Stores library game context while user picks expansions
+const pendingLibraryGame = new Map<string, { gameName: string; info: GameInfo | null; ownerIds: string[] }>();
 
 // Stores suggest intent while the user picks which event to add to
 const pendingEventSuggest = new Map<string, { title: string; withExpansions: boolean }>();
@@ -227,7 +231,12 @@ async function handleSuggest(interaction: ChatInputCommandInteraction): Promise<
   const libraryMatches = findGamesByName(interaction.guildId!, title);
   if (libraryMatches.length > 0) {
     const info = getGameInfo(title);
-    await postLibraryGame(interaction, gameNight, libraryMatches[0].gameName, info ?? null, libraryMatches.map(e => e.userId));
+    const ownerIds = libraryMatches.map(e => e.userId);
+    if (withExpansions && info?.objectid) {
+      await showLibraryExpansionPicker(interaction, gameNight, libraryMatches[0].gameName, info, ownerIds);
+    } else {
+      await postLibraryGame(interaction, gameNight, libraryMatches[0].gameName, info ?? null, ownerIds, []);
+    }
     return;
   }
 
@@ -281,7 +290,12 @@ export async function handleEventSelect(interaction: StringSelectMenuInteraction
   const libraryMatches = findGamesByName(interaction.guildId!, title);
   if (libraryMatches.length > 0) {
     const info = getGameInfo(title);
-    await postLibraryGame(interaction, gameNight, libraryMatches[0].gameName, info ?? null, libraryMatches.map(e => e.userId));
+    const ownerIds = libraryMatches.map(e => e.userId);
+    if (withExpansions && info?.objectid) {
+      await showLibraryExpansionPicker(interaction, gameNight, libraryMatches[0].gameName, info, ownerIds);
+    } else {
+      await postLibraryGame(interaction, gameNight, libraryMatches[0].gameName, info ?? null, ownerIds, []);
+    }
     return;
   }
 
@@ -399,13 +413,9 @@ async function handleGameCancel(interaction: ChatInputCommandInteraction): Promi
     return;
   }
 
-  const canCancel =
-    match.createdBy === interaction.user.id ||
-    interaction.memberPermissions?.has(PermissionFlagsBits.ManageMessages);
-
-  if (!canCancel) {
+  if (match.createdBy !== interaction.user.id) {
     await interaction.reply({
-      content: `Only the person who suggested **${match.title}** (or a moderator) can remove it.`,
+      content: `Only the person who suggested **${match.title}** can remove it. Ask a host or admin if you need it removed.`,
       ephemeral: true,
     });
     return;
@@ -424,6 +434,112 @@ async function handleGameCancel(interaction: ChatInputCommandInteraction): Promi
   await interaction.reply({ content: `**${match.title}** has been removed from the lineup.`, ephemeral: true });
 }
 
+export async function handleHostGameCancel(interaction: ChatInputCommandInteraction): Promise<void> {
+  const title = interaction.options.getString('title', true).trim();
+  const games = findGamesByChannel(interaction.channelId!);
+  const match = games.find(g => g.title.toLowerCase() === title.toLowerCase());
+
+  if (!match) {
+    const titles = games.map(g => `**${g.title}**`).join(', ');
+    await interaction.reply({
+      content: `No game called **"${title}"** found in the lineup.${titles ? ` Current games: ${titles}` : ''}`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  try {
+    const channel = await interaction.client.channels.fetch(match.channelId) as TextChannel;
+    const msg = await channel.messages.fetch(match.messageId);
+    await msg.delete();
+  } catch { /* message may already be deleted */ }
+
+  const remaining = loadGames().filter(g => g.id !== match.id);
+  saveGames(remaining);
+  try { await updateGameListPin(interaction.client, match.eventId); } catch { /* channel may not be accessible */ }
+
+  await interaction.reply({ content: `**${match.title}** has been removed from the lineup.`, ephemeral: true });
+}
+
+// ── Library match: expansion picker ──────────────────────────────────────────
+
+async function showLibraryExpansionPicker(
+  interaction: ChatInputCommandInteraction | StringSelectMenuInteraction,
+  gameNight: GameNight,
+  gameName: string,
+  info: GameInfo,
+  ownerIds: string[],
+): Promise<void> {
+  if (interaction.isChatInputCommand()) {
+    await interaction.deferReply({ ephemeral: true });
+  } else {
+    await interaction.deferUpdate();
+  }
+
+  let bggGame: BGGGame;
+  try {
+    bggGame = await getBGGGame(info.objectid!);
+  } catch {
+    await postLibraryGame(interaction, gameNight, gameName, info, ownerIds, []);
+    return;
+  }
+
+  if (bggGame.expansions.length === 0) {
+    await postLibraryGame(interaction, gameNight, gameName, info, ownerIds, []);
+    return;
+  }
+
+  pendingLibraryGame.set(interaction.user.id, { gameName, info, ownerIds });
+
+  const options = bggGame.expansions.map(exp =>
+    new StringSelectMenuOptionBuilder()
+      .setLabel(exp.name.slice(0, 100))
+      .setValue(exp.id)
+  );
+  const select = new StringSelectMenuBuilder()
+    .setCustomId(`game_exp_lib_${info.objectid}`)
+    .setPlaceholder('Select one or more expansions...')
+    .setMinValues(0)
+    .setMaxValues(options.length)
+    .addOptions(options);
+  await interaction.editReply({
+    content: `**${gameName}** has **${bggGame.expansions.length}** expansion(s). Select any to include:`,
+    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
+  });
+}
+
+export async function handleLibraryExpansionSelect(
+  interaction: StringSelectMenuInteraction,
+  bggId: string,
+): Promise<void> {
+  const pending = pendingLibraryGame.get(interaction.user.id);
+  pendingLibraryGame.delete(interaction.user.id);
+
+  const gameNight = findGameNightForInteraction(interaction.user.id, interaction.channelId);
+  if (!gameNight) {
+    await interaction.update({ content: 'This event channel is no longer active.', components: [] });
+    return;
+  }
+  if (!pending) {
+    await interaction.update({ content: 'Session expired. Please try suggesting the game again.', components: [] });
+    return;
+  }
+
+  await interaction.deferUpdate();
+
+  let selectedExpansions: GameExpansion[] = [];
+  if (interaction.values.length > 0) {
+    try {
+      const bggGame = await getBGGGame(bggId);
+      selectedExpansions = bggGame.expansions
+        .filter(e => interaction.values.includes(e.id))
+        .map(e => ({ id: e.id, name: e.name }));
+    } catch { /* proceed without expansions if BGG is unreachable */ }
+  }
+
+  await postLibraryGame(interaction, gameNight, pending.gameName, pending.info, pending.ownerIds, selectedExpansions);
+}
+
 // ── Library match: post directly ──────────────────────────────────────────────
 
 async function postLibraryGame(
@@ -432,6 +548,7 @@ async function postLibraryGame(
   gameName: string,
   info: GameInfo | null,
   ownerIds: string[],
+  expansions: GameExpansion[],
 ): Promise<void> {
   const duplicate = findDuplicateGame(gameNight.id, gameName);
   if (duplicate) {
@@ -457,10 +574,17 @@ async function postLibraryGame(
     return;
   }
 
-  if (interaction.isChatInputCommand()) {
-    await interaction.deferReply({ ephemeral: true });
-  } else {
-    await interaction.deferUpdate();
+  if (!interaction.deferred && !interaction.replied) {
+    if (interaction.isChatInputCommand()) {
+      await interaction.deferReply({ ephemeral: true });
+    } else {
+      await interaction.deferUpdate();
+    }
+  }
+
+  if (info?.objectid) {
+    await enrichFromBGG(gameName);
+    info = getGameInfo(gameName) ?? info;
   }
 
   const minPlayers = info?.minPlayers ?? 2;
@@ -487,7 +611,10 @@ async function postLibraryGame(
     maxPlaytime: playTime,
     suggestedStartTime: null,
     tags: info?.tags ?? [],
-    expansions: [],
+    complexity: info?.complexity ?? undefined,
+    howToPlayUrl: info?.howToPlayUrl ?? null,
+    thumbnail: info?.thumbnail ?? null,
+    expansions,
     seats: [interaction.user.id],
     waitlist: [],
     createdAt: new Date().toISOString(),
@@ -499,6 +626,7 @@ async function postLibraryGame(
   const msg = await channel.send({
     content: `Owned by: ${owners}`,
     embeds: [buildGameEmbed(game, {})],
+    files: [buildBggAttachment()],
     components: [buildGameButtons(id, false)],
   });
 
@@ -541,9 +669,19 @@ export async function handleLibrarySuggestSelect(interaction: StringSelectMenuIn
   }
 
   // Library game selected
+  const libPending = pendingLibrarySuggest.get(interaction.user.id);
+  pendingLibrarySuggest.delete(interaction.user.id);
+  const withExpansions = libPending?.withExpansions ?? false;
+
   const libraryMatches = findGamesByName(interaction.guildId!, value);
   const info = getGameInfo(value);
-  await postLibraryGame(interaction, gameNight, value, info ?? null, libraryMatches.map(e => e.userId));
+  const ownerIds = libraryMatches.map(e => e.userId);
+
+  if (withExpansions && info?.objectid) {
+    await showLibraryExpansionPicker(interaction, gameNight, value, info, ownerIds);
+  } else {
+    await postLibraryGame(interaction, gameNight, value, info ?? null, ownerIds, []);
+  }
 }
 
 // ── Select: no expansions ─────────────────────────────────────────────────────
@@ -718,6 +856,7 @@ export async function handleManualGameSubmit(interaction: ModalSubmitInteraction
   const channel = await interaction.client.channels.fetch(eventChannelId) as TextChannel;
   const msg = await channel.send({
     embeds: [buildGameEmbed(game, {})],
+    files: [buildBggAttachment()],
     components: [buildGameButtons(id, false)],
   });
 
@@ -760,6 +899,7 @@ export async function handleGameJoin(interaction: ButtonInteraction, gameId: str
   const nameMap = await resolveNames(interaction, [...game.seats, ...(game.waitlist ?? [])]);
   await interaction.update({
     embeds: [buildGameEmbed(game, nameMap)],
+    files: [buildBggAttachment()],
     components: [buildGameButtons(gameId, game.seats.length >= game.maxPlayers)],
   });
 }
@@ -782,6 +922,7 @@ export async function handleGameLeave(interaction: ButtonInteraction, gameId: st
   const nameMap = await resolveNames(interaction, [...game.seats, ...(game.waitlist ?? [])]);
   await interaction.update({
     embeds: [buildGameEmbed(game, nameMap)],
+    files: [buildBggAttachment()],
     components: [buildGameButtons(gameId, game.seats.length >= game.maxPlayers)],
   });
 }
@@ -822,6 +963,7 @@ export async function handleWaitlistJoin(interaction: ButtonInteraction, gameId:
   const nameMap = await resolveNames(interaction, [...game.seats, ...game.waitlist]);
   await interaction.update({
     embeds: [buildGameEmbed(game, nameMap)],
+    files: [buildBggAttachment()],
     components: [buildGameButtons(gameId, game.seats.length >= game.maxPlayers)],
   });
 }
@@ -852,6 +994,7 @@ export async function handleWaitlistLeave(interaction: ButtonInteraction, gameId
   const nameMap = await resolveNames(interaction, [...game.seats, ...game.waitlist]);
   await interaction.update({
     embeds: [buildGameEmbed(game, nameMap)],
+    files: [buildBggAttachment()],
     components: [buildGameButtons(gameId, game.seats.length >= game.maxPlayers)],
   });
 }
@@ -953,6 +1096,9 @@ async function postBGGGame(
     maxPlaytime: bggGame.maxPlaytime,
     suggestedStartTime: null,
     tags: bggGame.tags,
+    complexity: bggGame.weight != null ? weightTag(bggGame.weight) : undefined,
+    howToPlayUrl: bggGame.howToPlayUrl,
+    thumbnail: bggGame.thumbnail,
     expansions: expansions.map(e => ({ id: e.id, name: e.name } as GameExpansion)),
     seats: [interaction.user.id],
     waitlist: [],
@@ -963,6 +1109,7 @@ async function postBGGGame(
   const channel = await interaction.client.channels.fetch(eventChannelId) as TextChannel;
   const msg = await channel.send({
     embeds: [buildGameEmbed(game, {})],
+    files: [buildBggAttachment()],
     components: [buildGameButtons(id, false)],
   });
 
@@ -1034,6 +1181,7 @@ export async function handleGameTagSelect(
       const cardMsg = await cardChannel.messages.fetch(game.messageId);
       await cardMsg.edit({
         embeds: [buildGameEmbed(game, {})],
+        files: [buildBggAttachment()],
         components: [buildGameButtons(gameId, game.seats.length >= game.maxPlayers)],
       });
     } catch { /* card may have been deleted */ }

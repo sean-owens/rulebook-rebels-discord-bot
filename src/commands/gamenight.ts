@@ -19,83 +19,14 @@ import { updateAnnouncementPin } from '../utils/pins';
 
 export const data = new SlashCommandBuilder()
   .setName('event')
-  .setDescription('Manage game night events')
-  .addSubcommand(sub =>
-    sub
-      .setName('create')
-      .setDescription('Schedule a new game night')
-      .addStringOption(opt =>
-        opt.setName('date').setDescription('Date (e.g. "August 22" or "aug 22")').setRequired(true)
-      )
-      .addStringOption(opt =>
-        opt.setName('time').setDescription('Start time (e.g. "7pm" or "7:00 PM")').setRequired(true)
-      )
-      .addStringOption(opt =>
-        opt.setName('end_time').setDescription('End time (e.g. "10pm" or "10:00 PM") — uses server default if omitted').setRequired(false)
-      )
-      .addStringOption(opt =>
-        opt.setName('location').setDescription('Where it is — uses server default if omitted').setRequired(false)
-      )
-      .addStringOption(opt =>
-        opt.setName('link').setDescription('Optional URL (e.g. map link, event page)').setRequired(false)
-      )
-      .addStringOption(opt =>
-        opt.setName('description').setDescription('Optional extra notes').setRequired(false)
-      )
-  )
+  .setDescription('View upcoming game night events')
   .addSubcommand(sub =>
     sub.setName('list').setDescription('List upcoming game nights')
-  )
-  .addSubcommand(sub =>
-    sub
-      .setName('config')
-      .setDescription('Set server-wide defaults for new events (admin only)')
-      .addStringOption(opt =>
-        opt.setName('location').setDescription('Default location').setRequired(false)
-      )
-      .addStringOption(opt =>
-        opt.setName('time').setDescription('Default start time (e.g. "7:00 PM")').setRequired(false)
-      )
-      .addStringOption(opt =>
-        opt.setName('end_time').setDescription('Default end time (e.g. "10:00 PM")').setRequired(false)
-      )
-      .addStringOption(opt =>
-        opt.setName('description').setDescription('Default notes').setRequired(false)
-      )
-      .addChannelOption(opt =>
-        opt.setName('announcements').setDescription('Channel where RSVP embeds are posted').setRequired(false)
-      )
-      .addBooleanOption(opt =>
-        opt.setName('open_channels').setDescription('Allow everyone to see event channels (true = open, false = RSVP only)').setRequired(false)
-      )
-      .addStringOption(opt =>
-        opt.setName('event_category').setDescription('Discord category name for new event channels (default: "Monthly Events")').setRequired(false)
-      )
-      .addStringOption(opt =>
-        opt.setName('archive_category').setDescription('Discord category name for archived event channels (default: "Archive")').setRequired(false)
-      )
-  )
-  .addSubcommand(sub =>
-    sub
-      .setName('archive')
-      .setDescription('Archive channels for all past events (admin only)')
-  )
-  .addSubcommand(sub =>
-    sub
-      .setName('cancel')
-      .setDescription('Cancel a game night (creator or admin only)')
-      .addStringOption(opt =>
-        opt.setName('id').setDescription('Game night ID (shown in the event embed footer)').setRequired(true)
-      )
   );
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   const sub = interaction.options.getSubcommand();
-  if (sub === 'create') await handleCreate(interaction);
-  else if (sub === 'list') await handleList(interaction);
-  else if (sub === 'cancel') await handleCancel(interaction);
-  else if (sub === 'config') await handleConfig(interaction);
-  else if (sub === 'archive') await handleArchiveOld(interaction);
+  if (sub === 'list') await handleList(interaction);
 }
 
 function slugify(str: string): string {
@@ -148,9 +79,9 @@ function formatTime(date: Date): string {
 }
 
 
-async function handleCreate(interaction: ChatInputCommandInteraction): Promise<void> {
+export async function handleCreate(interaction: ChatInputCommandInteraction): Promise<void> {
   if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageEvents)) {
-    await interaction.reply({ content: 'Only admins can schedule events.', ephemeral: true });
+    await interaction.reply({ content: 'Only hosts can schedule events.', ephemeral: true });
     return;
   }
 
@@ -328,12 +259,7 @@ async function handleCreate(interaction: ChatInputCommandInteraction): Promise<v
   await interaction.editReply(`Event created for **${date}** at **${time}**! RSVP embed posted in ${announcementMention || `<#${gn.channelId}>`}.`);
 }
 
-async function handleConfig(interaction: ChatInputCommandInteraction): Promise<void> {
-  const isAdmin = interaction.memberPermissions?.has(PermissionFlagsBits.ManageEvents) ?? false;
-  if (!isAdmin) {
-    await interaction.reply({ content: 'Only admins can change event defaults.', ephemeral: true });
-    return;
-  }
+export async function handleConfig(interaction: ChatInputCommandInteraction): Promise<void> {
 
   const patch: Partial<GuildConfig> = {};
   const location = interaction.options.getString('location');
@@ -395,7 +321,7 @@ async function handleList(interaction: ChatInputCommandInteraction): Promise<voi
   });
 }
 
-async function handleCancel(interaction: ChatInputCommandInteraction): Promise<void> {
+export async function handleCancel(interaction: ChatInputCommandInteraction): Promise<void> {
   const id = interaction.options.getString('id', true);
   const gn = findGameNight(id);
 
@@ -433,13 +359,7 @@ async function handleCancel(interaction: ChatInputCommandInteraction): Promise<v
   await interaction.editReply(`Event \`${id}\` has been cancelled.`);
 }
 
-async function handleArchiveOld(interaction: ChatInputCommandInteraction): Promise<void> {
-  const isAdmin = interaction.memberPermissions?.has(PermissionFlagsBits.ManageEvents) ?? false;
-  if (!isAdmin) {
-    await interaction.reply({ content: 'Only admins can archive events.', ephemeral: true });
-    return;
-  }
-
+export async function handleArchiveOld(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
 
   const now = Date.now();

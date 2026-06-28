@@ -1,52 +1,8 @@
-import { ChatInputCommandInteraction, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
+import { ChatInputCommandInteraction } from 'discord.js';
 import { getGuildConfig, updateGuildConfig } from '../utils/config';
 import { handleGuildMemberAdd } from '../events/guildMemberAdd';
 
-export const data = new SlashCommandBuilder()
-  .setName('welcome')
-  .setDescription('Manage the new member welcome message')
-  .addSubcommand(sub =>
-    sub
-      .setName('config')
-      .setDescription('Set welcome message options (admin only)')
-      .addChannelOption(opt =>
-        opt.setName('channel').setDescription('Channel where welcome messages are posted (e.g. #introductions)').setRequired(false)
-      )
-      .addChannelOption(opt =>
-        opt.setName('rules_channel').setDescription('Channel containing server rules').setRequired(false)
-      )
-      .addStringOption(opt =>
-        opt.setName('facebook_url').setDescription('Facebook group URL').setRequired(false)
-      )
-  )
-  .addSubcommand(sub =>
-    sub
-      .setName('test')
-      .setDescription('Preview the welcome message as if you just joined (admin only)')
-  )
-  .addSubcommand(sub =>
-    sub
-      .setName('greet')
-      .setDescription('Manually send the welcome message to a specific member (admin only)')
-      .addUserOption(opt =>
-        opt.setName('member').setDescription('The member to welcome').setRequired(true)
-      )
-  );
-
-export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
-  const isAdmin = interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ?? false;
-  if (!isAdmin) {
-    await interaction.reply({ content: 'Only admins can use welcome commands.', ephemeral: true });
-    return;
-  }
-
-  const sub = interaction.options.getSubcommand();
-  if (sub === 'config') await handleConfig(interaction);
-  else if (sub === 'test') await handleTest(interaction);
-  else if (sub === 'greet') await handleGreet(interaction);
-}
-
-async function handleConfig(interaction: ChatInputCommandInteraction): Promise<void> {
+export async function handleConfig(interaction: ChatInputCommandInteraction): Promise<void> {
   const patch: Record<string, string> = {};
   const channel = interaction.options.getChannel('channel');
   const rulesChannel = interaction.options.getChannel('rules_channel');
@@ -84,14 +40,14 @@ async function handleConfig(interaction: ChatInputCommandInteraction): Promise<v
   });
 }
 
-async function handleTest(interaction: ChatInputCommandInteraction): Promise<void> {
+export async function handleTest(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
   const member = await interaction.guild!.members.fetch(interaction.user.id);
   await handleGuildMemberAdd(member);
   await interaction.editReply('Welcome message sent! Check the welcome channel and your DMs.');
 }
 
-async function handleGreet(interaction: ChatInputCommandInteraction): Promise<void> {
+export async function handleGreet(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
   const user = interaction.options.getUser('member', true);
   const member = await interaction.guild!.members.fetch(user.id);

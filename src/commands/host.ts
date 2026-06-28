@@ -1,0 +1,87 @@
+import { ChatInputCommandInteraction, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
+import { handleCreate as handleEventCreate, handleCancel as handleEventCancel, handleArchiveOld as handleEventArchive } from './gamenight';
+import { handleHostGameCancel } from './game';
+import { handleUnrequest as handleLibraryUnrequest } from './library';
+
+export const data = new SlashCommandBuilder()
+  .setName('host')
+  .setDescription('Host-level commands for managing events and game nights')
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageEvents)
+  // ── event group ───────────────────────────────────────────────────────────────
+  .addSubcommandGroup(group =>
+    group
+      .setName('event')
+      .setDescription('Event management')
+      .addSubcommand(sub =>
+        sub
+          .setName('create')
+          .setDescription('Schedule a new game night')
+          .addStringOption(opt =>
+            opt.setName('date').setDescription('Date (e.g. "August 22" or "aug 22")').setRequired(true)
+          )
+          .addStringOption(opt =>
+            opt.setName('time').setDescription('Start time (e.g. "7pm" or "7:00 PM")').setRequired(true)
+          )
+          .addStringOption(opt =>
+            opt.setName('end_time').setDescription('End time (e.g. "10pm") — uses server default if omitted').setRequired(false)
+          )
+          .addStringOption(opt =>
+            opt.setName('location').setDescription('Where it is — uses server default if omitted').setRequired(false)
+          )
+          .addStringOption(opt =>
+            opt.setName('link').setDescription('Optional URL (e.g. map link, event page)').setRequired(false)
+          )
+          .addStringOption(opt =>
+            opt.setName('description').setDescription('Optional extra notes').setRequired(false)
+          )
+      )
+      .addSubcommand(sub =>
+        sub
+          .setName('cancel')
+          .setDescription('Cancel a game night')
+          .addStringOption(opt =>
+            opt.setName('id').setDescription('Game night ID (shown in the event embed footer)').setRequired(true)
+          )
+      )
+      .addSubcommand(sub =>
+        sub.setName('archive').setDescription('Archive channels for all past events')
+      )
+  )
+  // ── game group ────────────────────────────────────────────────────────────────
+  .addSubcommandGroup(group =>
+    group
+      .setName('game')
+      .setDescription('Game suggestion management')
+      .addSubcommand(sub =>
+        sub
+          .setName('cancel')
+          .setDescription("Remove any game from the event lineup")
+          .addStringOption(opt =>
+            opt.setName('title').setDescription('Exact game title to remove').setRequired(true)
+          )
+      )
+  )
+  // ── library group ─────────────────────────────────────────────────────────────
+  .addSubcommandGroup(group =>
+    group
+      .setName('library')
+      .setDescription('Library management')
+      .addSubcommand(sub =>
+        sub.setName('unrequest').setDescription('View and remove any game request from an upcoming event')
+      )
+  );
+
+export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+  const group = interaction.options.getSubcommandGroup(true);
+  const sub = interaction.options.getSubcommand();
+
+  if (group === 'event') {
+    if (sub === 'create') await handleEventCreate(interaction);
+    else if (sub === 'cancel') await handleEventCancel(interaction);
+    else if (sub === 'archive') await handleEventArchive(interaction);
+  } else if (group === 'game') {
+    if (sub === 'cancel') await handleHostGameCancel(interaction);
+  } else if (group === 'library') {
+    if (sub === 'unrequest') await handleLibraryUnrequest(interaction, true);
+  }
+}

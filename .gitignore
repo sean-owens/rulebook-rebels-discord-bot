@@ -3,3 +3,4 @@ dist/
 .env
 data/
 old_data/
+bot.log

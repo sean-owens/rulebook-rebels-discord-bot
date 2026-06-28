@@ -1,8 +1,8 @@
 import { ButtonInteraction, Interaction, TextChannel } from 'discord.js';
 import { execute as executeHelp } from '../commands/help';
 import { execute as executeGameNight } from '../commands/gamenight';
-import { execute as executeWelcome } from '../commands/welcome';
-import { execute as executeGameTags, handleAutocomplete as handleGameTagsAutocomplete } from '../commands/gametags';
+import { execute as executeAdmin, handleAutocomplete as handleAdminAutocomplete } from '../commands/admin';
+import { execute as executeHost } from '../commands/host';
 import { execute as executeMyRoles, handleMyRolesTag, handleMyRolesDiff, handleMyRolesNext, handleMyRolesBackDiff, handleMyRolesPage, handleMyRolesSubmit } from '../commands/myroles';
 import { execute as executeLibrary, handleAddConfirm, handleAddCancel, handleAddBggConfirm, handleAddBggDismiss, handleAddBggSelect, handleLibraryAddPartialSelect, handleEditModal, handleComplexityFix, handleTagsFix, handleTagsSkip, handleRemoveSelect, handleLibraryViewSelect, handleLibraryRequestSelect, handleLibraryRequestCopySelect, handleUnrequestEventSelect, handleUnrequestSelect, handleUnrequestAll, handleLibraryListNav } from '../commands/library';
 import { Complexity } from '../utils/libraryStorage';
@@ -12,6 +12,7 @@ import {
   handleGameSelect,
   handleGameSelectWithExp,
   handleExpansionSelect,
+  handleLibraryExpansionSelect,
   handleManualBtn,
   handleManualGameSubmit,
   handleGameJoin,
@@ -31,14 +32,14 @@ import { buildGameNightEmbed, buildGameNightButtons } from '../utils/embeds';
 export async function handleInteraction(interaction: Interaction): Promise<void> {
   try {
     if (interaction.isAutocomplete()) {
-      if (interaction.commandName === 'gametags') await handleGameTagsAutocomplete(interaction);
+      if (interaction.commandName === 'admin') await handleAdminAutocomplete(interaction);
 
     } else if (interaction.isChatInputCommand()) {
       if (interaction.commandName === 'help') await executeHelp(interaction);
       else if (interaction.commandName === 'event') await executeGameNight(interaction);
       else if (interaction.commandName === 'game') await executeGame(interaction);
-      else if (interaction.commandName === 'welcome') await executeWelcome(interaction);
-      else if (interaction.commandName === 'gametags') await executeGameTags(interaction);
+      else if (interaction.commandName === 'admin') await executeAdmin(interaction);
+      else if (interaction.commandName === 'host') await executeHost(interaction);
       else if (interaction.commandName === 'myroles') await executeMyRoles(interaction);
       else if (interaction.commandName === 'library') await executeLibrary(interaction);
       else if (interaction.commandName === 'bgg') await executeBgg(interaction);
@@ -58,6 +59,7 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
       else if (id.startsWith('library_unrequest_select_')) await handleUnrequestSelect(interaction, id.slice('library_unrequest_select_'.length));
       else if (id === 'game_select') await handleGameSelect(interaction);
       else if (id === 'game_select_exp') await handleGameSelectWithExp(interaction);
+      else if (id.startsWith('game_exp_lib_')) await handleLibraryExpansionSelect(interaction, id.slice('game_exp_lib_'.length));
       else if (id.startsWith('game_exp_')) await handleExpansionSelect(interaction, id.slice('game_exp_'.length));
       else if (id.startsWith('game_tags_')) await handleGameTagSelect(interaction, id.slice('game_tags_'.length));
 

@@ -2,8 +2,8 @@ import 'dotenv/config';
 import { REST, Routes } from 'discord.js';
 import { data as gamenightCommand } from './commands/gamenight';
 import { data as gameCommand } from './commands/game';
-import { data as welcomeCommand } from './commands/welcome';
-import { data as gametagsCommand } from './commands/gametags';
+import { data as adminCommand } from './commands/admin';
+import { data as hostCommand } from './commands/host';
 import { data as myrolesCommand } from './commands/myroles';
 import { data as libraryCommand } from './commands/library';
 import { data as helpCommand } from './commands/help';
@@ -18,7 +18,7 @@ if (!token || !clientId) {
   process.exit(1);
 }
 
-const commands = [gamenightCommand.toJSON(), gameCommand.toJSON(), welcomeCommand.toJSON(), gametagsCommand.toJSON(), myrolesCommand.toJSON(), libraryCommand.toJSON(), helpCommand.toJSON(), bggCommand.toJSON()];
+const commands = [gamenightCommand.toJSON(), gameCommand.toJSON(), adminCommand.toJSON(), hostCommand.toJSON(), myrolesCommand.toJSON(), libraryCommand.toJSON(), helpCommand.toJSON(), bggCommand.toJSON()];
 const rest = new REST().setToken(token);
 
 (async () => {

@@ -1,5 +1,12 @@
-import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { AttachmentBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { GameSuggestion } from './gameStorage';
+import { getGameRoles } from './gameRoles';
+
+const COMPLEXITY_ICON: Record<string, string> = { Light: '🟢', Medium: '🟡', Heavy: '🔴' };
+
+export function buildBggAttachment(): AttachmentBuilder {
+  return new AttachmentBuilder('BGG/images/powered_by_BGG_01_SM.png');
+}
 
 export function buildGameEmbed(game: GameSuggestion, nameMap: Record<string, string>): EmbedBuilder {
   const getName = (id: string) => nameMap[id] ?? `<@${id}>`;
@@ -17,17 +24,35 @@ export function buildGameEmbed(game: GameSuggestion, nameMap: Record<string, str
     ? `~${game.minPlaytime} min`
     : `${game.minPlaytime}–${game.maxPlaytime} min`;
 
+  const roles = getGameRoles(game.guildId);
+
+  const complexityIcon = game.complexity ? (COMPLEXITY_ICON[game.complexity] ?? '') : '';
+  const complexityRole = game.complexity
+    ? roles.find(r => r.type === 'difficulty' && r.name.toLowerCase() === game.complexity!.toLowerCase())
+    : undefined;
+  const complexityValue = complexityRole
+    ? `${complexityIcon} <@&${complexityRole.roleId}>`
+    : game.complexity ? `${complexityIcon} ${game.complexity}` : null;
+
+  const playerField = { name: 'Players', value: `${playerInfo} (best with **${game.suggestedPlayers}**)`, inline: true };
+  const durationField = { name: 'Duration', value: durationInfo, inline: true };
   const embed = new EmbedBuilder()
     .setTitle(game.title)
     .setURL(game.bggLink || null)
-    .setColor(0xe8a838)
-    .addFields(
-      { name: 'Players', value: `${playerInfo} (best with **${game.suggestedPlayers}**)`, inline: true },
-      { name: 'Duration', value: durationInfo, inline: true },
+    .setColor(0xe8a838);
+  if (game.thumbnail) embed.setThumbnail(game.thumbnail);
+  embed.addFields(
+      playerField,
+      durationField,
+      ...(complexityValue ? [{ name: 'Complexity', value: complexityValue, inline: true }] : []),
     );
 
   if (game.tags?.length) {
-    embed.addFields({ name: 'Tags', value: game.tags.join(' • ') });
+    const tagValues = game.tags.map(tag => {
+      const role = roles.find(r => r.type !== 'difficulty' && r.name.toLowerCase() === tag.toLowerCase());
+      return role ? `<@&${role.roleId}>` : tag;
+    });
+    embed.addFields({ name: 'Tags', value: tagValues.join(' • ') });
   }
 
   if (game.expansions.length > 0) {
@@ -74,7 +99,14 @@ export function buildGameEmbed(game: GameSuggestion, nameMap: Record<string, str
     }
   }
 
-  embed.setFooter({ text: `Game ID: ${game.id} • Data from BoardGameGeek` });
+  const resourceParts: string[] = [];
+  if (game.howToPlayUrl) resourceParts.push(`[📹 How to Play](${game.howToPlayUrl})`);
+  if (game.bggId) resourceParts.push(`[📖 Rules & Files](https://boardgamegeek.com/boardgame/${game.bggId}/files)`);
+  if (resourceParts.length > 0) {
+    embed.addFields({ name: 'Resources', value: resourceParts.join(' • ') });
+  }
+
+  embed.setImage('attachment://powered_by_BGG_01_SM.png');
 
   return embed;
 }

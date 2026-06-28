@@ -5,6 +5,9 @@ export const data = new SlashCommandBuilder()
   .setDescription('Show all available bot commands');
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+  const isAdmin = interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ?? false;
+  const isHost = isAdmin || (interaction.memberPermissions?.has(PermissionFlagsBits.ManageEvents) ?? false);
+
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
     .setTitle('Rulebook Rebels Bot — Commands')
@@ -12,17 +15,14 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     .addFields(
       {
         name: '📅  /event',
-        value: [
-          '`list` — See upcoming game nights',
-          '`cancel` — Cancel an event you created',
-        ].join('\n'),
+        value: '`list` — See upcoming game nights',
       },
       {
         name: '🎲  /game',
         value: [
           '`suggest` — Suggest a game to play at an event',
           '`list` — See the game lineup for an event (use inside an event channel)',
-          '`cancel` — Remove your game suggestion',
+          '`cancel` — Remove your own game suggestion',
         ].join('\n'),
       },
       {
@@ -34,11 +34,12 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
           '`list` — Browse the full library',
           '`view` — Look up a specific game',
           '`edit` — Update details on one of your games (players, play time, tags, complexity)',
-          '`clear` — Remove all your games at once',
+          '`clear` — Remove all your own games at once',
           '`request` — Request a game be brought to an event',
-          '`unrequest` — Cancel a game request',
+          '`unrequest` — Cancel one of your own game requests',
           '`bring` — See which of your games have been requested for upcoming events',
-          '`import` — Bulk-add games from a CSV file',
+          '`import csv` — Bulk-add games from a CSV file',
+          '`import bgg` — Import your owned collection from BoardGameGeek',
         ].join('\n'),
       },
       {
@@ -53,18 +54,30 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
           '`profile` — View your currently linked BoardGameGeek account',
         ].join('\n'),
       },
-      ...(interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ? [{
-        name: '🔧  Admin only',
+      ...(isHost ? [{
+        name: '🎙️  /host — Event & moderation tools',
         value: [
-          '`/event create` — Schedule a new game night',
-          '`/event config` — Set server-wide defaults for future events (location, time, description) — does not edit existing events',
-          '`/event archive` — Archive a past event',
-          '`/gametags add` — Add a game genre tag (creates a Discord role)',
-          '`/gametags remove` — Remove a game genre tag',
-          '`/gametags list` — List all current tags',
-          '`/gametags sync` — Sync tags with existing Discord roles',
-          '`/welcome config` — Configure the welcome message and channel',
-          '`/welcome test` — Preview the welcome message',
+          '`/host event create` — Schedule a new game night',
+          '`/host event cancel` — Cancel a game night',
+          '`/host event archive` — Archive past event channels',
+          '`/host game cancel` — Remove any game from the event lineup',
+          '`/host library unrequest` — Remove any game request from an event',
+        ].join('\n'),
+      }] : []),
+      ...(isAdmin ? [{
+        name: '🔧  /admin — Server configuration',
+        value: [
+          '`/admin event config` — Set server-wide defaults for new events (location, time, description)',
+          '`/admin library clear` — Clear a specific member\'s entire library',
+          '`/admin library sync` — Re-sync a game\'s data from BoardGameGeek',
+          '`/admin tags add` — Add a game genre tag (creates a Discord role)',
+          '`/admin tags remove` — Remove a game genre tag',
+          '`/admin tags list` — List all current tags',
+          '`/admin tags sync` — Create roles for all built-in tags at once',
+          '`/admin tags clear` — Remove all game tags and their roles',
+          '`/admin welcome config` — Configure the welcome message and channel',
+          '`/admin welcome test` — Preview the welcome message',
+          '`/admin welcome greet` — Manually send the welcome message to a member',
         ].join('\n'),
       }] : []),
     )

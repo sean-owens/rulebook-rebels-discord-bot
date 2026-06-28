@@ -10,49 +10,20 @@ This document describes every feature in the bot and provides a checklist of tes
 
 ## 1. `/help`
 
-**What it does:** Displays an ephemeral embed listing all available commands grouped by category. The Admin-only section is only shown to members with Manage Guild permission.
+**What it does:** Displays an ephemeral embed listing all available commands. Shows a Host section to members with Manage Events permission. Shows an Admin section to members with Manage Guild permission. Admins see all three sections.
 
-- [ ] Run `/help` as a regular member — confirm embed shows `/event`, `/game`, `/library`, and `/myroles` sections but **no Admin section**
-- [ ] Run `/help` as an admin — confirm the **Admin only** section appears with all admin commands listed
-- [ ] Confirm the response is ephemeral (only visible to you)
+- [ ] Run `/help` as a regular member — confirm only user-facing command sections appear (`/event`, `/game`, `/library`, `/myroles`, `/bgg`) with **no Host or Admin section**
+- [ ] Run `/help` as a host — confirm the **🎙️ /host** section appears in addition to user commands, but **no Admin section**
+- [ ] Run `/help` as an admin — confirm all three sections appear: user commands, **🎙️ /host**, and **🔧 /admin**
+- [ ] Confirm `/game cancel` description says "Remove your own game suggestion"
+- [ ] Confirm `/library clear` description says "Remove all your own games at once"
+- [ ] Confirm all responses are ephemeral
 
 ---
 
-## 2. `/event` — Event Management
+## 2. `/event` — Event Viewing
 
-### 2a. `/event config` (Admin only)
-
-**What it does:** Sets server-wide defaults used when creating events (location, start/end time, description, announcements channel, and whether event channels are open or RSVP-only).
-
-- [ ] Run `/event config` with no options — confirm it shows current defaults
-- [ ] Set a default location: `/event config location:Library Room 1` — confirm it saves
-- [ ] Set a default start time: `/event config time:7:00 PM` — confirm it saves
-- [ ] Set a default end time: `/event config end_time:10:00 PM` — confirm it saves
-- [ ] Set an announcements channel: `/event config announcements:#announcements` — confirm it saves
-- [ ] Set open channels to true: `/event config open_channels:True` — confirm it saves
-- [ ] Set open channels to false: `/event config open_channels:False` — confirm it saves
-- [ ] Set event category: `/event config event_category:Game Nights` — confirm new events are created under "Game Nights" category instead of "Monthly Events"
-- [ ] Set archive category: `/event config archive_category:Old Events` — confirm archived events move to "Old Events" category instead of "Archive"
-- [ ] Run `/event config` with no options — confirm current values for all fields including category names are displayed
-- [ ] Confirm non-admin gets "Only admins can change event defaults" error
-
-### 2b. `/event create` (Admin only)
-
-**What it does:** Creates a Discord scheduled event, a text channel under the "Monthly Events" category, and posts an RSVP embed in the configured announcements channel.
-
-- [ ] **Confirm non-admin gets "Only admins can schedule events" error** when running `/event create`
-- [ ] Create an event with required fields only: `/event create date:August 22 time:7pm` — confirm:
-  - Discord scheduled event is created in the server
-  - A channel named `monthly-august-22` appears under "Monthly Events"
-  - RSVP embed is posted in the announcements channel
-  - Channel welcome message appears in the event channel
-- [ ] Create an event with all fields: `/event create date:September 5 time:7:00 PM end_time:10:00 PM location:Community Center link:https://maps.google.com description:Bring snacks!`
-- [ ] Confirm date formats work: `aug 22`, `August 22`, `august 22, 2026`
-- [ ] Confirm time formats work: `7pm`, `7:00 PM`, `19:00`
-- [ ] With `open_channels:False` — confirm the new channel is hidden from members not yet RSVP'd
-- [ ] With `open_channels:True` — confirm the new channel is visible to everyone
-
-### 2c. `/event list`
+### 2a. `/event list`
 
 **What it does:** Lists all upcoming (non-cancelled, non-archived) game nights with IDs, dates, times, and RSVP counts.
 
@@ -60,29 +31,7 @@ This document describes every feature in the bot and provides a checklist of tes
 - [ ] With no active events — confirm it shows "No upcoming game nights scheduled"
 - [ ] Confirm the response is ephemeral
 
-### 2d. `/event cancel`
-
-**What it does:** Cancels an event, deletes the Discord scheduled event, removes the RSVP embed, deletes the event channel (and all messages within it), deletes any game card messages that were posted outside the event channel, and purges all game suggestions and library requests for that event from storage.
-
-- [ ] Cancel an event as the creator: `/event cancel id:<event-id>` — confirm event is removed
-- [ ] Cancel an event as an admin (non-creator) — confirm it works
-- [ ] Attempt to cancel as a non-admin, non-creator — confirm "Only the event creator or an admin can cancel this" error
-- [ ] Attempt to cancel with an invalid ID — confirm "No event found" error
-- [ ] Attempt to cancel an already-cancelled event — confirm "already cancelled" error
-- [ ] Cancel an event that has game cards and library requests — confirm the event channel is deleted, all game card messages are gone, and running `/library request` for that event afterwards shows no stale requests
-
-### 2e. `/event archive` (Admin only)
-
-**What it does:** Manually archives channels for all past events that haven't been archived yet. Moves channels to an "Archive" category and posts a lock-date message.
-
-- [ ] Run `/event archive` with no past events — confirm "No past event channels to archive"
-- [ ] Run `/event archive` with a past event — confirm:
-  - Channel moves to "Archive" category
-  - Message posted: "This event has concluded. The channel will become read-only on [date 7 days out]"
-  - Channel remains writable immediately after archiving
-- [ ] Confirm non-admin gets "Only admins can archive events" error
-
-### 2f. Automatic Archiving (Event Completion)
+### 2b. Automatic Archiving (Event Completion)
 
 **What it does:** When a Discord scheduled event is marked as "Completed" by the server, the bot automatically archives the associated channel.
 
@@ -91,7 +40,7 @@ This document describes every feature in the bot and provides a checklist of tes
   - Lock-date message is posted in the channel
   - Channel remains writable for 7 days
 
-### 2g. Delayed Channel Lock
+### 2c. Delayed Channel Lock
 
 **What it does:** 7 days after archiving, the bot locks the channel by setting `SendMessages: false` for everyone.
 
@@ -103,7 +52,7 @@ This document describes every feature in the bot and provides a checklist of tes
   - `locked: true` is saved to `gamenights.json`
 - [ ] Restart the bot with a past-due `lockAt` record — confirm the lock is applied on startup without waiting for the hourly check
 
-### 2h. RSVP Buttons
+### 2d. RSVP Buttons
 
 **What it does:** Members click Going / Maybe / Can't Go on the RSVP embed to update their RSVP status. In RSVP-only mode, Going/Maybe grants access to the event channel.
 
@@ -174,11 +123,10 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3c. `/game cancel`
 
-**What it does:** Removes a game suggestion from the lineup. Only the suggester or a moderator can remove it.
+**What it does:** Removes your own game suggestion from the lineup. Only the person who suggested the game can remove it via this command; hosts can remove any game via `/host game cancel`.
 
 - [ ] Remove your own game suggestion: `/game cancel title:Wingspan` — confirm card is deleted
-- [ ] Attempt to remove another user's suggestion as a regular member — confirm "Only the person who suggested... can remove it" error
-- [ ] Remove another user's suggestion as an admin — confirm it works
+- [ ] Attempt to remove another user's suggestion as a regular member — confirm "Only the person who suggested... can remove it. Ask a host or admin if you need it removed." error
 - [ ] Attempt to cancel a game not in the lineup — confirm "No game called X found" error
 
 ### 3d. Game Card Buttons — Join / Leave
@@ -215,7 +163,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 4a. `/library add`
 
-**What it does:** Adds a game you own to the shared library. Follows a priority order: checks your own library, then the group library, then the BGG catalog. When BGG finds an exact match, shows a confirm prompt before adding so the user can verify it's the right game. If confirmed, BGG details are loaded automatically and no "add details" modal appears.
+**What it does:** Adds a game you own to the shared library. Follows a priority order: checks your own library, then the group library, then the BGG catalog. When BGG finds an exact match, shows a confirm prompt before adding so the user can verify it's the right game.
 
 #### Basic add — already owned
 - [ ] `/library add game:Wingspan` when you already own it — confirm "already in your library" duplicate message
@@ -231,37 +179,30 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Select "None of these — search BGG" — confirm BGG catalog search continues
 
 #### BGG exact match (confirm prompt)
-- [ ] `/library add game:Wingspan` on an empty library — confirm a "Found **Wingspan** on BGG — is that the game?" confirm prompt appears with **Yes** and **No** buttons (game is NOT added yet)
-- [ ] Click **Yes** — confirm game is added with BGG details (players, play time, weight, tags); no "add details" modal appears
+- [ ] `/library add game:Wingspan` on an empty library — confirm a "Found **Wingspan** on BGG — is that the game?" confirm prompt appears
+- [ ] Click **Yes** — confirm game is added with BGG details; no "add details" modal appears
 - [ ] Click **No** — confirm BGG is dismissed and the "add details" modal appears for custom entry
 
 #### BGG multiple matches (select UI)
-- [ ] `/library add game:arkham` — confirm a "which did you mean?" select menu appears listing matches such as Arkham Horror and Arkham Horror: The Card Game
-- [ ] Select a game from the dropdown — confirm "Found **X** on BGG — is that the game?" confirm prompt appears
-- [ ] Confirm **Yes** — confirm game is added with BGG details, no modal
-
-#### Single BGG partial match (confirm/dismiss)
-- [ ] Type a name that produces exactly one token match that differs from the typed name (e.g. `wingsspan`) — confirm a "Found **Wingspan** on BGG" single-match confirm appears
-- [ ] Click **Yes** — confirm added with BGG details
-- [ ] Click **No, add as typed** — confirm added under the original typed name with the "add details" modal
+- [ ] `/library add game:arkham` — confirm a "which did you mean?" select menu appears
+- [ ] Select a game from the dropdown — confirm the BGG confirm prompt appears
+- [ ] Confirm **Yes** — confirm game is added with BGG details
 
 #### No matches anywhere — custom game
-- [ ] `/library add game:My Custom Game` with nothing matching in library or BGG catalog — confirm game is added immediately and the "add details" modal appears
+- [ ] `/library add game:My Custom Game` with nothing matching anywhere — confirm game is added immediately and the "add details" modal appears
 
 ### 4b. `/library remove`
 
-**What it does:** Removes one of your games from the library. Supports fuzzy/partial name matching — if the exact name isn't found, shows a select menu of similar games you own.
+**What it does:** Removes one of your games from the library. Supports fuzzy/partial name matching.
 
 - [ ] `/library remove game:Catan` (exact match) — confirm "Removed **Catan** from your library"
 - [ ] `/library remove game:cat` (partial match for "Catan") — confirm a select menu of matching games appears
-- [ ] `/library remove game:rooty` (partial reverse match — input contains the game name "Root") — confirm "Root" appears in the select menu
 - [ ] Select a game from the partial match menu — confirm it is removed
-- [ ] Select "None of these" from the partial match menu — confirm "No game removed" message
-- [ ] Attempt to remove a game not in your library with no partial matches — confirm "not found" error
+- [ ] Attempt to remove a game not in your library — confirm "not found" error
 
 ### 4c. `/library mine`
 
-**What it does:** Lists all base games you've added to the library. Expansions imported via `/library import bgg` are excluded from this list (they appear in `/library view` under "Expansions in Library" instead).
+**What it does:** Lists all base games you've added to the library. Expansions imported via `/library import bgg` are excluded.
 
 - [ ] Run `/library mine` with games added — confirm all your base games are listed
 - [ ] If you have imported BGG expansions — confirm they do NOT appear in `/library mine`
@@ -269,167 +210,106 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 4d. `/library list`
 
-**What it does:** Shows all base games in the library grouped by game, with all owners listed. Expansions imported via `/library import bgg` are excluded. Games with complexity data show a colored dot (🟢 Light, 🟡 Medium, 🔴 Heavy) and a legend. Paginates with Previous/Next buttons when the library is large.
+**What it does:** Shows all base games in the library grouped by game with all owners listed. Paginates with Previous/Next buttons when large.
 
 - [ ] Run `/library list` — confirm all library base games appear with owners
-- [ ] If you have imported BGG expansions — confirm they do NOT appear in `/library list`
 - [ ] Confirm games with complexity set show 🟢/🟡/🔴 icons before the name
-- [ ] Confirm a legend appears at the bottom explaining icon colors
 - [ ] Games without complexity data should appear without an icon
 - [ ] Run with an empty library — confirm "No games in the library yet"
-- [ ] With a large library (enough to span multiple pages):
-  - [ ] Confirm **← Previous** and **Next →** buttons appear below the embed
+- [ ] With a large library:
+  - [ ] Confirm **← Previous** and **Next →** buttons appear
   - [ ] **← Previous** is disabled on the first page
-  - [ ] Click **Next →** — confirm page 2 is shown with a "Page 2 of N" footer
+  - [ ] Click **Next →** — confirm page 2 is shown
   - [ ] **Next →** is disabled on the last page
-  - [ ] Click **← Previous** from page 2 — confirm you return to page 1
-  - [ ] Run `/library list` again after the session expires — clicking navigation shows "This list has expired" message
 
 ### 4e. `/library view`
 
-**What it does:** Shows full details for a specific game. Lazily enriches from BGG on first view (tags, expansions, weight, complexity, best player count). Complexity links to the matching Discord difficulty role. The "Expansions in Library" field shows only expansions that someone in the guild actually owns (imported via `/library import bgg`) with owner mentions.
+**What it does:** Shows full details for a specific game. Lazily enriches from BGG on first view (tags, expansions, weight, complexity, best player count, how-to-play video, thumbnail).
 
-- [ ] `/library view game:Root` (game with BGG data and owned expansions) — confirm embed shows:
-  - Player range
-  - Best With player count (if available)
-  - Play time
-  - Complexity with a clickable role mention (e.g. @Medium)
-  - Tags
-  - **Expansions in Library** — each owned expansion listed with owner mention (e.g. `Root: The Riverfolk Expansion — @snwns1`)
-- [ ] `/library view game:Wingspan` where no expansions are in the guild library — confirm "Expansions in Library" field shows `*None in library*`
-- [ ] `/library view game:Wingspan` where a game has no BGG expansion data at all — confirm no Expansions field appears
-- [ ] View a game with no BGG data — confirm enrichment runs and data appears on second view
+- [ ] `/library view game:Root` — confirm embed shows player range, best player count, play time, complexity with role mention, tags, Resources field (how-to-play link + BGG files link), thumbnail in top-right, and Powered by BGG logo
+- [ ] View a game with no BGG data — confirm enrichment runs and data appears
 - [ ] View a game where you are an owner — confirm edit footer hint appears
-- [ ] View a game that doesn't exist in the library — confirm "not found" message
+- [ ] View a game that doesn't exist — confirm "not found" message
 
 ### 4f. `/library edit`
 
 **What it does:** Lets you update the details of a game you own (player count, play time, tags, expansions, and complexity).
 
-- [ ] `/library edit game:Wingspan` — confirm the edit modal appears with five fields: Players, Play time, Tags, Expansions You Own, Complexity
+- [ ] `/library edit game:Wingspan` — confirm the edit modal appears
 - [ ] Update player range, save — confirm updated values appear in `/library view`
-- [ ] Set Complexity to `Medium` — confirm 🟡 icon appears next to the game in `/library list`
+- [ ] Set Complexity to `Medium` — confirm 🟡 icon appears in `/library list`
 - [ ] Set Complexity to `light` (lowercase) — confirm it is accepted and normalized to `Light`
 - [ ] Set Complexity to an invalid value (e.g. `Extreme`) — confirm a warning is shown and the previous value is kept
-- [ ] Leave Complexity blank — confirm existing complexity is preserved
 - [ ] Attempt to edit a game you don't own — confirm permission error
 
 ### 4g. `/library clear`
 
-**What it does:** Removes all games you've added in one action.
+**What it does:** Removes all of your own games from the library. Self-only — cannot target another user. Admins can clear another user's library via `/admin library clear`.
 
-- [ ] Run `/library clear` — confirm all your games are removed (verify with `/library mine`)
-- [ ] Run with no games in your library — confirm appropriate message
+- [ ] Run `/library clear` — confirm all your own games are removed (verify with `/library mine`)
+- [ ] Run with no games in your library — confirm "You have no games in the library to remove"
+- [ ] Confirm a regular user cannot clear another user's library via this command
 
 ### 4h. `/library request`
 
-**What it does:** Requests a specific game be brought to an event. When run inside an event channel it targets that specific event; when run elsewhere it targets the soonest upcoming event. If the game has expansions in the guild library, shows a copy preference select before submitting. Appears in the event's request pin. When a game isn't in the library, the BGG catalog is used to improve the error message.
+**What it does:** Requests a specific game be brought to an event.
 
 #### Basic request (no expansions in library)
-- [ ] `/library request game:Catan` from a non-event channel — confirm request targets the **soonest** upcoming event and the public confirmation names that event's date and the owner(s)
-- [ ] `/library request game:Catan` from **inside** a specific event channel — confirm request targets **that event**, not the nearest one
-- [ ] Request the same game twice for the same event — confirm duplicate is blocked
-- [ ] Request with a slight punctuation variant (e.g. `Wonderlands War` when library has `Wonderland's War`) — confirm the partial-match picker appears
-- [ ] Request a game that exists in the BGG catalog but isn't in the library — confirm error message says "isn't in the group library yet — ask someone who owns it to add it with `/library add`"
-- [ ] None of the game's owners are RSVP'd to the event — confirm "None of the owners are attending" error
+- [ ] `/library request game:Catan` from a non-event channel — confirm request targets the soonest upcoming event
+- [ ] `/library request game:Catan` from inside a specific event channel — confirm request targets that event
+- [ ] Request the same game twice — confirm duplicate is blocked
+- [ ] None of the game's owners are RSVP'd — confirm "None of the owners are attending" error
 
 #### Request with expansion copy select
-- [ ] Request a game where at least one attending owner has expansions in the guild library (imported via `/library import bgg`) — confirm an **ephemeral** "Which copy would you like?" select appears with:
-  - One option per attending owner: `{DisplayName}'s copy` with description listing their expansions (or "Base game only" if they have none)
-  - `Bot decides` option with description "Spread game-bringing load evenly among attending owners"
-- [ ] Select a specific owner's copy — confirm the public announcement includes "— bringing: @owner"
-- [ ] Select **Bot decides** — confirm the bot assigns the owner with fewest confirmed bring assignments for that event; public announcement shows that owner
-- [ ] With multiple attending owners who have identical expansion sets — confirm **Bot decides** picks the one with fewer brings already confirmed
-- [ ] Request a game where attending owners own the base game but NONE have expansions in the library — confirm the copy select does NOT appear; request goes through immediately
+- [ ] Request a game where at least one attending owner has expansions — confirm "Which copy would you like?" select appears
+- [ ] Select a specific owner's copy — confirm announcement includes "— bringing: @owner"
+- [ ] Select **Bot decides** — confirm the bot assigns the owner with fewest confirmed brings
 
 ### 4i. `/library unrequest`
 
-**What it does:** Cancels your game request for an event.
+**What it does:** Cancels your own game requests for an event. Self-only — shows only your own requests. Hosts can remove any request via `/host library unrequest`.
 
-- [ ] `/library unrequest game:Catan` — confirm request is removed from the pin
-- [ ] Attempt to unrequest a game you didn't request — confirm error
+- [ ] Run `/library unrequest` inside an event channel — confirm only your own requests appear in the select menu
+- [ ] Select a request and remove it — confirm it disappears from the request pin
+- [ ] Run `/library unrequest` with no personal requests — confirm "You haven't requested any games for this event"
+- [ ] Run from outside an event channel — confirm event picker appears; selecting an event shows your requests for that event only
+- [ ] Confirm regular users cannot see or remove other users' requests via this command
 
 ### 4j. `/library bring`
 
-**What it does:** Shows which of your library games have been requested for upcoming events. Only shows requests where you are the preferred owner (or where no preference was set). When run with `game:<name>`, confirms you're bringing that game and shows which expansions to include — it marks the request with ✅ in the request pin.
+**What it does:** Shows which of your library games have been requested for upcoming events, or confirms you're bringing a game.
 
-#### Viewing requested games
-- [ ] Add a game to your library, have another user request it via `/library request` (selecting your copy)
-- [ ] Run `/library bring` — confirm the requested game appears in the list
-- [ ] If you own expansions for the game — confirm they appear in the list entry (e.g. `• **Root** (with Riverfolk Expansion, Clockwork Expansion)`)
-- [ ] If another owner was selected as the preferred owner — confirm the game does NOT appear in your bring list
-- [ ] Run `/library bring` when none of your games are requested — confirm "None of your games have been requested" message
-- [ ] Run `/library bring` inside a specific event channel — confirm only requests for that event are shown
-- [ ] Run `/library bring` outside an event channel — confirm requests are grouped across all upcoming events
-
-#### Confirming you're bringing a game
-- [ ] Run `/library bring game:Root` (where Root is in your library, has been requested with your copy preferred, and you own expansions) — confirm success message includes expansion list (e.g. `✅ Got it — you're confirmed to bring **Root** (with Riverfolk Expansion) to the event on [date]!`)
-- [ ] Run `/library bring game:Wingspan` (no expansions in library) — confirm standard success message with no expansion note
-- [ ] Click Confirm — confirm the request pin in the event channel now shows ✅ next to the game name
-- [ ] Run `/library bring game:Wingspan` when the game hasn't been requested — confirm "That game hasn't been requested" error
-- [ ] Run `/library bring game:Wingspan` when Wingspan is NOT in your library — confirm "You don't own that game" error
+- [ ] Run `/library bring` — confirm only your games that have been requested appear
+- [ ] Run `/library bring game:Root` (where Root is requested with your copy preferred) — confirm success message with expansion list
+- [ ] Click Confirm — confirm ✅ appears next to the game in the event's request pin
+- [ ] Run with a game that hasn't been requested — confirm "That game hasn't been requested" error
 
 ### 4k. `/library import`
 
 #### `/library import bgg`
 
-**What it does:** Imports all owned games AND expansions from your linked BoardGameGeek collection. Base games are added as regular library entries. Expansions are added with an `isExpansion` flag — they appear in `/library view` under "Expansions in Library" but are excluded from `/library list` and `/library mine`. Requires a linked BGG account (`/bgg link`).
+**What it does:** Imports all owned games and expansions from your linked BoardGameGeek collection.
 
-- [ ] Run `/library import bgg` without a linked BGG account — confirm "You don't have a BoardGameGeek account linked" error
-- [ ] Run `/library import bgg` with a linked account — confirm:
-  - Progress message "Fetching your BoardGameGeek collection…" appears
-  - On success: "BoardGameGeek import complete — **X** games added, **Y** expansions added, **Z** already in your library"
-  - Games from your BGG "owned" collection are added to the library
-  - Expansions from your BGG collection are also added (if any are marked as owned)
-- [ ] After import, run `/library mine` — confirm only base games appear, not expansions
-- [ ] After import, run `/library list` — confirm only base games appear
-- [ ] After import, run `/library view game:Root` (or another game with owned expansions) — confirm "Expansions in Library" shows your imported expansions with your mention
-- [ ] Run `/library import bgg` a second time — confirm all entries show as "already in your library" (no duplicates)
+- [ ] Run without a linked BGG account — confirm "You don't have a BoardGameGeek account linked" error
+- [ ] Run with a linked account — confirm success message with game/expansion counts
+- [ ] Run a second time — confirm all entries show as "already in your library" (no duplicates)
 
-#### `/library import csv` (Admin only)
+#### `/library import csv`
 
-**What it does:** Bulk-imports games from a CSV file. Reads columns: game name, owner Discord ID, BGG ID, player counts, play time, BGG best players (`bggbestplayers`), and weight (`avgweight`).
+**What it does:** Bulk-imports games from a CSV file. Available to any server member.
 
-- [ ] Run `/library import csv` with a valid CSV — confirm games are added to the library
-- [ ] Confirm `bestPlayers` is populated from the `bggbestplayers` column
-- [ ] Confirm `complexity` is derived from the `avgweight` column (≤2.0 = Light, ≤3.5 = Medium, >3.5 = Heavy)
+- [ ] Run `/library import csv` with a valid CSV — confirm games are added
 - [ ] Run with malformed CSV — confirm appropriate error message
-- [ ] Confirm non-admin gets a permission error
 
 ### 4l. `/library search`
 
-**What it does:** Searches the library with filters. Results are sorted by proximity to the searched player count (using BGG best-at data), or alphabetically if no player count is given. Footer always states the sort method.
+**What it does:** Searches the library with filters for player count, tags, duration, and complexity.
 
-#### Player count filter
-- [ ] `/library search players:4` — confirm results include games supporting 4 players
-- [ ] Confirm results are sorted by "best at" player count proximity, with `best: Xp` in each result's meta line
-- [ ] Footer shows "Sorted by closest to 4 players (by best player count)"
-- [ ] `/library search players:2,4` — confirm multi-value search (comma-separated) works
-- [ ] A game best at 6 but supporting 2–6 should appear lower than a game best at 2 or 4
-
-#### Tag filter
+- [ ] `/library search players:4` — confirm results include games supporting 4 players, sorted by proximity to 4
 - [ ] `/library search tag:Co-op` — confirm only Co-op tagged games appear
-- [ ] `/library search tag:Co-op tag2:Deck Building` — confirm OR logic (games matching either tag appear)
-- [ ] Add a third tag with `tag3` — confirm OR logic across all three
-
-#### Duration filter
-- [ ] `/library search duration:60` — confirm games within ±15 min of 60 minutes appear
-- [ ] Footer or result note mentions ±15 min fuzzy range was applied
-- [ ] `/library search min_duration:30 max_duration:90` — confirm only games in that exact range appear
-- [ ] `/library search min_duration:60` — confirm only games 60 min or longer appear
-
-#### Complexity filter
 - [ ] `/library search complexity:Light` — confirm only Light games appear
-- [ ] `/library search complexity:Medium` and `complexity:Heavy` — same check
-
-#### Combined filters
-- [ ] Combine player count + tag + duration — confirm all filters apply together
+- [ ] Combine filters — confirm all filters apply together
 - [ ] Search with no matches — confirm "No games matched your filters"
-
-#### Sort and result display
-- [ ] Run a search without player count — confirm footer says "Sorted alphabetically"
-- [ ] Run a search with player count — confirm footer says "Sorted by closest to X players (by best player count)"
-- [ ] Trigger truncation by searching with very broad filters — confirm footer adds "Add more filters to narrow results"
 
 ### 4m. `/library random`
 
@@ -437,10 +317,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 - [ ] `/library random` with no filters — confirm 3 random games are shown
 - [ ] `/library random tag:Co-op` — confirm all 3 results are Co-op tagged
-- [ ] `/library random complexity:Light` — confirm all results are Light complexity
-- [ ] `/library random tag:Strategy tag2:Economic` — confirm OR logic works
-- [ ] Run multiple times — confirm different results each time (Fisher-Yates shuffle)
-- [ ] Run with filters that match fewer than 3 games — confirm fewer than 3 results are shown
+- [ ] Run multiple times — confirm different results each time
 
 ---
 
@@ -449,114 +326,215 @@ All `/game` commands should be used inside an active event channel unless otherw
 **What it does:** A 2-step interactive flow for members to set their difficulty preference and up to 5 genre tags. Roles are updated on Save.
 
 ### Prerequisites
-- [ ] At least one game tag must exist (run `/gametags sync` first)
+- [ ] At least one game tag must exist (run `/admin tags sync` first)
 
 ### Test Cases
 
 - [ ] Run `/myroles` — confirm Step 1 (difficulty) embed appears with difficulty buttons
-- [ ] Click a difficulty button (e.g. Light) — confirm it highlights in green and updates the embed
-- [ ] Click the same difficulty again — confirm it deselects (toggle behavior)
-- [ ] Click a different difficulty — confirm the previous one deselects (only one difficulty allowed at a time)
-- [ ] Click **Next: Pick Genres →** — confirm Step 2 (genre) embed appears showing your difficulty selection
-- [ ] Click **← Difficulty** — confirm you return to Step 1 with selections intact
+- [ ] Click a difficulty button (e.g. Light) — confirm it highlights and updates the embed
+- [ ] Click **Next: Pick Genres →** — confirm Step 2 (genre) embed appears
 - [ ] Select up to 5 genre tags — confirm they highlight green
-- [ ] Attempt to select a 6th genre — confirm the extra buttons are disabled and the label shows "limit reached"
-- [ ] Deselect a genre — confirm other buttons become active again
-- [ ] If tags span multiple pages — confirm **Next →** and **← Back** pagination buttons appear
-- [ ] Navigate pages and select tags from different pages — confirm all selections are retained
-- [ ] Click **Save** — confirm:
-  - A "Game Preferences Saved!" embed appears showing selected difficulty and genres
-  - Member's roles in the server are updated accordingly
+- [ ] Attempt to select a 6th genre — confirm buttons are disabled ("limit reached")
+- [ ] Click **Save** — confirm roles are updated in the server
 - [ ] Run `/myroles` again after saving — confirm existing roles are pre-selected
 
 ---
 
-## 6. `/gametags` — Tag Management (Admin only)
+## 6. `/bgg` — BGG Account Linking
 
-**What it does:** Admins manage the library of game genre and difficulty tags, which also creates corresponding Discord roles.
+**What it does:** Lets members link their BoardGameGeek username to their Discord account on this server.
 
-- [ ] Confirm all `/gametags` subcommands return "Only admins can manage game tags" for non-admins
+### 6a. `/bgg link`
+- [ ] Run `/bgg link username:validuser` — confirm BGG API validates and success embed appears with "Powered by BGG" logo
+- [ ] Run `/bgg link username:nonexistentuser` — confirm "We couldn't verify that BoardGameGeek account" message
+- [ ] Run with same username already linked — confirm "already linked" message
 
-### 6a. `/gametags add`
-- [ ] `/gametags add name:Puzzle` — confirm Discord role is created and tag is saved
-- [ ] `/gametags add name:Puzzle color:Red` — confirm role is created with the selected color
-- [ ] `/gametags add name:Hard type:Difficulty` — confirm role is created with `difficulty` type
+### 6b. `/bgg unlink`
+- [ ] Run after linking — confirm account is removed
+- [ ] Run with no account linked — confirm "You don't have a BGG account linked" message
+
+### 6c. `/bgg profile`
+- [ ] Run after linking — confirm embed shows linked username, BGG profile link, and linked date
+- [ ] Run with no account linked — confirm helpful error with hint to use `/bgg link`
+
+---
+
+## 7. `/host` — Host Commands (Manage Events permission required)
+
+**What it does:** Provides elevated event and moderation commands to members with the Host role (or Manage Events permission). Non-hosts should not see these commands in the Discord command picker.
+
+- [ ] Confirm `/host` commands are **not visible** in the command picker for regular members
+- [ ] Confirm `/host` commands **are visible** for members with the Host or Admin role
+
+### 7a. `/host event create`
+
+**What it does:** Creates a Discord scheduled event, a text channel, and posts an RSVP embed in the configured announcements channel.
+
+- [ ] Create an event with required fields only: `/host event create date:August 22 time:7pm` — confirm:
+  - Discord scheduled event is created
+  - A channel named `monthly-august-22` appears under "Monthly Events"
+  - RSVP embed is posted in the announcements channel
+- [ ] Create an event with all fields (end_time, location, link, description) — confirm all appear in the embed
+- [ ] Confirm date formats work: `aug 22`, `August 22`, `august 22, 2026`
+- [ ] Confirm time formats work: `7pm`, `7:00 PM`, `19:00`
+
+### 7b. `/host event cancel`
+
+**What it does:** Cancels a game night, deletes the Discord scheduled event, removes the RSVP embed, and cleans up the event channel.
+
+- [ ] Cancel an event as the creator: `/host event cancel id:<event-id>` — confirm event is removed
+- [ ] Cancel an event as a host (non-creator) — confirm it works
+- [ ] Attempt to cancel with an invalid ID — confirm "No event found" error
+- [ ] Attempt to cancel an already-cancelled event — confirm "already cancelled" error
+
+### 7c. `/host event archive`
+
+**What it does:** Manually archives channels for all past events that haven't been archived yet.
+
+- [ ] Run `/host event archive` with no past events — confirm "No past event channels to archive"
+- [ ] Run with a past event — confirm channel moves to "Archive" category and a lock-date message is posted
+
+### 7d. `/host game cancel`
+
+**What it does:** Removes any game from the event lineup regardless of who suggested it.
+
+- [ ] Remove another user's game: `/host game cancel title:Wingspan` — confirm card is deleted
+- [ ] Attempt to cancel a game not in the lineup — confirm "No game called X found" error
+
+### 7e. `/host library unrequest`
+
+**What it does:** Shows all game requests for an event (not just the host's own) and allows removing any of them.
+
+- [ ] Run inside an event channel — confirm ALL game requests appear (not just yours)
+- [ ] Remove another user's request — confirm it disappears from the request pin
+- [ ] Run with no requests — confirm "No games have been requested for this event"
+- [ ] Run from outside an event channel — confirm event picker appears; selecting an event shows all requests
+
+---
+
+## 8. `/admin` — Admin Commands (Manage Guild permission required)
+
+**What it does:** Provides server configuration commands to members with the Admin role (or Manage Guild permission). Non-admins should not see these commands in the Discord command picker.
+
+- [ ] Confirm `/admin` commands are **not visible** in the command picker for regular members and hosts
+- [ ] Confirm `/admin` commands **are visible** for members with the Admin role
+
+### 8a. `/admin event config`
+
+**What it does:** Sets server-wide defaults used when hosts create new events.
+
+- [ ] Run `/admin event config` with no options — confirm it shows current defaults
+- [ ] Set a default location: `/admin event config location:Library Room 1` — confirm it saves
+- [ ] Set a default start time: `/admin event config time:7:00 PM` — confirm it saves
+- [ ] Set an announcements channel: `/admin event config announcements:#announcements` — confirm it saves
+- [ ] Set open channels to true/false — confirm it saves and new events respect the setting
+- [ ] Set event category and archive category — confirm new events and archives use the correct category
+
+### 8b. `/admin library clear`
+
+**What it does:** Clears all library entries for a specified server member. Admin-only — use for moderation or cleanup.
+
+- [ ] Run `/admin library clear user:@SomeMember` — confirm all their games are removed
+- [ ] Run for a user with no library entries — confirm appropriate message
+
+### 8c. `/admin library sync`
+
+**What it does:** Force re-fetches a game's data from BoardGameGeek, overwriting cached BGG fields (thumbnail, how-to-play video, expansions, best player count).
+
+- [ ] Run `/admin library sync game:Wingspan` — confirm updated embed shows with "✅ synced from BoardGameGeek" message
+- [ ] Run with a game name that doesn't exist in the library — confirm "not found" error with partial match suggestions
+- [ ] Run for a game with no BGG ID — confirm "no BGG ID — nothing to sync" error
+
+### 8d. `/admin tags add`
+
+**What it does:** Creates a new game genre or difficulty tag and its corresponding Discord role.
+
+- [ ] `/admin tags add name:Puzzle` — confirm Discord role is created and tag is saved
+- [ ] `/admin tags add name:Puzzle color:Red` — confirm role is created with the selected color (use autocomplete)
+- [ ] `/admin tags add name:Hard type:Difficulty` — confirm role is created with difficulty type
 - [ ] Add a tag with a duplicate name — confirm "already exists" error
-- [ ] Color autocomplete: typing in the color field should show a list of named colors
 
-### 6b. `/gametags remove`
-- [ ] `/gametags remove name:Puzzle` — confirm Discord role is deleted and tag is removed
-- [ ] Attempt to remove a non-existent tag — confirm "No tag named X found" error
+### 8e. `/admin tags remove`
 
-### 6c. `/gametags list`
-- [ ] Run `/gametags list` — confirm all tags appear grouped by Difficulty and Genre
+**What it does:** Deletes a game tag and its Discord role.
+
+- [ ] `/admin tags remove name:Puzzle` — confirm Discord role is deleted and tag is removed
+- [ ] Attempt to remove a non-existent tag — confirm "No tag named X found. Use `/admin tags list`" error
+
+### 8f. `/admin tags list`
+
+**What it does:** Lists all current game genre and difficulty tags.
+
+- [ ] Run `/admin tags list` — confirm all tags appear grouped by Difficulty and Genre
 - [ ] Run with no tags set up — confirm "No game tags set up yet"
 
-### 6d. `/gametags sync`
-- [ ] Run `/gametags sync` on a fresh server — confirm all built-in genre tags and 3 difficulty roles (Light, Medium, Heavy) are created
-- [ ] Run again — confirm "already existed" for all tags and no duplicates are created
-- [ ] Partially remove some tags, then sync — confirm only the missing ones are re-created
+### 8g. `/admin tags sync`
 
-### 6e. `/gametags clear`
-- [ ] Run `/gametags clear` — confirm all tag roles are deleted from Discord and the tag list is cleared
+**What it does:** Creates Discord roles for all built-in game tags and difficulty levels (skips any that already exist).
+
+- [ ] Run `/admin tags sync` on a fresh server — confirm all built-in genre tags and difficulty roles (Light, Medium, Heavy) are created
+- [ ] Run again — confirm "already existed" for all and no duplicates
+
+### 8h. `/admin tags clear`
+
+**What it does:** Removes all game tags and their Discord roles from the server.
+
+- [ ] Run `/admin tags clear` — confirm all tag roles are deleted and the tag list is cleared
 - [ ] Run with no tags set up — confirm "No game tags to remove"
+- [ ] Confirm the action suggests using `/admin tags sync` to recreate them
 
----
+### 8i. `/admin welcome config`
 
-## 7. `/welcome` — Welcome Message (Admin only)
+**What it does:** Sets the welcome channel, rules channel, and Facebook group URL for the automatic welcome message.
 
-**What it does:** Sends a welcome DM and a channel message when new members join. Admins can configure the channel, rules link, and Facebook URL.
-
-- [ ] Confirm all `/welcome` subcommands return a permission error for non-admins
-
-### 7a. `/welcome config`
 - [ ] Run with no options — confirm current config is displayed
-- [ ] Set channel: `/welcome config channel:#welcome`
-- [ ] Set rules channel: `/welcome config rules_channel:#rules`
-- [ ] Set Facebook URL: `/welcome config facebook_url:https://facebook.com/groups/...`
+- [ ] Set channel: `/admin welcome config channel:#welcome`
+- [ ] Set rules channel: `/admin welcome config rules_channel:#rules`
+- [ ] Set Facebook URL: `/admin welcome config facebook_url:https://facebook.com/groups/...`
 - [ ] Confirm all three values persist after setting them
 
-### 7b. `/welcome test`
-- [ ] Run `/welcome test` — confirm:
-  - Welcome message appears in the configured welcome channel
-  - A DM is sent to you with the welcome message
-  - Message includes a link to the rules channel and Facebook group (if configured)
+### 8j. `/admin welcome test`
 
-### 7c. `/welcome greet`
-- [ ] `/welcome greet member:@SomeUser` — confirm the welcome message is sent to that user's DMs and posted in the welcome channel
+**What it does:** Sends the welcome message to yourself as a preview.
 
-### 7d. Automatic Welcome (New Member Join)
+- [ ] Run `/admin welcome test` — confirm welcome message appears in the welcome channel and a DM is sent
+
+### 8k. `/admin welcome greet`
+
+**What it does:** Manually sends the welcome message to a specific server member.
+
+- [ ] `/admin welcome greet member:@SomeUser` — confirm welcome message is sent to that user's DMs and posted in the welcome channel
+
+---
+
+## 9. Server Setup — Auto Role Creation (`guildCreate`)
+
+**What it does:** When the bot is added to a new server, it automatically creates two Discord roles — **Admin** (red, with ManageGuild/ManageEvents/ManageRoles/ManageMessages/ManageChannels) and **Host** (blue, with ManageEvents/ManageMessages) — so the server owner can immediately assign the right people without manually creating roles.
+
+- [ ] Add the bot to a brand-new test server — confirm two roles appear: **Admin** (red) and **Host** (blue)
+- [ ] Confirm the **Admin** role has at minimum: Manage Server, Manage Events, Manage Roles, Manage Messages, Manage Channels
+- [ ] Confirm the **Host** role has at minimum: Manage Events, Manage Messages
+- [ ] Check `bot.log` — confirm `[GuildCreate] Created "Admin" role in <server>` and `[GuildCreate] Created "Host" role in <server>` lines appear
+- [ ] Remove the bot and re-add it to a server where the Admin and Host roles already exist — confirm `[GuildCreate] "Admin" role already exists — skipping` and same for Host; no duplicate roles created
+- [ ] Assign the **Host** role to a test member — confirm they can see `/host` commands but not `/admin` commands
+- [ ] Assign the **Admin** role to a test member — confirm they can see both `/admin` and `/host` commands
+
+---
+
+## 10. Automatic Welcome (New Member Join)
+
+**What it does:** When a new member joins the server, the bot sends a welcome DM and posts a message in the configured welcome channel.
+
 - [ ] Have a user join the server — confirm the welcome message is automatically sent to the welcome channel and to the new member via DM
+- [ ] Confirm the message includes a link to the rules channel and Facebook group (if configured via `/admin welcome config`)
 
 ---
 
-## 8. `/bgg` — BGG Account Linking
-
-**What it does:** Lets members link their BoardGameGeek username to their account on this server. The username is validated against the BGG API before saving. No password is stored.
-
-### 8a. `/bgg link`
-- [ ] Run `/bgg link username:validuser` — confirm BGG API validates the account and a success embed appears showing the linked username with a BGG profile link and "Powered by BGG" footer
-- [ ] Run `/bgg link username:nonexistentuser` — confirm "We couldn't verify that BoardGameGeek account" message
-- [ ] Run `/bgg link` with the same username already linked — confirm "already linked" message with no API call made
-- [ ] Run `/bgg link` twice rapidly with a different username — confirm cooldown message with seconds remaining on second attempt
-- [ ] Run `/bgg link` twice with different valid usernames — confirm the second link shows "BoardGameGeek Account Updated" with old → new username
-- [ ] Simulate BGG being unreachable — confirm "We couldn't verify that BoardGameGeek account" message
-
-### 8b. `/bgg unlink`
-- [ ] Run `/bgg unlink` after linking — confirm account is removed and success message shown
-- [ ] Run `/bgg unlink` with no account linked — confirm "You don't have a BGG account linked" message
-
-### 8c. `/bgg profile`
-- [ ] Run `/bgg profile` after linking — confirm embed shows linked username, BGG profile link, linked date, and "Powered by BGG" footer
-- [ ] Run `/bgg profile` with no account linked — confirm "You don't have a BGG account linked" message with hint to use `/bgg link`
-
----
-
-## 9. Edge Cases and Error Handling
+## 11. Edge Cases and Error Handling
 
 - [ ] Run any command in a DM (outside a server) — confirm graceful failure
 - [ ] Run `/game suggest` in a channel with no active event and no upcoming events — confirm "There are no upcoming events" message
 - [ ] Attempt to RSVP to a cancelled event — confirm the embed is removed or no longer responds
 - [ ] Suggest a game when the event's channel has been archived — confirm "no longer active" message
-- [ ] Verify bot handles BGG being unreachable — confirm that if the local BGG catalog has matches, a catalog-sourced select menu appears instead of going straight to manual entry; if no catalog match, manual entry fallback appears
+- [ ] Verify bot handles BGG being unreachable — confirm graceful fallback to local catalog or manual entry
 - [ ] Confirm all ephemeral responses are only visible to the invoking user

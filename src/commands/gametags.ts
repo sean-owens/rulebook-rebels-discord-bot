@@ -1,4 +1,4 @@
-import { AutocompleteInteraction, ChatInputCommandInteraction, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
+import { AutocompleteInteraction, ChatInputCommandInteraction } from 'discord.js';
 import { GENRE_TAG_DEFINITIONS, DIFFICULTY_TAG_DEFINITIONS } from '../utils/tagDefinitions';
 
 const COLOR_PALETTE = [
@@ -20,45 +20,6 @@ const COLOR_PALETTE = [
 ];
 import { getGameRoles, addGameRole, removeGameRole, clearGameRoles } from '../utils/gameRoles';
 
-export const data = new SlashCommandBuilder()
-  .setName('gametags')
-  .setDescription('Manage game genre tags that members can assign to themselves (admin only)')
-  .addSubcommand(sub =>
-    sub
-      .setName('add')
-      .setDescription('Create a new game genre tag')
-      .addStringOption(opt =>
-        opt.setName('name').setDescription('Tag name (e.g. "Trick-Taking", "Euro", "Strategy")').setRequired(true)
-      )
-      .addStringOption(opt =>
-        opt.setName('color').setDescription('Role color — pick from the list or type a hex code (e.g. #5865F2)').setRequired(false).setAutocomplete(true)
-      )
-      .addStringOption(opt =>
-        opt.setName('type').setDescription('Role type (default: genre)').setRequired(false)
-          .addChoices(
-            { name: 'Genre', value: 'genre' },
-            { name: 'Difficulty', value: 'difficulty' },
-          )
-      )
-  )
-  .addSubcommand(sub =>
-    sub
-      .setName('remove')
-      .setDescription('Delete a game genre tag')
-      .addStringOption(opt =>
-        opt.setName('name').setDescription('Exact tag name to remove (use /gametags list to see names)').setRequired(true)
-      )
-  )
-  .addSubcommand(sub =>
-    sub.setName('list').setDescription('List all current game genre tags')
-  )
-  .addSubcommand(sub =>
-    sub.setName('sync').setDescription('Create server roles for all built-in game tags at once (skips existing)')
-  )
-  .addSubcommand(sub =>
-    sub.setName('clear').setDescription('Remove all game tags and their Discord roles from this server (admin only)')
-  );
-
 export async function handleAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
   const focused = interaction.options.getFocused().toLowerCase();
   const matches = COLOR_PALETTE
@@ -68,22 +29,7 @@ export async function handleAutocomplete(interaction: AutocompleteInteraction): 
   await interaction.respond(matches);
 }
 
-export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
-  const isAdmin = interaction.memberPermissions?.has(PermissionFlagsBits.ManageRoles) ?? false;
-  if (!isAdmin) {
-    await interaction.reply({ content: 'Only admins can manage game tags.', ephemeral: true });
-    return;
-  }
-
-  const sub = interaction.options.getSubcommand();
-  if (sub === 'add') await handleAdd(interaction);
-  else if (sub === 'remove') await handleRemove(interaction);
-  else if (sub === 'list') await handleList(interaction);
-  else if (sub === 'sync') await handleSync(interaction);
-  else if (sub === 'clear') await handleClear(interaction);
-}
-
-async function handleAdd(interaction: ChatInputCommandInteraction): Promise<void> {
+export async function handleAdd(interaction: ChatInputCommandInteraction): Promise<void> {
   const name = interaction.options.getString('name', true).trim();
   const colorStr = interaction.options.getString('color') ?? '#5865F2';
   const colorNum = parseInt(colorStr.replace('#', ''), 16);
@@ -108,13 +54,13 @@ async function handleAdd(interaction: ChatInputCommandInteraction): Promise<void
   await interaction.editReply(`Tag **${name}** created! Members can select it with \`/myroles\`.`);
 }
 
-async function handleRemove(interaction: ChatInputCommandInteraction): Promise<void> {
+export async function handleRemove(interaction: ChatInputCommandInteraction): Promise<void> {
   const name = interaction.options.getString('name', true).trim();
   const tags = getGameRoles(interaction.guildId!);
   const tag = tags.find(r => r.name.toLowerCase() === name.toLowerCase());
 
   if (!tag) {
-    await interaction.reply({ content: `No tag named **${name}** found. Use \`/gametags list\` to see available tags.`, ephemeral: true });
+    await interaction.reply({ content: `No tag named **${name}** found. Use \`/admin tags list\` to see available tags.`, ephemeral: true });
     return;
   }
 
@@ -131,7 +77,7 @@ async function handleRemove(interaction: ChatInputCommandInteraction): Promise<v
   await interaction.editReply(`Tag **${name}** removed.`);
 }
 
-async function handleSync(interaction: ChatInputCommandInteraction): Promise<void> {
+export async function handleSync(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
 
   const existing = getGameRoles(interaction.guildId!);
@@ -189,7 +135,7 @@ async function handleSync(interaction: ChatInputCommandInteraction): Promise<voi
   await interaction.editReply(`Sync complete — ${parts.join(', ')}. Members can assign these with \`/myroles\`.`);
 }
 
-async function handleList(interaction: ChatInputCommandInteraction): Promise<void> {
+export async function handleList(interaction: ChatInputCommandInteraction): Promise<void> {
   const tags = getGameRoles(interaction.guildId!);
 
   if (tags.length === 0) {
@@ -212,7 +158,7 @@ async function handleList(interaction: ChatInputCommandInteraction): Promise<voi
   await interaction.reply({ content: lines.join('\n'), ephemeral: true });
 }
 
-async function handleClear(interaction: ChatInputCommandInteraction): Promise<void> {
+export async function handleClear(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
 
   const removed = clearGameRoles(interaction.guildId!);
@@ -232,5 +178,5 @@ async function handleClear(interaction: ChatInputCommandInteraction): Promise<vo
     }
   }
 
-  await interaction.editReply(`Cleared **${deleted}** game tag role${deleted !== 1 ? 's' : ''}. Use \`/gametags sync\` to recreate them.`);
+  await interaction.editReply(`Cleared **${deleted}** game tag role${deleted !== 1 ? 's' : ''}. Use \`/admin tags sync\` to recreate them.`);
 }
