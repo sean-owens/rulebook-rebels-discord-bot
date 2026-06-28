@@ -88,6 +88,29 @@ async function fetchXML(url: string): Promise<string> {
   return res.text();
 }
 
+interface BGGVideoEntry {
+  username: string;
+  url: string;
+  numRecommend: number;
+}
+
+async function fetchBGGVideos(bggId: string): Promise<BGGVideoEntry[]> {
+  const url = `https://api.geekdo.com/api/videos?objectid=${bggId}&objecttype=thing&sort=hot&showcount=25&start=0&gallery=instructional`;
+  const res = await fetch(url, { headers: { ...bggHeaders(), Accept: 'application/json' } });
+  if (!res.ok) return [];
+  const json = await res.json() as { videos?: any[] };
+  const videos: any[] = json.videos ?? [];
+  return videos
+    .filter((v) => v.videohost && v.extvideoid)
+    .map((v) => ({
+      username: String(v.user?.username ?? '').toLowerCase(),
+      url: v.videohost === 'youtube'
+        ? `https://www.youtube.com/watch?v=${v.extvideoid}`
+        : `https://vimeo.com/${v.extvideoid}`,
+      numRecommend: Number(v.numrecommend ?? 0),
+    }));
+}
+
 export async function searchBGG(query: string): Promise<BGGSearchResult[]> {
   const url = `https://boardgamegeek.com/xmlapi2/search?query=${encodeURIComponent(query)}&type=boardgame`;
   const xml = await fetchXML(url);
@@ -96,7 +119,7 @@ export async function searchBGG(query: string): Promise<BGGSearchResult[]> {
   const raw = parsed?.items?.item ?? [];
   const items: any[] = Array.isArray(raw) ? raw : [raw];
 
-  return items.slice(0, 5).map((item) => {
+  return items.slice(0, 10).map((item) => {
     const names: any[] = Array.isArray(item.name) ? item.name : [item.name];
     const primary = names.find((n) => n['@_type'] === 'primary');
     return {
@@ -322,18 +345,10 @@ export async function validateBggUser(username: string): Promise<BGGUser | null>
   return promise;
 }
 
-export async function getBGGGame(id: string, trustedUploaders: string[] = []): Promise<BGGGame> {
-  const url = `https://boardgamegeek.com/xmlapi2/thing?id=${id}&stats=1&videos=1`;
-  const xml = await fetchXML(url);
-  const parsed = parser.parse(xml);
-
-  const item = parsed?.items?.item;
-  if (!item) throw new Error(`BGG game ${id} not found`);
-
+function parseBGGItem(item: any, id: string): Omit<BGGGame, 'howToPlayUrl'> {
   const names: any[] = Array.isArray(item.name) ? item.name : [item.name];
   const primaryName = names.find((n) => n['@_type'] === 'primary')?.['@_value'] ?? 'Unknown';
 
-  // Best player count from community poll
   const polls: any[] = Array.isArray(item.poll) ? item.poll : item.poll ? [item.poll] : [];
   const numPlayersPoll = polls.find((p) => p['@_name'] === 'suggested_numplayers');
   let suggestedPlayers = Number(item.minplayers?.['@_value'] ?? 2);
@@ -360,14 +375,12 @@ export async function getBGGGame(id: string, trustedUploaders: string[] = []): P
     }
   }
 
-  // Expansions: outbound boardgameexpansion links (not inbound)
   const links: any[] = Array.isArray(item.link) ? item.link : item.link ? [item.link] : [];
   const expansions: BGGExpansion[] = links
     .filter((l) => l['@_type'] === 'boardgameexpansion' && !l['@_inbound'])
     .map((l) => ({ id: String(l['@_id']), name: String(l['@_value']) }))
     .slice(0, 25);
 
-  // Tags: map BGG categories and mechanics to our curated vocabulary
   const seen = new Set<string>();
   const tags: string[] = [];
   for (const link of links) {
@@ -383,40 +396,6 @@ export async function getBGGGame(id: string, trustedUploaders: string[] = []): P
 
   const rawWeight = item.statistics?.ratings?.averageweight?.['@_value'];
   const weight = rawWeight != null && Number(rawWeight) > 0 ? Number(rawWeight) : null;
-
-  // Instructional video: prefer English "how to play" / overview titles, fall back to any instructional
-  const rawVideos = item.videos?.video ?? [];
-  const videoList: any[] = Array.isArray(rawVideos) ? rawVideos : [rawVideos];
-  const instructional = videoList.filter(
-    (v) => String(v['@_category'] ?? '').toLowerCase() === 'instructional',
-  );
-  const isOverview = (v: any) => {
-    const title = String(v['@_title'] ?? '').toLowerCase();
-    return (
-      title.includes('how to play') ||
-      title.includes('learn to play') ||
-      title.includes('overview') ||
-      title.includes('tutorial')
-    );
-  };
-  const isEnglish = (v: any) =>
-    String(v['@_language'] ?? '').toLowerCase().startsWith('english');
-  const isTrusted = (v: any) =>
-    trustedUploaders.length > 0 &&
-    trustedUploaders.some(
-      (u) => u.toLowerCase() === String(v['@_uploader'] ?? '').toLowerCase(),
-    );
-  const preferred =
-    instructional.find((v) => isEnglish(v) && isOverview(v) && isTrusted(v)) ??
-    instructional.find((v) => isOverview(v) && isTrusted(v)) ??
-    instructional.find((v) => isEnglish(v) && isTrusted(v)) ??
-    instructional.find((v) => isTrusted(v)) ??
-    instructional.find((v) => isEnglish(v) && isOverview(v)) ??
-    instructional.find((v) => isOverview(v)) ??
-    instructional.find((v) => isEnglish(v)) ??
-    instructional[0] ??
-    null;
-  const howToPlayUrl = preferred ? String(preferred['@_link']) : null;
 
   return {
     id,
@@ -435,6 +414,50 @@ export async function getBGGGame(id: string, trustedUploaders: string[] = []): P
       : null,
     expansions,
     tags,
-    howToPlayUrl,
   };
+}
+
+async function fetchHowToPlayUrl(id: string, name: string): Promise<string | null> {
+  try {
+    const videos = await fetchBGGVideos(id);
+    return videos[0]?.url ?? null;
+  } catch {
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    return `https://boardgamegeek.com/boardgame/${id}/${slug}/videos/instructional?sort=hot`;
+  }
+}
+
+export async function getBGGGame(id: string): Promise<BGGGame> {
+  const url = `https://boardgamegeek.com/xmlapi2/thing?id=${id}&stats=1`;
+  const xml = await fetchXML(url);
+  const parsed = parser.parse(xml);
+
+  const item = parsed?.items?.item;
+  if (!item) throw new Error(`BGG game ${id} not found`);
+
+  const gameData = parseBGGItem(item, id);
+  const howToPlayUrl = await fetchHowToPlayUrl(id, gameData.name);
+
+  return { ...gameData, howToPlayUrl };
+}
+
+// Batch fetch up to 20 games in a single XMLAPI2 call, then fetch videos individually.
+// videoDelayMs is the pause between each geekdo video API call.
+export async function getBGGGamesBatch(ids: string[], videoDelayMs = 500): Promise<BGGGame[]> {
+  if (ids.length === 0) return [];
+  const url = `https://boardgamegeek.com/xmlapi2/thing?id=${ids.join(',')}&stats=1`;
+  const xml = await fetchXML(url);
+  const parsed = parser.parse(xml);
+  const rawItems = parsed?.items?.item;
+  const items: any[] = Array.isArray(rawItems) ? rawItems : rawItems ? [rawItems] : [];
+
+  const results: BGGGame[] = [];
+  for (const item of items) {
+    if (results.length > 0) await new Promise((r) => setTimeout(r, videoDelayMs));
+    const id = String(item['@_id']);
+    const gameData = parseBGGItem(item, id);
+    const howToPlayUrl = await fetchHowToPlayUrl(id, gameData.name);
+    results.push({ ...gameData, howToPlayUrl });
+  }
+  return results;
 }

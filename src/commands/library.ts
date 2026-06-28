@@ -41,7 +41,7 @@ import { loadGameNights } from '../utils/storage';
 import { getGameRoles } from '../utils/gameRoles';
 import { updateRequestPin } from '../utils/requestPin';
 import AdmZip from 'adm-zip';
-import { getBGGGame, weightTag, fetchBggOwnedCollection } from '../utils/bgg';
+import { getBGGGame, getBGGGamesBatch, BGGGame, weightTag, fetchBggOwnedCollection } from '../utils/bgg';
 import { getGuildConfig } from '../utils/config';
 import {
   searchCatalog,
@@ -896,7 +896,7 @@ export async function handleSync(interaction: ChatInputCommandInteraction): Prom
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
-    await enrichFromBGG(canonical, true, getGuildConfig(interaction.guildId!).trustedVideoUploaders);
+    await enrichFromBGG(canonical, true);
   } catch {
     await interaction.editReply(
       'Could not reach BoardGameGeek right now. Please try again in a moment.',
@@ -920,7 +920,86 @@ export async function handleSync(interaction: ChatInputCommandInteraction): Prom
   }
 }
 
-export async function enrichFromBGG(canonical: string, force = false, trustedUploaders: string[] = []): Promise<void> {
+function applyBGGDataToGameInfo(info: GameInfo, bggGame: BGGGame, force: boolean): void {
+  upsertGameInfo({
+    ...info,
+    minPlayers: info.minPlayers ?? bggGame.minPlayers,
+    maxPlayers: info.maxPlayers ?? bggGame.maxPlayers,
+    playTime: info.playTime ?? bggGame.maxPlaytime,
+    complexity: info.complexity ?? (bggGame.weight ? weightTag(bggGame.weight) : null),
+    tags: bggGame.tags.length > 0 ? bggGame.tags : (info.tags ?? []),
+    bestPlayers: force
+      ? bggGame.suggestedPlayers || undefined
+      : (info.bestPlayers ?? (bggGame.suggestedPlayers || undefined)),
+    weight: force ? (bggGame.weight ?? undefined) : (info.weight ?? bggGame.weight ?? undefined),
+    bggExpansions: force
+      ? bggGame.expansions.map((e) => e.name)
+      : (info.bggExpansions ?? bggGame.expansions.map((e) => e.name)),
+    howToPlayUrl: force
+      ? bggGame.howToPlayUrl
+      : info.howToPlayUrl !== undefined
+        ? info.howToPlayUrl
+        : bggGame.howToPlayUrl,
+    thumbnail: force
+      ? bggGame.thumbnail
+      : info.thumbnail !== undefined
+        ? info.thumbnail
+        : bggGame.thumbnail,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+export async function handleSyncAll(interaction: ChatInputCommandInteraction): Promise<void> {
+  const allInfos = loadGameInfos().filter((i) => !!i.objectid);
+
+  if (allInfos.length === 0) {
+    await interaction.reply({
+      content: 'No library games with a BGG ID found — nothing to sync.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const BATCH_SIZE = 20;
+  const VIDEO_DELAY_MS = 500;
+  const BATCH_DELAY_MS = 1000;
+  const batches: GameInfo[][] = [];
+  for (let i = 0; i < allInfos.length; i += BATCH_SIZE) batches.push(allInfos.slice(i, i + BATCH_SIZE));
+
+  // 1 XMLAPI2 call per batch of 20 + 500ms per game for video API
+  const estimatedSecs = Math.ceil(batches.length * (BATCH_DELAY_MS / 1000) + allInfos.length * (VIDEO_DELAY_MS / 1000));
+  await interaction.reply({
+    content: `Syncing **${allInfos.length}** game(s) in **${batches.length}** BGG batch(es) — estimated **${estimatedSecs}s**. Do not run again until this completes.`,
+    flags: MessageFlags.Ephemeral,
+  });
+
+  const idToInfo = new Map(allInfos.map((i) => [i.objectid!, i]));
+  let updated = 0;
+  let failed = 0;
+
+  for (let i = 0; i < batches.length; i++) {
+    if (i > 0) await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
+    const ids = batches[i].map((info) => info.objectid!);
+    try {
+      const games = await getBGGGamesBatch(ids, VIDEO_DELAY_MS);
+      for (const bggGame of games) {
+        const info = idToInfo.get(bggGame.id);
+        if (!info) continue;
+        applyBGGDataToGameInfo(info, bggGame, true);
+        updated++;
+      }
+    } catch {
+      failed += batches[i].length;
+    }
+  }
+
+  await interaction.followUp({
+    content: `Sync complete — **${updated}** updated, **${failed}** failed.`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+export async function enrichFromBGG(canonical: string, force = false): Promise<void> {
   const info = getGameInfo(canonical);
   if (!info?.objectid) return;
   if (
@@ -934,37 +1013,11 @@ export async function enrichFromBGG(canonical: string, force = false, trustedUpl
   )
     return;
   try {
-    const bggGame = await getBGGGame(info.objectid, trustedUploaders);
-    upsertGameInfo({
-      ...info,
-      // user-editable fields: preserve existing, fall back to BGG
-      minPlayers: info.minPlayers ?? bggGame.minPlayers,
-      maxPlayers: info.maxPlayers ?? bggGame.maxPlayers,
-      playTime: info.playTime ?? bggGame.maxPlaytime,
-      complexity: info.complexity ?? (bggGame.weight ? weightTag(bggGame.weight) : null),
-      tags: bggGame.tags.length > 0 ? bggGame.tags : (info.tags ?? []),
-      // BGG-only fields: always write fresh on force, fill-in on lazy
-      bestPlayers: force
-        ? bggGame.suggestedPlayers || undefined
-        : (info.bestPlayers ?? (bggGame.suggestedPlayers || undefined)),
-      weight: force ? (bggGame.weight ?? undefined) : (info.weight ?? bggGame.weight ?? undefined),
-      bggExpansions: force
-        ? bggGame.expansions.map((e) => e.name)
-        : (info.bggExpansions ?? bggGame.expansions.map((e) => e.name)),
-      howToPlayUrl: force
-        ? bggGame.howToPlayUrl
-        : info.howToPlayUrl !== undefined
-          ? info.howToPlayUrl
-          : bggGame.howToPlayUrl,
-      thumbnail: force
-        ? bggGame.thumbnail
-        : info.thumbnail !== undefined
-          ? info.thumbnail
-          : bggGame.thumbnail,
-      updatedAt: new Date().toISOString(),
-    });
-  } catch {
-    // BGG unavailable — show game without enrichment
+    const bggGame = await getBGGGame(info.objectid);
+    applyBGGDataToGameInfo(info, bggGame, force);
+  } catch (err) {
+    if (force) throw err;
+    // BGG unavailable — show game without enrichment (lazy enrichment, non-fatal)
   }
 }
 
@@ -992,15 +1045,14 @@ function buildGameViewEmbed(
   const owners = matches.map((e) => `<@${e.userId}>`);
 
   const now = new Date();
-  const nextEvent = loadGameNights()
+  const upcomingEvents = loadGameNights()
     .filter((gn) => !gn.cancelled && !gn.archived && new Date(gn.startTimeISO) > now)
-    .sort((a, b) => new Date(a.startTimeISO).getTime() - new Date(b.startTimeISO).getTime())[0];
+    .sort((a, b) => new Date(a.startTimeISO).getTime() - new Date(b.startTimeISO).getTime());
+  const nextEvent = upcomingEvents[0] ?? null;
 
-  const isRequested = nextEvent
-    ? getRequestsForEvent(nextEvent.id).some(
-        (r) => r.gameName.toLowerCase() === canonical.toLowerCase(),
-      )
-    : false;
+  const requestedEvents = upcomingEvents.filter((gn) =>
+    getRequestsForEvent(gn.id).some((r) => r.gameName.toLowerCase() === canonical.toLowerCase()),
+  );
 
   const info = getGameInfo(canonical);
 
@@ -1070,10 +1122,16 @@ function buildGameViewEmbed(
   if (objectid) {
     embed.addFields({ name: 'BGG ID', value: objectid, inline: true });
   }
-  if (nextEvent) {
+  if (requestedEvents.length > 0) {
     embed.addFields({
-      name: `Requested for ${nextEvent.date}`,
-      value: isRequested ? 'Yes' : 'No — use `/library request` to request it',
+      name: 'Requested for',
+      value: requestedEvents.map((gn) => gn.date).join('\n'),
+      inline: true,
+    });
+  } else if (nextEvent) {
+    embed.addFields({
+      name: `Next event: ${nextEvent.date}`,
+      value: 'Not requested — use `/library request` to request it',
       inline: true,
     });
   }
@@ -1108,7 +1166,7 @@ async function handleView(interaction: ChatInputCommandInteraction): Promise<voi
   const gameName = interaction.options.getString('game', true).trim();
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  await enrichFromBGG(gameName, false, getGuildConfig(interaction.guildId!).trustedVideoUploaders);
+  await enrichFromBGG(gameName, false);
 
   const embed = buildGameViewEmbed(
     interaction.guildId!,
@@ -1154,7 +1212,7 @@ export async function handleLibraryViewSelect(
   }
 
   await interaction.deferUpdate();
-  await enrichFromBGG(gameName, false, getGuildConfig(interaction.guildId!).trustedVideoUploaders);
+  await enrichFromBGG(gameName, false);
   const embed = buildGameViewEmbed(
     interaction.guildId!,
     gameName,
@@ -1343,7 +1401,7 @@ async function addGameWithBGGDetails(
   addGame(guildId, userId, gameName, objectid);
   let msg = `Added **${gameName}** to your library!`;
   try {
-    const bggGame = await getBGGGame(objectid, getGuildConfig(guildId).trustedVideoUploaders);
+    const bggGame = await getBGGGame(objectid);
     const info: GameInfo = {
       gameName,
       objectid,
@@ -2413,6 +2471,8 @@ export async function handleEditModal(interaction: ModalSubmitInteraction): Prom
     tags: resolvedTags,
     expansions,
     bggExpansions: existing?.bggExpansions,
+    howToPlayUrl: existing?.howToPlayUrl,
+    thumbnail: existing?.thumbnail,
     updatedAt: new Date().toISOString(),
   };
 

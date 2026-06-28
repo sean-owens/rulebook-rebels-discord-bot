@@ -34,6 +34,7 @@ import {
   GameSuggestion,
   GameExpansion,
   findGamesByChannel,
+  findGamesByEvent,
 } from '../utils/gameStorage';
 import { buildGameEmbed, buildGameButtons, buildBggAttachment } from '../utils/gameEmbeds';
 import { loadGameNights, GameNight } from '../utils/storage';
@@ -45,6 +46,9 @@ import {
   addGame,
   addRequest,
   updateRequestCopies,
+  getRequestsForEvent,
+  removeRequests,
+  confirmBring,
   GameInfo,
   GAME_TAGS,
 } from '../utils/libraryStorage';
@@ -69,6 +73,7 @@ function duplicateReply(game: GameSuggestion): string {
 interface PendingBring {
   gameName: string;
   objectid?: string;
+  eventId: string;
 }
 const pendingBrings = new Map<string, PendingBring>();
 
@@ -163,7 +168,7 @@ async function buildBGGSearchReply(
   if (results.length === 0) {
     // When BGG is unreachable, fall back to the local catalog before going to manual entry
     if (bggFailed && isCatalogLoaded()) {
-      const catalogResults = searchCatalog(title, 5);
+      const catalogResults = searchCatalog(title, 10);
       if (catalogResults.length > 0) {
         const options = catalogResults.map((r) => {
           const desc = [
@@ -233,34 +238,40 @@ async function handleSuggest(interaction: ChatInputCommandInteraction): Promise<
   const title = interaction.options.getString('title', true);
   const withExpansions = interaction.options.getBoolean('with_expansions') ?? false;
 
-  const gameNight = loadGameNights().find(
-    (gn) => gn.eventChannelId === interaction.channelId && !gn.cancelled && !gn.archived,
-  );
+  const now = new Date();
+  const upcoming = loadGameNights()
+    .filter(
+      (gn) =>
+        !gn.cancelled && !gn.archived && gn.eventChannelId && new Date(gn.startTimeISO) > now,
+    )
+    .sort((a, b) => new Date(a.startTimeISO).getTime() - new Date(b.startTimeISO).getTime());
 
-  if (!gameNight) {
-    const now = new Date();
-    const upcoming = loadGameNights()
-      .filter(
-        (gn) =>
-          !gn.cancelled && !gn.archived && gn.eventChannelId && new Date(gn.startTimeISO) > now,
-      )
-      .sort((a, b) => new Date(a.startTimeISO).getTime() - new Date(b.startTimeISO).getTime());
+  if (upcoming.length === 0) {
+    await interaction.reply({
+      content: 'There are no upcoming events with channels to add games to.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
 
-    if (upcoming.length === 0) {
-      await interaction.reply({
-        content: 'There are no upcoming events with channels to add games to.',
-        flags: MessageFlags.Ephemeral,
-      });
-      return;
-    }
-
+  // If the command is used inside an event channel, skip the picker and use that event directly.
+  const channelMatch = upcoming.find((gn) => gn.eventChannelId === interaction.channelId);
+  if (channelMatch) {
+    pendingEventContext.set(interaction.user.id, channelMatch.id);
+    // fall through with channelMatch as the resolved event
+  } else if (upcoming.length > 1) {
+    // Outside an event channel with multiple events — show picker.
     pendingEventSuggest.set(interaction.user.id, { title, withExpansions });
-    const options = upcoming.map((gn) =>
-      new StringSelectMenuOptionBuilder()
+    const options = upcoming.map((gn) => {
+      const alreadySuggested = findGamesByEvent(gn.id).some(
+        (g) => g.title.toLowerCase() === title.toLowerCase(),
+      );
+      const desc = `${alreadySuggested ? '⚠️ already suggested · ' : ''}${gn.time} @ ${gn.location || 'TBD'}`.slice(0, 100);
+      return new StringSelectMenuOptionBuilder()
         .setLabel(gn.date.slice(0, 100))
         .setValue(gn.id)
-        .setDescription(`${gn.time} @ ${gn.location || 'TBD'}`.slice(0, 100)),
-    );
+        .setDescription(desc);
+    });
     const select = new StringSelectMenuBuilder()
       .setCustomId('game_event_select')
       .setPlaceholder('Choose an event...')
@@ -272,6 +283,8 @@ async function handleSuggest(interaction: ChatInputCommandInteraction): Promise<
     });
     return;
   }
+
+  const gameNight = channelMatch ?? upcoming[0];
 
   // Check the group library — exact match first
   const libraryMatches = findGamesByName(interaction.guildId!, title);
@@ -465,7 +478,7 @@ async function handleGameList(interaction: ChatInputCommandInteraction): Promise
       g.minPlaytime === g.maxPlaytime
         ? `${g.minPlaytime}min`
         : `${g.minPlaytime}–${g.maxPlaytime}min`;
-    const seats = `${g.seats.length}/${g.suggestedPlayers} seated`;
+    const seats = g.suggestedPlayers != null ? `${g.seats.length}/${g.suggestedPlayers} seated` : `${g.seats.length} seated`;
     return `**[${g.title}](${link})** — ${players} · ${time} · ${seats}`;
   });
 
@@ -512,8 +525,18 @@ async function handleGameCancel(interaction: ChatInputCommandInteraction): Promi
 
   const remaining = loadGames().filter((g) => g.id !== match.id);
   saveGames(remaining);
+  // Remove the auto-request if the canceller originally created it
+  const req = getRequestsForEvent(match.eventId).find(
+    (r) => r.gameName.toLowerCase() === match.title.toLowerCase(),
+  );
+  if (req && req.requestedBy === interaction.user.id) removeRequests([req.id]);
   try {
     await updateGameListPin(interaction.client, match.eventId);
+  } catch {
+    /* channel may not be accessible */
+  }
+  try {
+    await updateRequestPin(interaction.client, match.eventId);
   } catch {
     /* channel may not be accessible */
   }
@@ -550,8 +573,18 @@ export async function handleHostGameCancel(
 
   const remaining = loadGames().filter((g) => g.id !== match.id);
   saveGames(remaining);
+  // Remove the auto-request if the original suggestor created it
+  const hostReq = getRequestsForEvent(match.eventId).find(
+    (r) => r.gameName.toLowerCase() === match.title.toLowerCase(),
+  );
+  if (hostReq && hostReq.requestedBy === match.createdBy) removeRequests([hostReq.id]);
   try {
     await updateGameListPin(interaction.client, match.eventId);
+  } catch {
+    /* channel may not be accessible */
+  }
+  try {
+    await updateRequestPin(interaction.client, match.eventId);
   } catch {
     /* channel may not be accessible */
   }
@@ -579,10 +612,7 @@ async function showLibraryExpansionPicker(
 
   let bggGame: BGGGame;
   try {
-    bggGame = await getBGGGame(
-      info.objectid!,
-      getGuildConfig(interaction.guildId!).trustedVideoUploaders,
-    );
+    bggGame = await getBGGGame(info.objectid!);
   } catch {
     await postLibraryGame(interaction, gameNight, gameName, info, ownerIds, []);
     return;
@@ -638,10 +668,7 @@ export async function handleLibraryExpansionSelect(
   let selectedExpansions: GameExpansion[] = [];
   if (interaction.values.length > 0) {
     try {
-      const bggGame = await getBGGGame(
-        bggId,
-        getGuildConfig(interaction.guildId!).trustedVideoUploaders,
-      );
+      const bggGame = await getBGGGame(bggId);
       selectedExpansions = bggGame.expansions
         .filter((e) => interaction.values.includes(e.id))
         .map((e) => ({ id: e.id, name: e.name }));
@@ -703,7 +730,7 @@ async function postLibraryGame(
   }
 
   if (info?.objectid) {
-    await enrichFromBGG(gameName, false, getGuildConfig(interaction.guildId!).trustedVideoUploaders);
+    await enrichFromBGG(gameName, false);
     info = getGameInfo(gameName) ?? info;
   }
 
@@ -843,7 +870,7 @@ export async function handleGameSelect(interaction: StringSelectMenuInteraction)
 
   let bggGame: BGGGame;
   try {
-    bggGame = await getBGGGame(bggId, getGuildConfig(interaction.guildId!).trustedVideoUploaders);
+    bggGame = await getBGGGame(bggId);
   } catch {
     await interaction.editReply({
       content: 'Could not fetch game details. Try entering manually.',
@@ -880,7 +907,7 @@ export async function handleGameSelectWithExp(
 
   let bggGame: BGGGame;
   try {
-    bggGame = await getBGGGame(bggId, getGuildConfig(interaction.guildId!).trustedVideoUploaders);
+    bggGame = await getBGGGame(bggId);
   } catch {
     await interaction.editReply({
       content: 'Could not fetch game details. Try entering manually.',
@@ -930,7 +957,7 @@ export async function handleExpansionSelect(
 
   let bggGame: BGGGame;
   try {
-    bggGame = await getBGGGame(bggId, getGuildConfig(interaction.guildId!).trustedVideoUploaders);
+    bggGame = await getBGGGame(bggId);
   } catch {
     await interaction.editReply({ content: 'Could not fetch game details.', components: [] });
     return;
@@ -973,16 +1000,12 @@ export async function handleManualGameSubmit(interaction: ModalSubmitInteraction
   }
 
   const playersRaw = interaction.fields.getTextInputValue('players').trim();
-  const bestWithRaw = interaction.fields.getTextInputValue('best_with').trim();
   const durationRaw = interaction.fields.getTextInputValue('duration').trim();
-  const link = interaction.fields.getTextInputValue('link').trim();
+  const bggLink = interaction.fields.getTextInputValue('link_rules').trim();
+  const howToPlayUrl = interaction.fields.getTextInputValue('link_howtoplay').trim() || null;
 
   const { min: minPlayers, max: maxPlayers } = parseRange(playersRaw, 2, 4);
   const { min: minPlaytime, max: maxPlaytime } = parseRange(durationRaw, 30, 60);
-  const suggestedPlayers =
-    bestWithRaw && Number(bestWithRaw)
-      ? Number(bestWithRaw)
-      : Math.ceil((minPlayers + maxPlayers) / 2);
 
   const eventChannelId = gameNight.eventChannelId ?? interaction.channelId!;
   const id = randomUUID().slice(0, 8);
@@ -994,10 +1017,11 @@ export async function handleManualGameSubmit(interaction: ModalSubmitInteraction
     guildId: interaction.guildId!,
     bggId: '',
     title,
-    bggLink: link,
+    bggLink,
+    howToPlayUrl,
     minPlayers,
     maxPlayers,
-    suggestedPlayers,
+    suggestedPlayers: null,
     minPlaytime,
     maxPlaytime,
     suggestedStartTime: null,
@@ -1032,7 +1056,7 @@ export async function handleManualGameSubmit(interaction: ModalSubmitInteraction
   }
   pendingEventContext.delete(interaction.user.id);
 
-  pendingBrings.set(interaction.user.id, { gameName: title });
+  pendingBrings.set(interaction.user.id, { gameName: title, eventId: gameNight.id });
   await interaction.editReply({
     content: `**${title}** has been added! Optionally tag the game type to help players find it:`,
     components: buildTagPickerComponents(id),
@@ -1246,14 +1270,6 @@ async function showManualEntryModal(
       ),
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
-          .setCustomId('best_with')
-          .setLabel('Best with (optional, e.g. 4)')
-          .setStyle(TextInputStyle.Short)
-          .setPlaceholder('Leave blank to auto-calculate')
-          .setRequired(false),
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
           .setCustomId('duration')
           .setLabel('Duration in minutes (e.g. 45-90 or 60)')
           .setStyle(TextInputStyle.Short)
@@ -1262,10 +1278,18 @@ async function showManualEntryModal(
       ),
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
-          .setCustomId('link')
-          .setLabel('Link — rules, how-to-play, or BGG (optional)')
+          .setCustomId('link_rules')
+          .setLabel('Rules / BGG link (optional)')
           .setStyle(TextInputStyle.Short)
-          .setPlaceholder('https://...')
+          .setPlaceholder('https://boardgamegeek.com/...')
+          .setRequired(false),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('link_howtoplay')
+          .setLabel('How-to-play video (optional)')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('https://youtube.com/...')
           .setRequired(false),
       ),
     );
@@ -1354,7 +1378,7 @@ async function postBGGGame(
   pendingEventContext.delete(interaction.user.id);
 
   const expNote = expansions.length > 0 ? ` with ${expansions.length} expansion(s)` : '';
-  pendingBrings.set(interaction.user.id, { gameName: bggGame.name, objectid: bggGame.id });
+  pendingBrings.set(interaction.user.id, { gameName: bggGame.name, objectid: bggGame.id, eventId: gameNight.id });
   if (bggGame.tags.length === 0) {
     await interaction.editReply({
       content: `**${bggGame.name}**${expNote} has been added! Tag the game type to help players find it:`,
@@ -1471,8 +1495,17 @@ export async function handleBringConfirm(interaction: ButtonInteraction): Promis
   }
   pendingBrings.delete(interaction.user.id);
   addGame(interaction.guildId!, interaction.user.id, pending.gameName, pending.objectid);
+  // confirmBring checks library ownership — addGame above ensures it passes
+  const confirmed = confirmBring(interaction.guildId!, pending.eventId, pending.gameName, interaction.user.id);
+  if (confirmed === 'confirmed') {
+    try {
+      await updateRequestPin(interaction.client, pending.eventId);
+    } catch {
+      /* channel may not be accessible */
+    }
+  }
   await interaction.update({
-    content: `Got it! **${pending.gameName}** has been added to your library.`,
+    content: `Got it! **${pending.gameName}** has been added to your library and you're confirmed to bring it.`,
     components: [],
   });
 }

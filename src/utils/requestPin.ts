@@ -79,7 +79,7 @@ function buildGameListEmbed(games: GameSuggestion[]): EmbedBuilder {
       g.minPlaytime === g.maxPlaytime
         ? `${g.minPlaytime}min`
         : `${g.minPlaytime}–${g.maxPlaytime}min`;
-    const seats = `${g.seats.length}/${g.suggestedPlayers} seated`;
+    const seats = g.suggestedPlayers != null ? `${g.seats.length}/${g.suggestedPlayers} seated` : `${g.seats.length} seated`;
     return `**[${g.title}](${link})** — ${players} · ${time} · ${seats}`;
   });
   return embed
@@ -131,7 +131,6 @@ export async function updateRequestPin(client: Client, eventId: string): Promise
   if (!gameNight?.eventChannelId) return;
 
   const requests = getRequestsForEvent(eventId);
-  if (requests.length === 0 && !gameNight.requestPinMessageId) return;
 
   // Resolve display names for all library owners of the requested games
   const library = loadLibraryForGuild(gameNight.guildId);

@@ -5,7 +5,8 @@ import {
   SlashCommandBuilder,
 } from 'discord.js';
 import { handleConfig as handleEventConfig } from './gamenight';
-import { handleAdminLibraryClear, handleSync as handleLibrarySync } from './library';
+import { handleAdminLibraryClear, handleSync as handleLibrarySync, handleSyncAll as handleLibrarySyncAll } from './library';
+import { findGameNamesByPartial, loadLibraryForGuild } from '../utils/libraryStorage';
 import {
   handleAdd as handleTagAdd,
   handleRemove as handleTagRemove,
@@ -19,11 +20,6 @@ import {
   handleTest as handleWelcomeTest,
   handleGreet as handleWelcomeGreet,
 } from './welcome';
-import {
-  handleVideoUploadersAdd,
-  handleVideoUploadersRemove,
-  handleVideoUploadersList,
-} from './videoConfig';
 
 export const data = new SlashCommandBuilder()
   .setName('admin')
@@ -85,6 +81,15 @@ export const data = new SlashCommandBuilder()
                 'Discord category name for archived event channels (default: "Archive")',
               )
               .setRequired(false),
+          )
+          .addIntegerOption((opt) =>
+            opt
+              .setName('archive_retention_days')
+              .setDescription(
+                'Auto-delete archived channels after this many days (0 = never, minimum 7)',
+              )
+              .setRequired(false)
+              .setMinValue(0),
           ),
       ),
   )
@@ -106,7 +111,14 @@ export const data = new SlashCommandBuilder()
           .setName('sync')
           .setDescription("Re-sync a game's data from BoardGameGeek (thumbnail, video, expansions)")
           .addStringOption((opt) =>
-            opt.setName('game').setDescription('Game name to sync').setRequired(true),
+            opt.setName('game').setDescription('Game name to sync').setRequired(true).setAutocomplete(true),
+          ),
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('syncall')
+          .setDescription(
+            'Re-sync all library games from BGG — slow, rate-limited, admin only',
           ),
       ),
   )
@@ -165,34 +177,6 @@ export const data = new SlashCommandBuilder()
           .setDescription('Remove all game tags and their Discord roles from this server'),
       ),
   )
-  // ── video group ───────────────────────────────────────────────────────────────
-  .addSubcommandGroup((group) =>
-    group
-      .setName('video')
-      .setDescription('Manage trusted video uploaders for how-to-play selection')
-      .addSubcommand((sub) =>
-        sub
-          .setName('add')
-          .setDescription('Add a trusted BGG uploader handle (videos from this account are preferred)')
-          .addStringOption((opt) =>
-            opt
-              .setName('uploader')
-              .setDescription('BGG username of the uploader (e.g. "watchitplayed")')
-              .setRequired(true),
-          ),
-      )
-      .addSubcommand((sub) =>
-        sub
-          .setName('remove')
-          .setDescription('Remove a trusted BGG uploader handle')
-          .addStringOption((opt) =>
-            opt.setName('uploader').setDescription('BGG username to remove').setRequired(true),
-          ),
-      )
-      .addSubcommand((sub) =>
-        sub.setName('list').setDescription('List all trusted video uploaders for this server'),
-      ),
-  )
   // ── welcome group ─────────────────────────────────────────────────────────────
   .addSubcommandGroup((group) =>
     group
@@ -233,7 +217,20 @@ export const data = new SlashCommandBuilder()
 
 export async function handleAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
   const group = interaction.options.getSubcommandGroup();
-  if (group === 'tags') await handleTagAutocomplete(interaction);
+  const sub = interaction.options.getSubcommand();
+  if (group === 'tags') {
+    await handleTagAutocomplete(interaction);
+  } else if (group === 'library' && sub === 'sync') {
+    const focused = interaction.options.getFocused();
+    const guildId = interaction.guildId!;
+    const expansionNames = new Set(
+      loadLibraryForGuild(guildId).filter((e) => e.isExpansion).map((e) => e.gameName.toLowerCase()),
+    );
+    const matches = findGameNamesByPartial(guildId, focused)
+      .filter((name) => !expansionNames.has(name.toLowerCase()))
+      .slice(0, 25);
+    await interaction.respond(matches.map((name) => ({ name, value: name })));
+  }
 }
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -245,16 +242,13 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   } else if (group === 'library') {
     if (sub === 'clear') await handleAdminLibraryClear(interaction);
     else if (sub === 'sync') await handleLibrarySync(interaction);
+    else if (sub === 'syncall') await handleLibrarySyncAll(interaction);
   } else if (group === 'tags') {
     if (sub === 'add') await handleTagAdd(interaction);
     else if (sub === 'remove') await handleTagRemove(interaction);
     else if (sub === 'list') await handleTagList(interaction);
     else if (sub === 'sync') await handleTagSync(interaction);
     else if (sub === 'clear') await handleTagClear(interaction);
-  } else if (group === 'video') {
-    if (sub === 'add') await handleVideoUploadersAdd(interaction);
-    else if (sub === 'remove') await handleVideoUploadersRemove(interaction);
-    else if (sub === 'list') await handleVideoUploadersList(interaction);
   } else if (group === 'welcome') {
     if (sub === 'config') await handleWelcomeConfig(interaction);
     else if (sub === 'test') await handleWelcomeTest(interaction);

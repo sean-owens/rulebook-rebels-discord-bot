@@ -51,13 +51,14 @@ export function buildGameEmbed(
 
   const embed = new EmbedBuilder()
     .setTitle(game.title)
-    .setURL(game.bggLink || null)
+    .setURL(game.bggLink?.match(/^https?:\/\//) ? game.bggLink : null)
     .setColor(0xe8a838);
   if (game.thumbnail) embed.setThumbnail(game.thumbnail);
 
   // Row 1: Players | Best With | Complexity (all inline)
   embed.addFields({ name: 'Players', value: playerInfo, inline: true });
-  embed.addFields({ name: 'Best With', value: `**${game.suggestedPlayers}**`, inline: true });
+  if (game.suggestedPlayers != null)
+    embed.addFields({ name: 'Best With', value: `**${game.suggestedPlayers}**`, inline: true });
   if (complexityValue) embed.addFields({ name: 'Complexity', value: complexityValue, inline: true });
 
   // Tags (full-width, below row 1)

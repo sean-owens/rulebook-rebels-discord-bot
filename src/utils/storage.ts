@@ -26,6 +26,7 @@ export interface GameNight {
   archived: boolean;
   locked?: boolean;
   lockAt?: string;
+  channelDeleted?: boolean;
   createdAt: string;
   requestPinMessageId?: string;
   gameListPinMessageId?: string;

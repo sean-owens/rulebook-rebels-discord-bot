@@ -14,7 +14,7 @@ export interface GuildConfig {
   openEventChannels: boolean;
   eventCategoryName: string;
   archiveCategoryName: string;
-  trustedVideoUploaders: string[];
+  archivedChannelRetentionDays: number; // 0 = never auto-delete
 }
 
 const DEFAULT_CONFIG: GuildConfig = {
@@ -29,7 +29,7 @@ const DEFAULT_CONFIG: GuildConfig = {
   openEventChannels: false,
   eventCategoryName: 'Monthly Events',
   archiveCategoryName: 'Archive',
-  trustedVideoUploaders: [],
+  archivedChannelRetentionDays: 0,
 };
 
 type ConfigStore = Record<string, GuildConfig>;

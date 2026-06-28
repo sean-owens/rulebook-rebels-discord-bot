@@ -96,6 +96,46 @@ export async function lockEventChannel(client: Client, gn: GameNight): Promise<v
   }
 }
 
+export async function archiveExpiredEvents(client: Client): Promise<void> {
+  const now = new Date();
+  const expired = loadGameNights().filter(
+    (gn) =>
+      !gn.cancelled &&
+      !gn.archived &&
+      gn.endTimeISO &&
+      new Date(gn.endTimeISO) <= now,
+  );
+
+  for (const gn of expired) {
+    console.log(`Auto-archiving expired event ${gn.id} (ended ${gn.endTimeISO})`);
+    if (gn.eventChannelId) {
+      await archiveEventChannel(client, gn);
+    } else {
+      // No event channel — just clean up the announcement and mark archived
+      if (gn.messageId && gn.channelId) {
+        try {
+          const announcementChannel = await client.channels.fetch(gn.channelId);
+          if (announcementChannel?.type === ChannelType.GuildForum) {
+            const thread = await client.channels.fetch(gn.messageId);
+            if (thread?.isThread()) {
+              await thread.send('*This event has concluded. The thread is now archived.*');
+              await thread.setLocked(true);
+              await thread.setArchived(true);
+            }
+          } else {
+            const msg = await (announcementChannel as TextChannel).messages.fetch(gn.messageId);
+            await msg.delete();
+          }
+        } catch {
+          /* already cleaned up */
+        }
+      }
+      gn.archived = true;
+      upsertGameNight(gn);
+    }
+  }
+}
+
 export async function checkPendingLocks(client: Client): Promise<void> {
   const now = new Date();
   const pending = loadGameNights().filter(
@@ -103,5 +143,31 @@ export async function checkPendingLocks(client: Client): Promise<void> {
   );
   for (const gn of pending) {
     await lockEventChannel(client, gn);
+  }
+}
+
+export async function deleteArchivedChannels(client: Client): Promise<void> {
+  const now = new Date();
+  const candidates = loadGameNights().filter(
+    (gn) => gn.archived && gn.locked && gn.eventChannelId && !gn.channelDeleted && gn.lockAt,
+  );
+  for (const gn of candidates) {
+    const { archivedChannelRetentionDays } = getGuildConfig(gn.guildId);
+    if (!archivedChannelRetentionDays) continue; // 0 = disabled
+
+    const retentionAfterLock = Math.max(0, archivedChannelRetentionDays - LOCK_DELAY_DAYS);
+    const deleteAt = new Date(gn.lockAt!);
+    deleteAt.setDate(deleteAt.getDate() + retentionAfterLock);
+    if (deleteAt > now) continue;
+
+    try {
+      const channel = await client.channels.fetch(gn.eventChannelId!);
+      await channel?.delete();
+    } catch {
+      /* already deleted or inaccessible */
+    }
+    gn.channelDeleted = true;
+    upsertGameNight(gn);
+    console.log(`Auto-deleted archived channel for game night ${gn.id} after ${archivedChannelRetentionDays} days`);
   }
 }

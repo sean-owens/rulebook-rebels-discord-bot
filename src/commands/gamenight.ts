@@ -17,6 +17,7 @@ import { cleanupCancelledNight } from './cancelHelper';
 import { getGuildConfig, updateGuildConfig, GuildConfig } from '../utils/config';
 import { archiveEventChannel } from '../utils/archive';
 import { updateAnnouncementPin } from '../utils/pins';
+import { updateGameListPin, updateRequestPin } from '../utils/requestPin';
 
 export const data = new SlashCommandBuilder()
   .setName('event')
@@ -285,6 +286,12 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
 
   upsertGameNight(gn);
 
+  // Initialize pinned embeds in the event channel right away (even while empty)
+  if (gn.eventChannelId) {
+    await updateGameListPin(interaction.client, gn.id).catch(() => null);
+    await updateRequestPin(interaction.client, gn.id).catch(() => null);
+  }
+
   // Pin the new event (text channels only — forum threads don't use channel pins)
   if (announcementMsg) {
     await updateAnnouncementPin(guild.client, guild.id).catch((err) =>
@@ -307,6 +314,7 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
   const openChannels = interaction.options.getBoolean('open_channels');
   const eventCategory = interaction.options.getString('event_category');
   const archiveCategory = interaction.options.getString('archive_category');
+  const archiveRetentionDays = interaction.options.getInteger('archive_retention_days');
 
   if (location !== null) patch.defaultLocation = location;
   if (time !== null) patch.defaultTime = time;
@@ -316,8 +324,13 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
   if (openChannels !== null) patch.openEventChannels = openChannels;
   if (eventCategory !== null) patch.eventCategoryName = eventCategory;
   if (archiveCategory !== null) patch.archiveCategoryName = archiveCategory;
+  if (archiveRetentionDays !== null) {
+    // Enforce minimum of 7 days (the lock delay) when non-zero
+    patch.archivedChannelRetentionDays = archiveRetentionDays > 0 && archiveRetentionDays < 7 ? 7 : archiveRetentionDays;
+  }
 
   function formatConfig(c: GuildConfig): string {
+    const retentionDays = c.archivedChannelRetentionDays ?? 0;
     return [
       '**Event defaults:**',
       `> Start time: ${c.defaultTime || '*not set*'}`,
@@ -328,6 +341,7 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
       `> Event channel access: ${c.openEventChannels ? 'Open to everyone' : 'RSVP only'}`,
       `> Event category: ${c.eventCategoryName}`,
       `> Archive category: ${c.archiveCategoryName}`,
+      `> Archived channel retention: ${retentionDays === 0 ? 'Never auto-delete' : `${retentionDays} days`}`,
     ].join('\n');
   }
 
@@ -354,10 +368,23 @@ async function handleList(interaction: ChatInputCommandInteraction): Promise<voi
     return;
   }
 
-  const lines = upcoming.map(
-    (g) =>
-      `\`${g.id}\` — **${g.date}** at **${g.time}** @ ${g.location}${g.eventChannelId ? ` | <#${g.eventChannelId}>` : ''} (${g.rsvps.yes.length} going)`,
-  );
+  const isHost = interaction.memberPermissions?.has(PermissionFlagsBits.ManageEvents) ?? false;
+  const guildId = interaction.guildId!;
+
+  const lines = upcoming.map((g) => {
+    const rsvpLink = g.messageId && g.channelId
+      ? `[RSVP](https://discord.com/channels/${guildId}/${g.channelId}/${g.messageId})`
+      : null;
+    const channelRef = g.eventChannelId ? `<#${g.eventChannelId}>` : null;
+    const parts = [
+      `**${g.date}** at **${g.time}** @ ${g.location}`,
+      `${g.rsvps.yes.length} going`,
+      channelRef,
+      rsvpLink,
+      isHost ? `\`id:${g.id}\`` : null,
+    ].filter(Boolean);
+    return parts.join(' · ');
+  });
 
   await interaction.reply({
     content: `**Upcoming Game Nights:**\n${lines.join('\n')}`,

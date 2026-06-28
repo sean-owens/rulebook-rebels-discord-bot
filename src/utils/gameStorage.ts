@@ -18,7 +18,7 @@ export interface GameSuggestion {
   bggLink: string;
   minPlayers: number;
   maxPlayers: number;
-  suggestedPlayers: number;
+  suggestedPlayers: number | null;
   minPlaytime: number;
   maxPlaytime: number;
   suggestedStartTime: string | null;

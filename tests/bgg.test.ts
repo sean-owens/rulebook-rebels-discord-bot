@@ -81,18 +81,18 @@ describe('searchBGG', () => {
     expect(results[1]).toEqual({ id: '99999', name: 'Another Game', yearPublished: 2020 });
   });
 
-  it('returns at most 5 results', async () => {
+  it('returns at most 10 results', async () => {
     const items = Array.from(
-      { length: 8 },
+      { length: 15 },
       (_, i) => `
   <item type="boardgame" id="${i}">
     <name type="primary" value="Game ${i}"/>
   </item>`,
     ).join('');
-    mockFetch(`<items total="8">${items}</items>`);
+    mockFetch(`<items total="15">${items}</items>`);
 
     const results = await searchBGG('game');
-    expect(results).toHaveLength(5);
+    expect(results).toHaveLength(10);
   });
 
   it('handles a single result (non-array XML) correctly', async () => {

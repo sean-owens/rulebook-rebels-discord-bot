@@ -4,3 +4,4 @@ dist/
 data/
 old_data/
 bot.log
+bot_err.log
