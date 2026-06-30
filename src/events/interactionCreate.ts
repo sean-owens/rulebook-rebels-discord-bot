@@ -1,4 +1,4 @@
-import { ButtonInteraction, Interaction, TextChannel, MessageFlags } from 'discord.js';
+import { ButtonInteraction, Interaction, StringSelectMenuInteraction, TextChannel, MessageFlags, ModalSubmitInteraction } from 'discord.js';
 import { execute as executeHelp } from '../commands/help';
 import { execute as executeGameNight } from '../commands/gamenight';
 import {
@@ -39,6 +39,28 @@ import {
 import { Complexity } from '../utils/libraryStorage';
 import { execute as executeBgg } from '../commands/bgg';
 import {
+  execute as executeMarketplace,
+  handleAutocomplete as handleMarketplaceAutocomplete,
+  handleInterestButton,
+  handleBidModal,
+  handleAcceptBid,
+  handleDenyBid,
+  handleCounterButton,
+  handleCounterModal,
+  handleBuyerAcceptCounter,
+  handlePriceUseSuggested,
+  handlePriceNone,
+  handlePriceCustomButton,
+  handlePriceCustomModal,
+  handleLibraryRemove,
+  handleLibraryKeep,
+  handleAddRefButton,
+  handleSkipRefButton,
+  handleRefModal,
+  handleExpansionSelect as handleMarketplaceExpansionSelect,
+  handleSkipExpansions,
+} from '../commands/marketplace';
+import {
   execute as executeGame,
   handleGameSelect,
   handleGameSelectWithExp,
@@ -71,6 +93,7 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
   try {
     if (interaction.isAutocomplete()) {
       if (interaction.commandName === 'admin') await handleAdminAutocomplete(interaction);
+      else if (interaction.commandName === 'marketplace') await handleMarketplaceAutocomplete(interaction);
     } else if (interaction.isChatInputCommand()) {
       if (interaction.commandName === 'help') await executeHelp(interaction);
       else if (interaction.commandName === 'event') await executeGameNight(interaction);
@@ -80,6 +103,7 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
       else if (interaction.commandName === 'myroles') await executeMyRoles(interaction);
       else if (interaction.commandName === 'library') await executeLibrary(interaction);
       else if (interaction.commandName === 'bgg') await executeBgg(interaction);
+      else if (interaction.commandName === 'marketplace') await executeMarketplace(interaction);
     } else if (interaction.isStringSelectMenu()) {
       const id = interaction.customId;
       if (id === 'game_event_select') await handleEventSelect(interaction);
@@ -97,6 +121,8 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handleUnrequestEventSelect(interaction);
       else if (id.startsWith('library_unrequest_select_'))
         await handleUnrequestSelect(interaction, id.slice('library_unrequest_select_'.length));
+      else if (id.startsWith('mp_exp_select_'))
+        await handleMarketplaceExpansionSelect(interaction as StringSelectMenuInteraction, id.slice('mp_exp_select_'.length));
       else if (id === 'game_select') await handleGameSelect(interaction);
       else if (id === 'game_select_exp') await handleGameSelectWithExp(interaction);
       else if (id.startsWith('game_exp_lib_'))
@@ -108,6 +134,17 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
     } else if (interaction.isModalSubmit()) {
       if (interaction.customId === 'game_manual') await handleManualGameSubmit(interaction);
       else if (interaction.customId === 'library_edit_modal') await handleEditModal(interaction);
+      else if (interaction.customId.startsWith('mp_bid_')) {
+        await handleBidModal(interaction as unknown as ModalSubmitInteraction, interaction.customId.slice('mp_bid_'.length));
+      } else if (interaction.customId.startsWith('mp_price_modal_')) {
+        await handlePriceCustomModal(interaction as unknown as ModalSubmitInteraction, interaction.customId.slice('mp_price_modal_'.length));
+      } else if (interaction.customId.startsWith('mp_counter_modal_')) {
+        const rest = interaction.customId.slice('mp_counter_modal_'.length);
+        const sep = rest.indexOf('_');
+        await handleCounterModal(interaction as unknown as ModalSubmitInteraction, rest.slice(0, sep), rest.slice(sep + 1));
+      } else if (interaction.customId.startsWith('mp_ref_modal_')) {
+        await handleRefModal(interaction as unknown as ModalSubmitInteraction, interaction.customId.slice('mp_ref_modal_'.length));
+      }
     } else if (interaction.isButton()) {
       const id = interaction.customId;
       if (id === 'myroles_submit') {
@@ -177,6 +214,46 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handleWaitlistJoin(interaction, id.slice('game_waitlist_join_'.length));
       } else if (id.startsWith('game_waitlist_leave_')) {
         await handleWaitlistLeave(interaction, id.slice('game_waitlist_leave_'.length));
+      } else if (id.startsWith('mp_price_use_')) {
+        await handlePriceUseSuggested(interaction, id.slice('mp_price_use_'.length));
+      } else if (id.startsWith('mp_price_none_')) {
+        await handlePriceNone(interaction, id.slice('mp_price_none_'.length));
+      } else if (id.startsWith('mp_price_custom_')) {
+        await handlePriceCustomButton(interaction, id.slice('mp_price_custom_'.length));
+      } else if (id.startsWith('mp_interest_')) {
+        await handleInterestButton(interaction, id.slice('mp_interest_'.length));
+      } else if (id.startsWith('mp_accept_')) {
+        const rest = id.slice('mp_accept_'.length);
+        const sep = rest.indexOf('_');
+        await handleAcceptBid(interaction, rest.slice(0, sep), rest.slice(sep + 1));
+      } else if (id.startsWith('mp_deny_')) {
+        const rest = id.slice('mp_deny_'.length);
+        const sep = rest.indexOf('_');
+        await handleDenyBid(interaction, rest.slice(0, sep), rest.slice(sep + 1));
+      } else if (id.startsWith('mp_counter_') && !id.startsWith('mp_counter_modal_')) {
+        const rest = id.slice('mp_counter_'.length);
+        const sep = rest.indexOf('_');
+        await handleCounterButton(interaction, rest.slice(0, sep), rest.slice(sep + 1));
+      } else if (id.startsWith('mp_buyer_accept_')) {
+        const rest = id.slice('mp_buyer_accept_'.length);
+        const sep = rest.indexOf('_');
+        await handleBuyerAcceptCounter(interaction, rest.slice(0, sep), rest.slice(sep + 1));
+      } else if (id.startsWith('mp_buyer_deny_')) {
+        const rest = id.slice('mp_buyer_deny_'.length);
+        const sep = rest.indexOf('_');
+        await handleDenyBid(interaction, rest.slice(0, sep), rest.slice(sep + 1));
+      } else if (id.startsWith('mp_lib_remove_')) {
+        const rest = id.slice('mp_lib_remove_'.length);
+        const sep = rest.indexOf('_');
+        await handleLibraryRemove(interaction, rest.slice(0, sep), rest.slice(sep + 1));
+      } else if (id.startsWith('mp_lib_keep_')) {
+        await handleLibraryKeep(interaction);
+      } else if (id.startsWith('mp_ref_add_')) {
+        await handleAddRefButton(interaction, id.slice('mp_ref_add_'.length));
+      } else if (id.startsWith('mp_ref_skip_')) {
+        await handleSkipRefButton(interaction, id.slice('mp_ref_skip_'.length));
+      } else if (id.startsWith('mp_exp_skip_')) {
+        await handleSkipExpansions(interaction, id.slice('mp_exp_skip_'.length));
       }
     }
   } catch (err) {

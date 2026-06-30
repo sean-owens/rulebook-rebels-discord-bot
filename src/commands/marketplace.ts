@@ -1,0 +1,2275 @@
+import {
+  ActionRowBuilder,
+  AttachmentBuilder,
+  ButtonBuilder,
+  ButtonInteraction,
+  ButtonStyle,
+  ChannelType,
+  ChatInputCommandInteraction,
+  EmbedBuilder,
+  ForumChannel,
+  MessageFlags,
+  ModalBuilder,
+  ModalSubmitInteraction,
+  PermissionFlagsBits,
+  SlashCommandBuilder,
+  StringSelectMenuBuilder,
+  StringSelectMenuInteraction,
+  TextInputBuilder,
+  TextInputStyle,
+  ThreadChannel,
+  AutocompleteInteraction,
+} from 'discord.js';
+import {
+  MarketplaceListing,
+  Bid,
+  Condition,
+  CONDITION_LABELS,
+  getActiveListingsForGuild,
+  getListing,
+  getUserListings,
+  createListing,
+  updateListing,
+  addBid,
+  updateBid,
+  addCounter,
+  acceptBid,
+  denyBid,
+  closeListing,
+  reopenListing,
+  purgeListings,
+  getOpenBid,
+} from '../utils/marketplaceStorage';
+import { appendMarketplaceLog } from '../utils/marketplaceLog';
+import { getGuildConfig, updateGuildConfig } from '../utils/config';
+import { removeGame, getGamesByUser } from '../utils/libraryStorage';
+import { searchCatalog } from '../utils/bggCatalog';
+import { fetchBGGMarketplacePrices, getBGGGame } from '../utils/bgg';
+
+// ── Sell draft store (in-memory, expires after 15 min) ──────────────────────
+
+interface SellDraft {
+  listingType: 'sell' | 'trade';
+  guildId: string;
+  userId: string;
+  username: string;
+  itemName: string;
+  bggId?: string;
+  thumbnail?: string;
+  isExpansion?: boolean;
+  availableExpansions?: { bggId: string; name: string }[];
+  expansions?: { bggId: string; name: string }[];
+  parentItem?: { bggId: string; name: string };
+  condition: Condition;
+  notes?: string;
+  referenceLink?: string;
+  bidsAllowed: boolean;
+  lookingFor?: string;
+  suggestedPrice?: number;
+  priceCheckOnly?: boolean;
+  expiresAt: number;
+}
+
+const sellDrafts = new Map<string, SellDraft>();
+
+function storeDraft(draft: Omit<SellDraft, 'expiresAt'>): string {
+  const { randomUUID } = require('crypto') as typeof import('crypto');
+  const id = randomUUID();
+  sellDrafts.set(id, { ...draft, expiresAt: Date.now() + 15 * 60 * 1000 });
+  // prune expired drafts opportunistically
+  for (const [k, v] of sellDrafts) {
+    if (v.expiresAt < Date.now()) sellDrafts.delete(k);
+  }
+  return id;
+}
+
+
+function formatPrice(amount: number): string {
+  return amount.toLocaleString('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function buildPriceHistogram(prices: number[], bucketCount = 5): string {
+  if (prices.length === 0) return '';
+  const sorted = [...prices].sort((a, b) => a - b);
+
+  // Trim extreme outliers: use P10–P90 to set bucket boundaries
+  const p10idx = Math.floor((10 / 100) * (sorted.length - 1));
+  const p90idx = Math.ceil((90 / 100) * (sorted.length - 1));
+  const lo = sorted[p10idx];
+  const hi = sorted[p90idx];
+  const range = hi - lo;
+
+  if (range <= 0) {
+    return `All ${prices.length} listing${prices.length > 1 ? 's' : ''} near ${formatPrice(lo)}`;
+  }
+
+  const width = range / bucketCount;
+  const counts = Array<number>(bucketCount).fill(0);
+  for (const v of prices) {
+    let b = Math.floor((v - lo) / width);
+    b = Math.max(0, Math.min(bucketCount - 1, b));
+    counts[b]++;
+  }
+
+  const maxCount = Math.max(...counts);
+  const BAR_MAX = 10;
+  return counts
+    .map((count, i) => {
+      const bucketLo = lo + i * width;
+      const bucketHi = bucketLo + width;
+      const barLen = maxCount > 0 ? Math.round((count / maxCount) * BAR_MAX) : 0;
+      const bar = barLen > 0 ? '█'.repeat(barLen) : '▏';
+      return `\`$${bucketLo.toFixed(0).padStart(3)}–$${bucketHi.toFixed(0).padEnd(3)}\` ${bar} ${count}`;
+    })
+    .join('\n');
+}
+
+function takeDraft(draftId: string): SellDraft | undefined {
+  const draft = sellDrafts.get(draftId);
+  if (!draft) return undefined;
+  sellDrafts.delete(draftId);
+  if (draft.expiresAt < Date.now()) return undefined;
+  return draft;
+}
+
+// ── Command definition ──────────────────────────────────────────────────────
+
+export const data = new SlashCommandBuilder()
+  .setName('marketplace')
+  .setDescription('Buy, sell, and trade items with other members')
+  // ── post group ──────────────────────────────────────────────────────────────
+  .addSubcommandGroup((group) =>
+    group
+      .setName('post')
+      .setDescription('Post a new listing')
+      .addSubcommand((sub) =>
+        sub
+          .setName('sell')
+          .setDescription('List an item for sale')
+          .addStringOption((opt) =>
+            opt
+              .setName('item')
+              .setDescription('Item name (searches BoardGameGeek, or choose "not on BGG" for custom items)')
+              .setRequired(true)
+              .setAutocomplete(true),
+          )
+          .addBooleanOption((opt) =>
+            opt
+              .setName('bids_allowed')
+              .setDescription('Allow buyers to submit offers below your asking price?')
+              .setRequired(true),
+          )
+          .addStringOption((opt) =>
+            opt
+              .setName('condition')
+              .setDescription('Condition of the item')
+              .setRequired(true)
+              .addChoices(
+                { name: 'New', value: 'new' },
+                { name: 'Like New', value: 'like_new' },
+                { name: 'Very Good', value: 'very_good' },
+                { name: 'Good', value: 'good' },
+                { name: 'Acceptable', value: 'acceptable' },
+              ),
+          )
+          .addStringOption((opt) =>
+            opt.setName('notes').setDescription('Additional details').setRequired(false),
+          ),
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('trade')
+          .setDescription('List an item you want to trade away')
+          .addStringOption((opt) =>
+            opt
+              .setName('item')
+              .setDescription('Item name (searches BoardGameGeek, or choose "not on BGG" for custom items)')
+              .setRequired(true)
+              .setAutocomplete(true),
+          )
+          .addStringOption((opt) =>
+            opt
+              .setName('condition')
+              .setDescription('Condition of the item')
+              .setRequired(true)
+              .addChoices(
+                { name: 'New', value: 'new' },
+                { name: 'Like New', value: 'like_new' },
+                { name: 'Very Good', value: 'very_good' },
+                { name: 'Good', value: 'good' },
+                { name: 'Acceptable', value: 'acceptable' },
+              ),
+          )
+          .addStringOption((opt) =>
+            opt
+              .setName('looking_for')
+              .setDescription('What you want in return (e.g. "Wingspan or Ark Nova")')
+              .setRequired(false),
+          )
+          .addStringOption((opt) =>
+            opt.setName('notes').setDescription('Additional details').setRequired(false),
+          ),
+      ),
+  )
+  // ── top-level subcommands ───────────────────────────────────────────────────
+  .addSubcommand((sub) =>
+    sub
+      .setName('browse')
+      .setDescription('Browse active marketplace listings')
+      .addStringOption((opt) =>
+        opt
+          .setName('type')
+          .setDescription('Filter by listing type')
+          .setRequired(false)
+          .addChoices(
+            { name: 'For Sale', value: 'sell' },
+            { name: 'For Trade', value: 'trade' },
+          ),
+      ),
+  )
+  .addSubcommand((sub) =>
+    sub.setName('my').setDescription('View and manage your own listings'),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName('close')
+      .setDescription('Close one of your active listings')
+      .addStringOption((opt) =>
+        opt.setName('id').setDescription('Your active listing to close').setRequired(true).setAutocomplete(true),
+      ),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName('reopen')
+      .setDescription('Reopen a sold or closed listing')
+      .addStringOption((opt) =>
+        opt.setName('id').setDescription('Your closed/sold listing to reopen').setRequired(true).setAutocomplete(true),
+      ),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName('price')
+      .setDescription('Look up current BoardGameGeek marketplace prices for a game without creating a listing')
+      .addStringOption((opt) =>
+        opt.setName('item').setDescription('Game name').setRequired(true).setAutocomplete(true),
+      ),
+  )
+  .addSubcommand((sub) =>
+    sub.setName('conditions').setDescription('Show the condition grading scale used for marketplace listings'),
+  );
+
+// ── Autocomplete ────────────────────────────────────────────────────────────
+
+export async function handleAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
+  const sub = interaction.options.getSubcommand(false);
+  const focusedOption = interaction.options.getFocused(true);
+
+  if ((sub === 'close' || sub === 'reopen') && focusedOption.name === 'id') {
+    const guildId = interaction.guildId!;
+    const userId = interaction.user.id;
+    const query = focusedOption.value.toLowerCase();
+
+    const listings = getUserListings(guildId, userId).filter((l) =>
+      sub === 'close'
+        ? l.status === 'active' || l.status === 'pending'
+        : l.status === 'sold' || l.status === 'closed',
+    );
+
+    const typeLabel = (l: MarketplaceListing) => (l.type === 'sell' ? 'Sell' : 'Trade');
+    const statusLabel: Record<string, string> = { active: 'Active', pending: 'Pending', sold: 'Sold', closed: 'Closed' };
+
+    const choices = listings
+      .filter((l) => !query || l.itemName.toLowerCase().includes(query))
+      .slice(0, 25)
+      .map((l) => ({
+        name: `${l.itemName} (${typeLabel(l)} · ${statusLabel[l.status]})`.slice(0, 100),
+        value: l.id,
+      }));
+
+    await interaction.respond(choices);
+    return;
+  }
+
+  // Default: item name search for post sell/trade
+  const focused = focusedOption.value;
+  if (!focused) {
+    await interaction.respond([{ name: 'Start typing an item name…', value: '__placeholder__' }]);
+    return;
+  }
+  const results = searchCatalog(focused).slice(0, 24);
+  const choices = results.map((r) => ({
+    name: `${r.isExpansion ? '[Expansion] ' : ''}${r.name} (${r.year ?? '?'})`.slice(0, 100),
+    value: r.name,
+  }));
+  // Prefix with __custom__: so the handler knows to skip the BGG catalog lookup
+  choices.push({ name: `📝 "${focused.slice(0, 75)}" — not on BGG / custom item`, value: `__custom__:${focused}`.slice(0, 100) });
+  await interaction.respond(choices);
+}
+
+// ── Embed builders ──────────────────────────────────────────────────────────
+
+function listingEmbed(listing: MarketplaceListing): EmbedBuilder {
+  const expCount = listing.expansions?.length ?? 0;
+  const displayTitle = expCount > 0
+    ? `${listing.itemName} + ${expCount} expansion${expCount > 1 ? 's' : ''}`
+    : listing.itemName;
+  const type = listing.type === 'sell' ? '🏷️ For Sale' : '🔄 For Trade';
+  const statusEmoji: Record<string, string> = {
+    active: '🟢',
+    pending: '🟡',
+    sold: '🔴',
+    closed: '⚫',
+  };
+
+  const openBids = listing.bids.filter((b) => b.status === 'open').length;
+
+  const embed = new EmbedBuilder()
+    .setColor(listing.type === 'sell' ? 0x57f287 : 0xfee75c)
+    .setTitle(`${type} — ${displayTitle}`)
+    .setFooter({ text: `Listing ID: ${listing.id} • Listed by ${listing.username}` })
+    .setTimestamp(new Date(listing.createdAt));
+
+  const descLines: string[] = [];
+  if (listing.bggId) {
+    descLines.push(`[View on BoardGameGeek](https://boardgamegeek.com/boardgame/${listing.bggId})`);
+  }
+  if (listing.parentItem) {
+    const parentUrl = `https://boardgamegeek.com/boardgame/${listing.parentItem.bggId}`;
+    descLines.push(`[Base item on BGG](${parentUrl})`);
+  }
+  if (listing.referenceLink) {
+    descLines.push(`[Reference link](${listing.referenceLink})`);
+  }
+  if (descLines.length > 0) embed.setDescription(descLines.join('  ·  '));
+  if (listing.thumbnail) embed.setThumbnail(listing.thumbnail);
+
+  const fields: { name: string; value: string; inline?: boolean }[] = [];
+
+  if (listing.type === 'sell') {
+    const priceDisplay = listing.askingPrice != null
+      ? formatPrice(listing.askingPrice)
+      : 'Open to offers';
+    fields.push({ name: 'Price', value: `${priceDisplay}${listing.bidsAllowed ? ' *(bids welcome)*' : ' *(firm)*'}`, inline: true });
+  } else {
+    fields.push({
+      name: 'Looking For',
+      value: listing.lookingFor || 'Open to offers',
+      inline: true,
+    });
+  }
+
+  if (listing.condition) {
+    fields.push({ name: 'Condition', value: CONDITION_LABELS[listing.condition], inline: true });
+  }
+
+  fields.push({
+    name: 'Status',
+    value: `${statusEmoji[listing.status]} ${listing.status.charAt(0).toUpperCase() + listing.status.slice(1)}${openBids > 0 ? ` (${openBids} open bid${openBids > 1 ? 's' : ''})` : ''}`,
+    inline: true,
+  });
+
+  if (listing.expansions && listing.expansions.length > 0) {
+    fields.push({
+      name: `Includes ${listing.expansions.length} Expansion${listing.expansions.length > 1 ? 's' : ''}`,
+      value: listing.expansions.map((e) => `• ${e.name}`).join('\n').slice(0, 1024),
+    });
+  }
+
+  if (listing.notes) fields.push({ name: 'Notes', value: listing.notes });
+
+  embed.addFields(fields);
+  return embed;
+}
+
+function interestButton(listingId: string, disabled = false): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`mp_interest_${listingId}`)
+      .setLabel("I'm Interested")
+      .setStyle(ButtonStyle.Primary)
+      .setEmoji('🤝')
+      .setDisabled(disabled),
+  );
+}
+
+function bidActionRow(listingId: string, bidId: string): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`mp_accept_${listingId}_${bidId}`)
+      .setLabel('Accept')
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`mp_deny_${listingId}_${bidId}`)
+      .setLabel('Deny')
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId(`mp_counter_${listingId}_${bidId}`)
+      .setLabel('Counter')
+      .setStyle(ButtonStyle.Secondary),
+  );
+}
+
+function buyerResponseRow(listingId: string, bidId: string): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`mp_buyer_accept_${listingId}_${bidId}`)
+      .setLabel('Accept Counter')
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`mp_buyer_deny_${listingId}_${bidId}`)
+      .setLabel('Decline')
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId(`mp_counter_${listingId}_${bidId}`)
+      .setLabel('Counter Again')
+      .setStyle(ButtonStyle.Secondary),
+  );
+}
+
+// ── Forum tag helpers ───────────────────────────────────────────────────────
+
+const MARKETPLACE_TAG_KEYS = ['sell', 'trade', 'active', 'pending', 'sold', 'closed'] as const;
+type MarketplaceTagKey = (typeof MARKETPLACE_TAG_KEYS)[number];
+
+const TAG_NAMES: Record<MarketplaceTagKey, string> = {
+  sell: 'For Sale',
+  trade: 'For Trade',
+  active: 'Active',
+  pending: 'Pending',
+  sold: 'Sold',
+  closed: 'Closed',
+};
+
+async function ensureMarketplaceTags(
+  forumChannel: ForumChannel,
+  guildId: string,
+): Promise<Record<string, string>> {
+  const config = getGuildConfig(guildId);
+  const tagIds: Record<string, string> = { ...config.marketplaceTagIds };
+  const existingByName = new Map(forumChannel.availableTags.map((t) => [t.name, t.id]));
+
+  const missing = MARKETPLACE_TAG_KEYS.filter((key) => {
+    if (tagIds[key]) return false;
+    const existingId = existingByName.get(TAG_NAMES[key]);
+    if (existingId) { tagIds[key] = existingId; return false; }
+    return true;
+  });
+
+  if (missing.length > 0) {
+    const merged = [
+      ...forumChannel.availableTags.map((t) => ({ id: t.id, name: t.name, moderated: t.moderated })),
+      ...missing.map((key) => ({ name: TAG_NAMES[key], moderated: false })),
+    ];
+    const updated = await forumChannel.setAvailableTags(merged);
+    for (const key of missing) {
+      const found = updated.availableTags.find((t) => t.name === TAG_NAMES[key]);
+      if (found) tagIds[key] = found.id;
+    }
+  }
+
+  updateGuildConfig(guildId, { marketplaceTagIds: tagIds });
+  return tagIds;
+}
+
+function resolvedTags(tagIds: Record<string, string>, type: 'sell' | 'trade', status: string): string[] {
+  const finalised = status === 'sold' || status === 'closed';
+  const typeTag = finalised ? undefined : tagIds[type === 'sell' ? 'sell' : 'trade'];
+  return [typeTag, tagIds[status]].filter(Boolean) as string[];
+}
+
+// ── Forum post helpers ──────────────────────────────────────────────────────
+
+const CONDITION_LABEL: Record<string, string> = {
+  new: 'New',
+  like_new: 'Like New',
+  very_good: 'Very Good',
+  good: 'Good',
+  acceptable: 'Acceptable',
+};
+
+function buildThreadTitle(listing: MarketplaceListing): string {
+  const prefix = listing.type === 'sell' ? '[SELL]' : '[TRADE]';
+  const expCount = listing.expansions?.length ?? 0;
+  const itemLabel = expCount > 0
+    ? `${listing.itemName} + ${expCount} expansion${expCount > 1 ? 's' : ''}`
+    : listing.itemName;
+  const meta: string[] = [];
+  if (listing.askingPrice != null) meta.push(formatPrice(listing.askingPrice));
+  if (listing.condition) meta.push(CONDITION_LABEL[listing.condition] ?? listing.condition);
+  const title = meta.length > 0 ? `${prefix} ${itemLabel} · ${meta.join(' · ')}` : `${prefix} ${itemLabel}`;
+  return title.length <= 100 ? title : title.slice(0, 97) + '…';
+}
+
+async function fetchImageBuffer(url: string): Promise<Buffer | null> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return Buffer.from(await res.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
+async function postListingToForum(
+  listing: MarketplaceListing,
+  forumChannel: ForumChannel,
+  guildId: string,
+): Promise<string | undefined> {
+  try {
+    const tagIds = await ensureMarketplaceTags(forumChannel, guildId);
+    const appliedTags = resolvedTags(tagIds, listing.type, listing.status);
+
+    const bggAttachment = new AttachmentBuilder('BGG/images/powered_by_BGG_01_SM.png');
+    const embed = listingEmbed(listing);
+    embed.setImage('attachment://powered_by_BGG_01_SM.png');
+
+    const thumbBuffer = listing.thumbnail ? await fetchImageBuffer(listing.thumbnail) : null;
+
+    let thread;
+    if (thumbBuffer) {
+      // Starter message: just the thumbnail image — Discord uses this for the forum card preview
+      thread = await forumChannel.threads.create({
+        name: buildThreadTitle(listing),
+        appliedTags,
+        message: {
+          files: [new AttachmentBuilder(thumbBuffer, { name: 'thumbnail.jpg' })],
+        },
+      });
+      // Second message: the actual listing embed + BGG logo + button
+      await thread.send({
+        embeds: [embed],
+        files: [bggAttachment],
+        components: [interestButton(listing.id)],
+      });
+    } else {
+      // No thumbnail — single message with embed + BGG logo
+      thread = await forumChannel.threads.create({
+        name: buildThreadTitle(listing),
+        appliedTags,
+        message: {
+          embeds: [embed],
+          files: [bggAttachment],
+          components: [interestButton(listing.id)],
+        },
+      });
+    }
+
+    return thread.id;
+  } catch (err) {
+    console.error('[marketplace] forum post failed:', err);
+    return undefined;
+  }
+}
+
+async function updateForumPost(
+  listing: MarketplaceListing,
+  client: ForumChannel['client'],
+  guildId: string,
+): Promise<void> {
+  if (!listing.forumThreadId) return;
+  try {
+    const thread = await client.channels.fetch(listing.forumThreadId) as ThreadChannel;
+    if (!thread) return;
+
+    // Update applied tags to reflect current status
+    const config = getGuildConfig(guildId);
+    const tags = resolvedTags(config.marketplaceTagIds, listing.type, listing.status);
+    if (tags.length > 0) {
+      await (thread as any).setAppliedTags(tags);
+    }
+
+    // When a thumbnail is present, the starter message is just the image and the
+    // listing embed lives in the second message. Try the second message first;
+    // fall back to the starter for listings with no thumbnail.
+    let embedMsg = null;
+    const afterMsgs = await thread.messages.fetch({ limit: 1, after: thread.id }).catch(() => null);
+    const secondMsg = afterMsgs?.first?.();
+    if (secondMsg && secondMsg.author.id === client.user!.id && secondMsg.embeds.length > 0) {
+      embedMsg = secondMsg;
+    } else {
+      embedMsg = await thread.messages.fetch(thread.id).catch(() => null);
+    }
+    if (!embedMsg || embedMsg.author.id !== client.user!.id) return;
+
+    const bggAttachment = new AttachmentBuilder('BGG/images/powered_by_BGG_01_SM.png');
+    const embed = listingEmbed(listing);
+    embed.setImage('attachment://powered_by_BGG_01_SM.png');
+
+    const isFinalised = listing.status === 'sold' || listing.status === 'closed';
+    await embedMsg.edit({
+      embeds: [embed],
+      files: [bggAttachment],
+      components: isFinalised ? [] : [interestButton(listing.id)],
+    });
+
+    if (isFinalised) {
+      const closingMessage = listing.status === 'sold'
+        ? `🔴 **This listing has been sold.** Thank you for using the marketplace!`
+        : `⚫ **This listing has been closed** and is no longer available.`;
+      await thread.send(closingMessage);
+      await thread.setLocked(true);
+      await thread.setArchived(true);
+    } else {
+      // Reopened — unarchive and unlock so members can post again
+      await thread.setArchived(false);
+      await thread.setLocked(false);
+    }
+  } catch (err) {
+    console.error('[marketplace] forum update failed:', err);
+  }
+}
+
+// ── /marketplace post sell ──────────────────────────────────────────────────
+
+async function handlePostSell(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const rawItem = interaction.options.getString('item', true);
+  const bidsAllowed = interaction.options.getBoolean('bids_allowed', true);
+  const condition = interaction.options.getString('condition', true) as Condition;
+  const notes = interaction.options.getString('notes') ?? undefined;
+  const guildId = interaction.guildId!;
+
+  if (rawItem === '__placeholder__') {
+    await interaction.editReply({ content: 'Please type an item name and select an option from the list.' });
+    return;
+  }
+
+  const isCustomItem = rawItem.startsWith('__custom__:');
+  const itemName = isCustomItem ? rawItem.slice('__custom__:'.length) : rawItem;
+
+  const displayName = interaction.member
+    ? (interaction.member as { displayName?: string }).displayName ?? interaction.user.username
+    : interaction.user.username;
+
+  let bggId: string | undefined;
+  let thumbnail: string | undefined;
+  let isExpansion = false;
+  let availableExpansions: { bggId: string; name: string }[] = [];
+  let parentItem: { bggId: string; name: string } | undefined;
+
+  if (!isCustomItem) {
+    try {
+      const results = searchCatalog(itemName);
+      if (results.length > 0) {
+        const catalogEntry = results[0];
+        bggId = String(catalogEntry.id);
+        isExpansion = catalogEntry.isExpansion;
+        const details = await getBGGGame(bggId).catch(() => null);
+        if (details?.thumbnail) thumbnail = details.thumbnail;
+        if (!isExpansion && details?.expansions) {
+          availableExpansions = details.expansions.map((e) => ({ bggId: e.id, name: e.name }));
+        }
+        if (isExpansion && details?.parentGame) {
+          parentItem = { bggId: details.parentGame.id, name: details.parentGame.name };
+        }
+      }
+    } catch {
+      // BGG lookup is best-effort
+    }
+  }
+
+  const draft: Omit<SellDraft, 'expiresAt'> = {
+    listingType: 'sell',
+    guildId,
+    userId: interaction.user.id,
+    username: displayName,
+    itemName,
+    bggId,
+    thumbnail,
+    isExpansion,
+    availableExpansions,
+    parentItem,
+    condition,
+    notes,
+    bidsAllowed,
+  };
+
+  const draftId = storeDraft(draft);
+  const stored = sellDrafts.get(draftId)!;
+
+  if (!bggId) {
+    await showNoBggPrompt(interaction, itemName, draftId);
+  } else if (!isExpansion && availableExpansions.length > 0) {
+    await showExpansionSelect(interaction, stored, draftId);
+  } else {
+    await showPriceScreen(interaction, stored, draftId);
+  }
+}
+
+async function showExpansionSelect(
+  interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction,
+  draft: SellDraft,
+  draftId: string,
+): Promise<void> {
+  const expansions = draft.availableExpansions ?? [];
+  const select = new StringSelectMenuBuilder()
+    .setCustomId(`mp_exp_select_${draftId}`)
+    .setPlaceholder('Select expansions you are including…')
+    .setMinValues(1)
+    .setMaxValues(expansions.length)
+    .addOptions(expansions.map((exp) => ({ label: exp.name.slice(0, 100), value: exp.bggId })));
+
+  const selectRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
+  const skipRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`mp_exp_skip_${draftId}`)
+      .setLabel('Skip — base item only')
+      .setStyle(ButtonStyle.Secondary),
+  );
+
+  const embed = new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle(`Expansions for ${draft.itemName}`)
+    .setDescription(
+      `Found **${expansions.length}** expansion${expansions.length > 1 ? 's' : ''} on BGG. ` +
+      `Select any you're including in this listing, then submit the menu — or skip to list the base item only.`,
+    );
+  if (draft.thumbnail) embed.setThumbnail(draft.thumbnail);
+
+  await interaction.editReply({ embeds: [embed], components: [selectRow, skipRow] });
+}
+
+export async function handleExpansionSelect(
+  interaction: StringSelectMenuInteraction,
+  draftId: string,
+): Promise<void> {
+  await interaction.deferUpdate();
+  const draft = sellDrafts.get(draftId);
+  if (!draft || draft.userId !== interaction.user.id || draft.expiresAt < Date.now()) {
+    await interaction.editReply({ content: 'This session has expired. Please run the command again.', embeds: [], components: [] });
+    return;
+  }
+
+  const selectedExpansions = interaction.values.map((bggId) => {
+    const found = draft.availableExpansions?.find((e) => e.bggId === bggId);
+    return { bggId, name: found?.name ?? bggId };
+  });
+
+  sellDrafts.set(draftId, { ...draft, expansions: selectedExpansions });
+  const updated = sellDrafts.get(draftId)!;
+
+  if (draft.listingType === 'sell') {
+    await showPriceScreen(interaction, updated, draftId);
+  } else {
+    await createTradeListing(interaction, updated);
+  }
+}
+
+export async function handleSkipExpansions(
+  interaction: ButtonInteraction,
+  draftId: string,
+): Promise<void> {
+  await interaction.deferUpdate();
+  const draft = sellDrafts.get(draftId);
+  if (!draft || draft.userId !== interaction.user.id || draft.expiresAt < Date.now()) {
+    await interaction.editReply({ content: 'This session has expired. Please run the command again.', embeds: [], components: [] });
+    return;
+  }
+  if (draft.listingType === 'sell') {
+    await showPriceScreen(interaction, draft, draftId);
+  } else {
+    await createTradeListing(interaction, draft);
+  }
+}
+
+async function showPriceScreen(
+  interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction,
+  draft: SellDraft,
+  draftId: string,
+): Promise<void> {
+  const { itemName, bggId, thumbnail, condition, expansions, priceCheckOnly } = draft;
+  const hasExpansions = expansions && expansions.length > 0;
+  const titleLabel = hasExpansions
+    ? `${itemName} + ${expansions!.length} expansion${expansions!.length > 1 ? 's' : ''}`
+    : itemName;
+  let suggestedPrice: number | undefined;
+
+  const priceEmbed = new EmbedBuilder()
+    .setColor(0x57f287)
+    .setTitle(priceCheckOnly ? `Price check — ${titleLabel}` : `Set a price for ${titleLabel}`)
+    .setDescription('Pick an option below.');
+
+  if (!priceCheckOnly) {
+    priceEmbed.addFields({ name: 'Condition', value: CONDITION_LABELS[condition], inline: true });
+  }
+
+  if (thumbnail) priceEmbed.setThumbnail(thumbnail);
+
+  if (bggId) {
+    if (hasExpansions) {
+      // Fetch prices for base item and all selected expansions in parallel
+      const allIds = [bggId, ...expansions!.map((e) => e.bggId)];
+      const allNames = [itemName, ...expansions!.map((e) => e.name)];
+      const allPrices = await Promise.all(
+        allIds.map((id) => fetchBGGMarketplacePrices(id).catch(() => null)),
+      );
+
+      let combinedMedian = 0;
+      let hasAnyData = false;
+      let totalListings = 0;
+      const priceFields: { name: string; value: string; inline?: boolean }[] = [];
+
+      for (let i = 0; i < allIds.length; i++) {
+        const p = allPrices[i];
+        const label = i === 0 ? `Base — ${allNames[i]}` : allNames[i];
+        if (p && p.listings.length > 0) {
+          hasAnyData = true;
+          totalListings += p.listings.length;
+          if (p.p50 != null) combinedMedian += p.p50;
+          priceFields.push({
+            name: label,
+            value: [
+              `Range: **${p.p25 != null ? formatPrice(p.p25) : '?'} – ${p.p75 != null ? formatPrice(p.p75) : '?'}** · Median: **${p.p50 != null ? formatPrice(p.p50) : '?'}**`,
+              `${p.listings.length} active listing${p.listings.length > 1 ? 's' : ''} on BoardGameGeek`,
+            ].join('\n'),
+          });
+        } else {
+          priceFields.push({ name: label, value: '*No BoardGameGeek listings found*' });
+        }
+      }
+
+      if (hasAnyData) {
+        suggestedPrice = Math.round(combinedMedian * 100) / 100;
+        const desc = priceCheckOnly
+          ? `Current BoardGameGeek marketplace prices — ${totalListings} listing${totalListings !== 1 ? 's' : ''} total across all items.`
+          : `Here's what each item is currently selling for on BoardGameGeek — pick a price for the bundle below.`;
+        priceEmbed.setDescription(desc).addFields(...priceFields);
+        if (suggestedPrice > 0) {
+          priceEmbed.addFields({ name: 'Combined estimate', value: `**${formatPrice(suggestedPrice)}**`, inline: true });
+        }
+      } else {
+        priceEmbed.addFields({ name: 'BoardGameGeek Marketplace', value: '*No active listings found for any of these items.*' });
+      }
+    } else {
+      // Single item — show histogram
+      const marketPrices = await fetchBGGMarketplacePrices(bggId).catch(() => null);
+      if (marketPrices && marketPrices.listings.length > 0) {
+        suggestedPrice = marketPrices.p50 ?? marketPrices.avgPrice ?? undefined;
+        const values = marketPrices.listings.map((l) => l.value);
+        const histogram = buildPriceHistogram(values);
+        const desc = priceCheckOnly
+          ? `Current BoardGameGeek marketplace prices — ${marketPrices.listings.length} active listing${marketPrices.listings.length > 1 ? 's' : ''}.`
+          : 'Here\'s what this item is currently selling for on BoardGameGeek — pick an option below.';
+        priceEmbed
+          .setDescription(desc)
+          .addFields(
+            {
+              name: `BoardGameGeek Marketplace — ${marketPrices.listings.length} active listing${marketPrices.listings.length > 1 ? 's' : ''}`,
+              value: [
+                `**Typical range: ${marketPrices.p25 != null ? formatPrice(marketPrices.p25) : '?'} – ${marketPrices.p75 != null ? formatPrice(marketPrices.p75) : '?'}** (middle 50%)`,
+                `Median: **${marketPrices.p50 != null ? formatPrice(marketPrices.p50) : '?'}** · Avg: ${marketPrices.avgPrice != null ? formatPrice(marketPrices.avgPrice) : '?'}`,
+              ].join('\n'),
+            },
+            { name: 'Price distribution', value: histogram || '*Not enough data*' },
+          );
+      } else {
+        priceEmbed.addFields({ name: 'BoardGameGeek Marketplace', value: '*No active listings found on BoardGameGeek — no price data available.*' });
+      }
+    }
+  }
+
+  // Store the suggested price back into the draft so button handlers can read it
+  sellDrafts.set(draftId, { ...draft, suggestedPrice });
+
+  if (priceCheckOnly) {
+    const bggAttachment = new AttachmentBuilder('BGG/images/powered_by_BGG_01_SM.png');
+    priceEmbed.setImage('attachment://powered_by_BGG_01_SM.png');
+    await interaction.editReply({ embeds: [priceEmbed], files: [bggAttachment], components: [] });
+    return;
+  }
+
+  const buttons = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    ...(suggestedPrice != null
+      ? [new ButtonBuilder().setCustomId(`mp_price_use_${draftId}`).setLabel(`Use ${formatPrice(suggestedPrice)}${hasExpansions ? ' (combined estimate)' : ' (median)'}`).setStyle(ButtonStyle.Success)]
+      : []),
+    new ButtonBuilder().setCustomId(`mp_price_custom_${draftId}`).setLabel('Enter my own price').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`mp_price_none_${draftId}`).setLabel('List as open to offers').setStyle(ButtonStyle.Secondary),
+  );
+
+  const bggAttachment = new AttachmentBuilder('BGG/images/powered_by_BGG_01_SM.png');
+  priceEmbed.setImage('attachment://powered_by_BGG_01_SM.png');
+  await interaction.editReply({ embeds: [priceEmbed], files: [bggAttachment], components: [buttons] });
+}
+
+async function showNoBggPrompt(
+  interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction,
+  itemName: string,
+  draftId: string,
+): Promise<void> {
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(`mp_ref_add_${draftId}`).setLabel('Add a link').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`mp_ref_skip_${draftId}`).setLabel('Continue without').setStyle(ButtonStyle.Secondary),
+  );
+  await interaction.editReply({
+    content: `**${itemName}** wasn't found on BoardGameGeek. Would you like to add a reference image URL or link before posting?`,
+    components: [row],
+  });
+}
+
+async function finalizeSellListing(
+  interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction,
+  draft: Omit<SellDraft, 'expiresAt'>,
+  price: number | undefined,
+): Promise<void> {
+  const { guildId, userId, username, itemName, bggId, thumbnail, condition, notes, referenceLink, bidsAllowed, expansions, parentItem } = draft;
+  const config = getGuildConfig(guildId);
+
+  const listing = createListing(guildId, {
+    guildId,
+    userId,
+    username,
+    type: 'sell',
+    bggId,
+    itemName,
+    thumbnail,
+    condition,
+    notes,
+    referenceLink,
+    askingPrice: price,
+    bidsAllowed,
+    expansions: expansions && expansions.length > 0 ? expansions : undefined,
+    parentItem,
+  });
+
+  appendMarketplaceLog({
+    timestamp: new Date().toISOString(),
+    guildId,
+    event: 'listing_created',
+    listingId: listing.id,
+    listingName: listing.itemName,
+    listingType: 'sell',
+    actorId: userId,
+    actorUsername: username,
+    amount: price,
+    details: `condition=${condition} bidsAllowed=${bidsAllowed}`,
+  });
+
+  let forumPosted = false;
+  let forumThreadId: string | undefined;
+  if (config.marketplaceChannelId) {
+    try {
+      const channel = await interaction.client.channels.fetch(config.marketplaceChannelId);
+      if (channel?.type === ChannelType.GuildForum) {
+        const threadId = await postListingToForum(listing, channel as ForumChannel, guildId);
+        if (threadId) {
+          updateListing(guildId, listing.id, { forumThreadId: threadId });
+          forumPosted = true;
+          forumThreadId = threadId;
+        }
+      }
+    } catch (err) {
+      console.error('[marketplace] forum channel fetch failed:', err);
+    }
+  }
+
+  const responseEmbed = new EmbedBuilder()
+    .setColor(0x57f287)
+    .setTitle(`Listing created — ${itemName}`)
+    .addFields(
+      { name: 'Price', value: price != null ? formatPrice(price) : 'Open to offers', inline: true },
+      { name: 'Bids', value: bidsAllowed ? 'Allowed' : 'Firm price', inline: true },
+      { name: 'Condition', value: CONDITION_LABELS[condition], inline: true },
+      { name: 'Listing ID', value: `\`${listing.id}\``, inline: false },
+      ...(forumThreadId ? [{ name: 'Forum Post', value: `[View listing](https://discord.com/channels/${guildId}/${forumThreadId})`, inline: false }] : []),
+    )
+    .setFooter({ text: forumPosted ? 'Posted to marketplace channel.' : 'No marketplace channel configured — use /admin marketplace config to set one.' });
+
+  if (thumbnail) responseEmbed.setThumbnail(thumbnail);
+
+  const replyPayload = { embeds: [responseEmbed], components: [] };
+  if ('editReply' in interaction && typeof (interaction as ChatInputCommandInteraction).editReply === 'function') {
+    await (interaction as ChatInputCommandInteraction).editReply(replyPayload);
+  } else if ('update' in interaction && typeof (interaction as ButtonInteraction).update === 'function') {
+    await (interaction as ButtonInteraction).update(replyPayload);
+  }
+}
+
+// ── /marketplace post trade ─────────────────────────────────────────────────
+
+async function handlePostTrade(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const rawItem = interaction.options.getString('item', true);
+  const condition = interaction.options.getString('condition', true) as Condition;
+  const lookingFor = interaction.options.getString('looking_for') ?? undefined;
+  const notes = interaction.options.getString('notes') ?? undefined;
+  const guildId = interaction.guildId!;
+
+  if (rawItem === '__placeholder__') {
+    await interaction.editReply({ content: 'Please type an item name and select an option from the list.' });
+    return;
+  }
+
+  const isCustomItem = rawItem.startsWith('__custom__:');
+  const itemName = isCustomItem ? rawItem.slice('__custom__:'.length) : rawItem;
+
+  const username = interaction.member
+    ? (interaction.member as { displayName?: string }).displayName ?? interaction.user.username
+    : interaction.user.username;
+
+  let bggId: string | undefined;
+  let thumbnail: string | undefined;
+  let isExpansion = false;
+  let availableExpansions: { bggId: string; name: string }[] = [];
+  let parentItem: { bggId: string; name: string } | undefined;
+
+  if (!isCustomItem) {
+    try {
+      const results = searchCatalog(itemName);
+      if (results.length > 0) {
+        const catalogEntry = results[0];
+        bggId = String(catalogEntry.id);
+        isExpansion = catalogEntry.isExpansion;
+        const details = await getBGGGame(bggId).catch(() => null);
+        if (details?.thumbnail) thumbnail = details.thumbnail;
+        if (!isExpansion && details?.expansions) {
+          availableExpansions = details.expansions.map((e) => ({ bggId: e.id, name: e.name }));
+        }
+        if (isExpansion && details?.parentGame) {
+          parentItem = { bggId: details.parentGame.id, name: details.parentGame.name };
+        }
+      }
+    } catch {
+      // best-effort
+    }
+  }
+
+  const draft: Omit<SellDraft, 'expiresAt'> = {
+    listingType: 'trade',
+    guildId,
+    userId: interaction.user.id,
+    username,
+    itemName,
+    bggId,
+    thumbnail,
+    isExpansion,
+    availableExpansions,
+    parentItem,
+    condition,
+    notes,
+    bidsAllowed: true,
+    lookingFor,
+  };
+
+  const draftId = storeDraft(draft);
+  const stored = sellDrafts.get(draftId)!;
+
+  if (!bggId) {
+    await showNoBggPrompt(interaction, itemName, draftId);
+  } else if (!isExpansion && availableExpansions.length > 0) {
+    await showExpansionSelect(interaction, stored, draftId);
+  } else {
+    await createTradeListing(interaction, stored);
+  }
+}
+
+// ── /marketplace price ───────────────────────────────────────────────────────
+
+async function handlePriceCheck(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const rawItem = interaction.options.getString('item', true);
+
+  if (rawItem === '__placeholder__') {
+    await interaction.editReply({ content: 'Please type an item name and select an option from the list.' });
+    return;
+  }
+
+  const isCustomItem = rawItem.startsWith('__custom__:');
+  const itemName = isCustomItem ? rawItem.slice('__custom__:'.length) : rawItem;
+
+  if (isCustomItem || !itemName.trim()) {
+    await interaction.editReply({ content: `**${itemName}** is not in the BGG catalog — no marketplace price data available for custom items.` });
+    return;
+  }
+
+  let bggId: string | undefined;
+  let thumbnail: string | undefined;
+  let isExpansion = false;
+  let availableExpansions: { bggId: string; name: string }[] = [];
+  let parentItem: { bggId: string; name: string } | undefined;
+
+  try {
+    const results = searchCatalog(itemName);
+    if (results.length > 0) {
+      const catalogEntry = results[0];
+      bggId = String(catalogEntry.id);
+      isExpansion = catalogEntry.isExpansion;
+      const details = await getBGGGame(bggId).catch(() => null);
+      if (details?.thumbnail) thumbnail = details.thumbnail;
+      if (!isExpansion && details?.expansions) {
+        availableExpansions = details.expansions.map((e) => ({ bggId: e.id, name: e.name }));
+      }
+      if (isExpansion && details?.parentGame) {
+        parentItem = { bggId: details.parentGame.id, name: details.parentGame.name };
+      }
+    }
+  } catch { /* best effort */ }
+
+  if (!bggId) {
+    await interaction.editReply({ content: `No BGG entry found for **${itemName}** — can't look up pricing.` });
+    return;
+  }
+
+  const draft: Omit<SellDraft, 'expiresAt'> = {
+    listingType: 'sell',
+    guildId: interaction.guildId!,
+    userId: interaction.user.id,
+    username: '',
+    itemName,
+    bggId,
+    thumbnail,
+    isExpansion,
+    availableExpansions,
+    parentItem,
+    condition: 'good',
+    bidsAllowed: false,
+    priceCheckOnly: true,
+  };
+
+  const draftId = storeDraft(draft);
+  const stored = sellDrafts.get(draftId)!;
+
+  if (!isExpansion && availableExpansions.length > 0) {
+    await showExpansionSelect(interaction, stored, draftId);
+  } else {
+    await showPriceScreen(interaction, stored, draftId);
+  }
+}
+
+async function createTradeListing(
+  interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction,
+  draft: Omit<SellDraft, 'expiresAt'>,
+): Promise<void> {
+  const { guildId, userId, username, itemName, bggId, thumbnail, condition, notes, referenceLink, lookingFor, expansions, parentItem } = draft;
+  const config = getGuildConfig(guildId);
+
+  const listing = createListing(guildId, {
+    guildId, userId, username,
+    type: 'trade',
+    bggId, itemName, thumbnail, condition, notes, referenceLink,
+    bidsAllowed: true,
+    lookingFor,
+    expansions: expansions && expansions.length > 0 ? expansions : undefined,
+    parentItem,
+  });
+
+  appendMarketplaceLog({
+    timestamp: new Date().toISOString(),
+    guildId,
+    event: 'listing_created',
+    listingId: listing.id,
+    listingName: listing.itemName,
+    listingType: 'trade',
+    actorId: userId,
+    actorUsername: username,
+    details: `condition=${condition}`,
+  });
+
+  let forumPosted = false;
+  let forumThreadId: string | undefined;
+  if (config.marketplaceChannelId) {
+    try {
+      const channel = await interaction.client.channels.fetch(config.marketplaceChannelId);
+      if (channel?.type === ChannelType.GuildForum) {
+        const threadId = await postListingToForum(listing, channel as ForumChannel, guildId);
+        if (threadId) { updateListing(guildId, listing.id, { forumThreadId: threadId }); forumPosted = true; forumThreadId = threadId; }
+      }
+    } catch (err) { console.error('[marketplace] forum channel fetch failed:', err); }
+  }
+
+  const responseEmbed = new EmbedBuilder()
+    .setColor(0xfee75c)
+    .setTitle(`Trade listing created — ${listing.itemName}`)
+    .addFields(
+      { name: 'Looking For', value: lookingFor ?? 'Open to offers', inline: true },
+      { name: 'Condition', value: CONDITION_LABELS[condition], inline: true },
+      { name: 'Listing ID', value: `\`${listing.id}\``, inline: false },
+      ...(forumThreadId ? [{ name: 'Forum Post', value: `[View listing](https://discord.com/channels/${guildId}/${forumThreadId})`, inline: false }] : []),
+    )
+    .setFooter({ text: forumPosted ? 'Posted to marketplace channel.' : 'No marketplace channel configured.' });
+
+  await interaction.editReply({ embeds: [responseEmbed] });
+}
+
+// ── /marketplace conditions ──────────────────────────────────────────────────
+
+async function handleConditions(interaction: ChatInputCommandInteraction): Promise<void> {
+  const embed = new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle('Marketplace Condition Guide')
+    .setDescription('Use these grades when listing items for sale or trade.')
+    .addFields(
+      {
+        name: '🆕 New',
+        value: 'Brand new, unused, unopened, and undamaged. Original packaging and all materials are in perfect condition.',
+      },
+      {
+        name: '✨ Like New',
+        value: 'Just removed from shrink wrap. No wear and tear, all components intact.',
+      },
+      {
+        name: '👍 Very Good',
+        value: 'Very minimal wear and tear. All materials present. You would give this to a friend as a gift.',
+      },
+      {
+        name: '✅ Good',
+        value: 'Minor damage to the box and/or contents. All materials present. May have been used once or twice.',
+      },
+      {
+        name: '⚠️ Acceptable',
+        value: 'Some box damage but item is intact. Possible split corners. May be missing a non-crucial piece or rules (available online). Scuffing on the item.',
+      },
+    );
+
+  await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+}
+
+// ── /marketplace browse ─────────────────────────────────────────────────────
+
+async function handleBrowse(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const guildId = interaction.guildId!;
+  const typeFilter = interaction.options.getString('type') as 'sell' | 'trade' | null;
+
+  let listings = getActiveListingsForGuild(guildId);
+  if (typeFilter) listings = listings.filter((l) => l.type === typeFilter);
+
+  if (listings.length === 0) {
+    await interaction.editReply({ content: 'No active listings found.' });
+    return;
+  }
+
+  const PAGE_SIZE = 5;
+  const page = listings.slice(0, PAGE_SIZE);
+  const lines = page.map((l) => {
+    const typeIcon = l.type === 'sell' ? '🏷️' : '🔄';
+    const statusIcon = l.status === 'pending' ? '🟡' : '🟢';
+    const priceStr = l.type === 'sell'
+      ? (l.askingPrice != null ? formatPrice(l.askingPrice) : 'Open to offers')
+      : (l.lookingFor ?? 'Open to offers');
+    const openBids = l.bids.filter((b) => b.status === 'open').length;
+    const threadLink = l.forumThreadId
+      ? ` — [View listing](https://discord.com/channels/${guildId}/${l.forumThreadId})`
+      : '';
+    return `${statusIcon} ${typeIcon} **${l.itemName}** — ${priceStr}${openBids > 0 ? ` *(${openBids} bid${openBids > 1 ? 's' : ''})*` : ''} — by ${l.username}${threadLink}`;
+  });
+
+  const moreNote = listings.length > PAGE_SIZE
+    ? `\n\n*Showing ${PAGE_SIZE} of ${listings.length}. Check the marketplace channel for all listings.*`
+    : '';
+
+  await interaction.editReply({
+    content: `**Active Marketplace Listings**\n\n${lines.join('\n')}${moreNote}`,
+  });
+}
+
+// ── /marketplace my ─────────────────────────────────────────────────────────
+
+async function handleMy(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const guildId = interaction.guildId!;
+  const listings = getUserListings(guildId, interaction.user.id);
+
+  if (listings.length === 0) {
+    await interaction.editReply({ content: "You don't have any listings. Use `/marketplace post` to create one." });
+    return;
+  }
+
+  const lines = listings.map((l) => {
+    const typeIcon = l.type === 'sell' ? '🏷️' : '🔄';
+    const statusEmoji: Record<string, string> = { active: '🟢', pending: '🟡', sold: '🔴', closed: '⚫' };
+    const priceStr = l.type === 'sell'
+      ? (l.askingPrice != null ? formatPrice(l.askingPrice) : 'Open to offers')
+      : (l.lookingFor ?? 'Open to offers');
+    const openBids = l.bids.filter((b) => b.status === 'open').length;
+    return `${statusEmoji[l.status]} ${typeIcon} **${l.itemName}** — ${priceStr}${openBids > 0 ? ` *(${openBids} open bid${openBids > 1 ? 's' : ''})*` : ''}\n  ID: \`${l.id}\``;
+  });
+
+  await interaction.editReply({
+    content: `**Your Listings**\n\n${lines.join('\n\n')}\n\nUse \`/marketplace close <id>\` to close a listing, or \`/marketplace reopen <id>\` to reopen one.`,
+  });
+}
+
+// ── /marketplace close ──────────────────────────────────────────────────────
+
+async function handleClose(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const guildId = interaction.guildId!;
+  const listingId = interaction.options.getString('id', true).trim();
+  const listing = getListing(guildId, listingId);
+
+  if (!listing) {
+    await interaction.editReply({ content: 'Listing not found.' });
+    return;
+  }
+
+  const isAdmin = interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ?? false;
+  if (listing.userId !== interaction.user.id && !isAdmin) {
+    await interaction.editReply({ content: 'You can only close your own listings.' });
+    return;
+  }
+
+  const updated = closeListing(guildId, listingId);
+  if (!updated) {
+    await interaction.editReply({ content: 'Could not close listing.' });
+    return;
+  }
+
+  appendMarketplaceLog({
+    timestamp: new Date().toISOString(),
+    guildId,
+    event: 'listing_closed',
+    listingId,
+    listingName: listing.itemName,
+    listingType: listing.type,
+    actorId: interaction.user.id,
+    actorUsername: interaction.user.username,
+  });
+
+  await updateForumPost(updated, interaction.client, guildId);
+  await interaction.editReply({ content: `Listing **${listing.itemName}** has been closed.` });
+}
+
+// ── /marketplace reopen ─────────────────────────────────────────────────────
+
+async function handleReopen(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const guildId = interaction.guildId!;
+  const listingId = interaction.options.getString('id', true).trim();
+  const listing = getListing(guildId, listingId);
+
+  if (!listing) {
+    await interaction.editReply({ content: 'Listing not found.' });
+    return;
+  }
+
+  if (listing.userId !== interaction.user.id) {
+    await interaction.editReply({ content: 'You can only reopen your own listings.' });
+    return;
+  }
+
+  const updated = reopenListing(guildId, listingId);
+  if (!updated) {
+    await interaction.editReply({ content: 'Could not reopen listing.' });
+    return;
+  }
+
+  appendMarketplaceLog({
+    timestamp: new Date().toISOString(),
+    guildId,
+    event: 'listing_reopened',
+    listingId,
+    listingName: listing.itemName,
+    listingType: listing.type,
+    actorId: interaction.user.id,
+    actorUsername: interaction.user.username,
+  });
+
+  await updateForumPost(updated, interaction.client, guildId);
+  await interaction.editReply({ content: `Listing **${listing.itemName}** has been reopened and is now ${updated.status}.` });
+}
+
+// ── /admin marketplace config ───────────────────────────────────────────────
+
+export async function handleAdminConfig(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const isAdmin = interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ?? false;
+  if (!isAdmin) {
+    await interaction.editReply({ content: 'This command requires Manage Server permission.' });
+    return;
+  }
+
+  const guildId = interaction.guildId!;
+  const channel = interaction.options.getChannel('channel');
+  const mode = interaction.options.getString('negotiation_mode') as 'public' | 'private' | null;
+
+  const patch: Record<string, unknown> = {};
+  if (channel) {
+    if (channel.type !== ChannelType.GuildForum) {
+      await interaction.editReply({ content: 'The marketplace channel must be a **Forum Channel**.' });
+      return;
+    }
+    patch.marketplaceChannelId = channel.id;
+  }
+  if (mode) patch.marketplaceNegotiationMode = mode;
+
+  if (Object.keys(patch).length === 0) {
+    const config = getGuildConfig(guildId);
+    await interaction.editReply({
+      content: [
+        '**Current marketplace config:**',
+        `• Channel: ${config.marketplaceChannelId ? `<#${config.marketplaceChannelId}>` : '*not set*'}`,
+        `• Negotiation mode: **${config.marketplaceNegotiationMode}**`,
+      ].join('\n'),
+    });
+    return;
+  }
+
+  updateGuildConfig(guildId, patch as Parameters<typeof updateGuildConfig>[1]);
+  const config = getGuildConfig(guildId);
+
+  // Eagerly create forum tags so they're ready before any listing is posted
+  if (patch.marketplaceChannelId && config.marketplaceChannelId) {
+    try {
+      const forumChannel = await interaction.client.channels.fetch(config.marketplaceChannelId);
+      if (forumChannel?.type === ChannelType.GuildForum) {
+        await ensureMarketplaceTags(forumChannel as ForumChannel, guildId);
+      }
+    } catch {
+      // non-fatal — tags will be created lazily on first listing post
+    }
+  }
+
+  await interaction.editReply({
+    content: [
+      'Marketplace config updated.',
+      `• Channel: ${config.marketplaceChannelId ? `<#${config.marketplaceChannelId}>` : '*not set*'}`,
+      `• Negotiation mode: **${config.marketplaceNegotiationMode}**`,
+      patch.marketplaceChannelId ? '\n✅ Forum tags created/verified.' : '',
+    ].join('\n'),
+  });
+}
+
+// ── /admin marketplace purge ────────────────────────────────────────────────
+
+export async function handleAdminPurge(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const isAdmin = interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ?? false;
+  if (!isAdmin) {
+    await interaction.editReply({ content: 'This command requires Manage Server permission.' });
+    return;
+  }
+
+  const guildId = interaction.guildId!;
+  const targetUser = interaction.options.getUser('user');
+  const statusOption = interaction.options.getString('status')
+    ?? (targetUser ? 'all' : 'sold_closed');
+
+  const statusFilter: Parameters<typeof purgeListings>[1]['status'] =
+    statusOption === 'active' ? ['active'] :
+    statusOption === 'active_pending' ? ['active', 'pending'] :
+    statusOption === 'all' ? ['active', 'pending', 'sold', 'closed'] :
+    ['sold', 'closed'];
+
+  const removed = purgeListings(guildId, {
+    userId: targetUser?.id,
+    status: statusFilter,
+  });
+
+  appendMarketplaceLog({
+    timestamp: new Date().toISOString(),
+    guildId,
+    event: 'admin_purge',
+    listingId: 'bulk',
+    listingName: 'bulk',
+    listingType: 'sell',
+    actorId: interaction.user.id,
+    actorUsername: interaction.user.username,
+    details: `purged ${removed} listings, status=${statusOption}, userId=${targetUser?.id ?? 'all'}`,
+  });
+
+  const scope = targetUser ? ` from ${targetUser.username}` : '';
+  await interaction.editReply({
+    content: `Purged **${removed}** listing${removed !== 1 ? 's' : ''}${scope} (filter: ${statusOption}).`,
+  });
+}
+
+// ── execute ─────────────────────────────────────────────────────────────────
+
+export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+  const group = interaction.options.getSubcommandGroup(false);
+  const sub = interaction.options.getSubcommand();
+
+  if (group === 'post') {
+    if (sub === 'sell') await handlePostSell(interaction);
+    else if (sub === 'trade') await handlePostTrade(interaction);
+  } else {
+    if (sub === 'browse') await handleBrowse(interaction);
+    else if (sub === 'my') await handleMy(interaction);
+    else if (sub === 'price') await handlePriceCheck(interaction);
+    else if (sub === 'conditions') await handleConditions(interaction);
+    else if (sub === 'close') await handleClose(interaction);
+    else if (sub === 'reopen') await handleReopen(interaction);
+  }
+}
+
+// ── Price suggestion buttons ─────────────────────────────────────────────────
+
+export async function handlePriceUseSuggested(interaction: ButtonInteraction, draftId: string): Promise<void> {
+  const draft = takeDraft(draftId);
+  if (!draft || draft.userId !== interaction.user.id) {
+    await interaction.update({ content: 'This price selection has expired. Please run `/marketplace post sell` again.', embeds: [], components: [] });
+    return;
+  }
+  await interaction.deferUpdate();
+  await finalizeSellListing(interaction, draft, draft.suggestedPrice);
+}
+
+export async function handlePriceNone(interaction: ButtonInteraction, draftId: string): Promise<void> {
+  const draft = takeDraft(draftId);
+  if (!draft || draft.userId !== interaction.user.id) {
+    await interaction.update({ content: 'This price selection has expired. Please run `/marketplace post sell` again.', embeds: [], components: [] });
+    return;
+  }
+  await interaction.deferUpdate();
+  await finalizeSellListing(interaction, draft, undefined);
+}
+
+export async function handlePriceCustomButton(interaction: ButtonInteraction, draftId: string): Promise<void> {
+  const draft = sellDrafts.get(draftId);
+  if (!draft || draft.userId !== interaction.user.id || draft.expiresAt < Date.now()) {
+    await interaction.update({ content: 'This price selection has expired. Please run `/marketplace post sell` again.', embeds: [], components: [] });
+    return;
+  }
+  const modal = new ModalBuilder()
+    .setCustomId(`mp_price_modal_${draftId}`)
+    .setTitle(`Set your price — ${draft.itemName}`)
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('custom_price')
+          .setLabel('Your asking price (USD)')
+          .setPlaceholder(draft.suggestedPrice != null ? `BGG avg: ${formatPrice(draft.suggestedPrice)}` : 'e.g. 25.00')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true),
+      ),
+    );
+  await interaction.showModal(modal);
+}
+
+export async function handlePriceCustomModal(interaction: ModalSubmitInteraction, draftId: string): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const draft = takeDraft(draftId);
+  if (!draft || draft.userId !== interaction.user.id) {
+    await interaction.editReply({ content: 'This price selection has expired. Please run `/marketplace post sell` again.' });
+    return;
+  }
+  const raw = interaction.fields.getTextInputValue('custom_price').trim();
+  const price = parseFloat(raw.replace(/[^0-9.]/g, ''));
+  if (isNaN(price) || price < 0) {
+    await interaction.editReply({ content: 'Invalid price — please enter a number like `25.00`.' });
+    return;
+  }
+  await finalizeSellListing(interaction, draft, price);
+}
+
+// ── Button: I'm Interested ──────────────────────────────────────────────────
+
+export async function handleInterestButton(interaction: ButtonInteraction, listingId: string): Promise<void> {
+  const guildId = interaction.guildId!;
+  const listing = getListing(guildId, listingId);
+
+  if (!listing || listing.status === 'sold' || listing.status === 'closed') {
+    await interaction.reply({ content: 'This listing is no longer available.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  if (listing.userId === interaction.user.id) {
+    await interaction.reply({ content: "You can't bid on your own listing.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const existingBid = getOpenBid(listing, interaction.user.id);
+  if (existingBid) {
+    await interaction.reply({ content: 'You already have an open bid on this listing.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const modal = new ModalBuilder()
+    .setCustomId(`mp_bid_${listingId}`)
+    .setTitle(`Interested in ${listing.itemName}`);
+
+  const components: ActionRowBuilder<TextInputBuilder>[] = [];
+
+  if (listing.type === 'sell' && listing.bidsAllowed) {
+    const priceRef = listing.askingPrice != null ? ` (asking ${formatPrice(listing.askingPrice)})` : '';
+    components.push(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('bid_amount')
+          .setLabel(`Your offer${priceRef}`)
+          .setPlaceholder('Enter amount in USD, e.g. 25.00')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false),
+      ),
+    );
+  } else if (listing.type === 'trade') {
+    components.push(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('bid_offer')
+          .setLabel('What are you offering in exchange?')
+          .setPlaceholder(listing.lookingFor ? `Seller wants: ${listing.lookingFor}` : 'Describe what you\'ll trade')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false),
+      ),
+    );
+  }
+
+  components.push(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId('bid_message')
+        .setLabel('Message to seller (optional)')
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(false)
+        .setMaxLength(500),
+    ),
+  );
+
+  modal.addComponents(...components);
+  await interaction.showModal(modal);
+}
+
+// ── Modal: bid submitted ─────────────────────────────────────────────────────
+
+export async function handleBidModal(interaction: ModalSubmitInteraction, listingId: string): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const guildId = interaction.guildId!;
+  const listing = getListing(guildId, listingId);
+
+  if (!listing || listing.status === 'sold' || listing.status === 'closed') {
+    await interaction.editReply({ content: 'This listing is no longer available.' });
+    return;
+  }
+
+  const amountRaw = (listing.type === 'sell' && listing.bidsAllowed)
+    ? interaction.fields.getTextInputValue('bid_amount').trim()
+    : '';
+  const offerRaw = listing.type === 'trade'
+    ? interaction.fields.getTextInputValue('bid_offer').trim()
+    : '';
+  const messageRaw = interaction.fields.getTextInputValue('bid_message').trim();
+
+  let amount: number | undefined;
+  if (amountRaw) {
+    amount = parseFloat(amountRaw.replace(/[^0-9.]/g, ''));
+    if (isNaN(amount)) {
+      await interaction.editReply({ content: 'Invalid amount — please enter a number like `25.00`.' });
+      return;
+    }
+  }
+
+  const bidderName = interaction.member
+    ? (interaction.member as { displayName?: string }).displayName ?? interaction.user.username
+    : interaction.user.username;
+
+  const result = addBid(guildId, listingId, {
+    userId: interaction.user.id,
+    username: bidderName,
+    amount,
+    offer: offerRaw || undefined,
+    message: messageRaw || undefined,
+  });
+
+  if (!result) {
+    await interaction.editReply({ content: 'Could not place bid.' });
+    return;
+  }
+
+  appendMarketplaceLog({
+    timestamp: new Date().toISOString(),
+    guildId,
+    event: 'bid_placed',
+    listingId,
+    listingName: listing.itemName,
+    listingType: listing.type,
+    actorId: interaction.user.id,
+    actorUsername: interaction.user.username,
+    bidId: result.bid.id,
+    amount,
+    offer: offerRaw || undefined,
+  });
+
+  const config = getGuildConfig(guildId);
+
+  const bidLines: string[] = [`**${bidderName}** is interested in **${listing.itemName}**`];
+  if (amount != null) bidLines.push(`Bid: **${formatPrice(amount)}**`);
+  if (offerRaw) bidLines.push(`Offering: **${offerRaw}**`);
+  if (messageRaw) bidLines.push(`Message: ${messageRaw}`);
+
+  const sellerNotification = bidLines.join('\n');
+
+  if (config.marketplaceNegotiationMode === 'private') {
+    // Private mode: negotiate via DMs. Seller gets action buttons; forum post reflects updated status only.
+    try {
+      const seller = await interaction.client.users.fetch(listing.userId);
+      await seller.send({
+        content: [
+          `📬 **New bid on your ${listing.itemName} listing:**`,
+          sellerNotification,
+        ].join('\n'),
+        components: [bidActionRow(listingId, result.bid.id)],
+      });
+    } catch {
+      // seller DMs disabled — fall back to forum post
+    }
+    if (listing.forumThreadId) {
+      try {
+        await updateForumPost(result.listing, interaction.client, guildId);
+      } catch (err) {
+        console.error('[marketplace] private mode forum update failed:', err);
+      }
+    }
+  } else if (listing.forumThreadId) {
+    // Forum mode: post text-only notification to thread, send action buttons via DM
+    let threadChannel: ThreadChannel | null = null;
+    try {
+      threadChannel = await interaction.client.channels.fetch(listing.forumThreadId) as ThreadChannel;
+      await threadChannel.send({
+        content: `${sellerNotification}\n📬 <@${listing.userId}> — you have a new bid! Check your DMs from the bot to accept, deny, or counter.`,
+      });
+      await updateForumPost(result.listing, interaction.client, guildId);
+    } catch (err) {
+      console.error('[marketplace] forum thread post failed:', err);
+    }
+
+    let dmSent = false;
+    try {
+      const seller = await interaction.client.users.fetch(listing.userId);
+      await seller.send({
+        content: [
+          `📬 New bid on your **${listing.itemName}** listing:`,
+          sellerNotification,
+        ].join('\n'),
+        components: [bidActionRow(listingId, result.bid.id)],
+      });
+      dmSent = true;
+    } catch {
+      // DMs disabled — post buttons to thread as fallback
+    }
+
+    if (!dmSent && threadChannel) {
+      try {
+        await threadChannel.send({
+          content: `<@${listing.userId}> — your DMs are disabled. Use the buttons below to respond:`,
+          components: [bidActionRow(listingId, result.bid.id)],
+        });
+      } catch (err) {
+        console.error('[marketplace] fallback button post failed:', err);
+      }
+    }
+  }
+
+  if (config.marketplaceNegotiationMode !== 'private') {
+    // DM already sent above with buttons; skip duplicate DM
+  }
+
+  const modeNote = config.marketplaceNegotiationMode === 'private'
+    ? 'The seller has been notified via DM.'
+    : 'Check the listing thread for updates.';
+  await interaction.editReply({ content: `Your interest has been sent to the seller. ${modeNote}` });
+}
+
+// ── No-BGG reference prompt handlers ────────────────────────────────────────
+
+export async function handleAddRefButton(interaction: ButtonInteraction, draftId: string): Promise<void> {
+  const draft = sellDrafts.get(draftId);
+  if (!draft || draft.userId !== interaction.user.id) {
+    await interaction.reply({ content: 'This session has expired. Please run the command again.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const modal = new ModalBuilder()
+    .setCustomId(`mp_ref_modal_${draftId}`)
+    .setTitle('Add a reference link')
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('ref_link')
+          .setLabel('Reference link (optional)')
+          .setPlaceholder('https://...')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false),
+      ),
+    );
+
+  await interaction.showModal(modal);
+}
+
+export async function handleSkipRefButton(interaction: ButtonInteraction, draftId: string): Promise<void> {
+  await interaction.deferUpdate();
+  const draft = sellDrafts.get(draftId);
+  if (!draft || draft.userId !== interaction.user.id) {
+    await interaction.editReply({ content: 'This session has expired. Please run the command again.' });
+    return;
+  }
+  if (draft.listingType === 'sell') {
+    await showPriceScreen(interaction, draft, draftId);
+  } else {
+    await createTradeListing(interaction, draft);
+  }
+}
+
+export async function handleRefModal(interaction: ModalSubmitInteraction, draftId: string): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const draft = sellDrafts.get(draftId);
+  if (!draft || draft.userId !== interaction.user.id) {
+    await interaction.editReply({ content: 'This session has expired. Please run the command again.' });
+    return;
+  }
+
+  const refLink = interaction.fields.getTextInputValue('ref_link').trim() || undefined;
+  const updated = { ...draft, referenceLink: refLink ?? draft.referenceLink };
+  sellDrafts.set(draftId, updated);
+
+  if (draft.listingType === 'sell') {
+    await showPriceScreen(interaction, updated, draftId);
+  } else {
+    await createTradeListing(interaction, updated);
+  }
+}
+
+// ── Library removal prompt (shown after a listing is sold) ──────────────────
+
+function libraryRemoveRow(guildId: string, listingId: string): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`mp_lib_remove_${guildId}_${listingId}`)
+      .setLabel('Yes, remove it')
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId(`mp_lib_keep_${listingId}`)
+      .setLabel('No, keep it')
+      .setStyle(ButtonStyle.Secondary),
+  );
+}
+
+export async function handleLibraryRemove(
+  interaction: ButtonInteraction,
+  guildId: string,
+  listingId: string,
+): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const listing = getListing(guildId, listingId);
+  if (!listing || listing.userId !== interaction.user.id) {
+    await interaction.editReply({ content: 'Could not verify listing ownership.' });
+    return;
+  }
+  const result = removeGame(guildId, interaction.user.id, listing.itemName);
+  await interaction.editReply({
+    content: result === 'removed'
+      ? `**${listing.itemName}** has been removed from your library.`
+      : `**${listing.itemName}** was not found in your library.`,
+  });
+}
+
+export async function handleLibraryKeep(interaction: ButtonInteraction): Promise<void> {
+  await interaction.reply({ content: 'Got it — the item stays in your library.', flags: MessageFlags.Ephemeral });
+}
+
+// ── Button: Accept bid ───────────────────────────────────────────────────────
+
+export async function handleAcceptBid(interaction: ButtonInteraction, listingId: string, bidId: string): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const guildId = interaction.guildId!;
+  const listing = getListing(guildId, listingId);
+  if (!listing) { await interaction.editReply({ content: 'Listing not found.' }); return; }
+  if (listing.userId !== interaction.user.id) { await interaction.editReply({ content: 'Only the seller can accept bids.' }); return; }
+
+  const result = acceptBid(guildId, listingId, bidId);
+  if (!result) { await interaction.editReply({ content: 'Bid not found.' }); return; }
+
+  appendMarketplaceLog({
+    timestamp: new Date().toISOString(),
+    guildId,
+    event: 'bid_accepted',
+    listingId,
+    listingName: listing.itemName,
+    listingType: listing.type,
+    actorId: interaction.user.id,
+    actorUsername: interaction.user.username,
+    bidId,
+  });
+  appendMarketplaceLog({
+    timestamp: new Date().toISOString(),
+    guildId,
+    event: 'listing_sold',
+    listingId,
+    listingName: listing.itemName,
+    listingType: listing.type,
+    actorId: interaction.user.id,
+    actorUsername: interaction.user.username,
+  });
+
+  // Post visible conclusion to the thread before it gets archived
+  if (result.listing.forumThreadId) {
+    try {
+      const thread = await interaction.client.channels.fetch(result.listing.forumThreadId) as ThreadChannel;
+      const verb = listing.type === 'sell' ? 'sold' : 'traded';
+      await thread.send(
+        `✅ **Deal done!** <@${listing.userId}> has accepted <@${result.acceptedBid.userId}>'s offer — **${listing.itemName}** is now ${verb}. Coordinate the exchange directly. This listing is now closed.`,
+      );
+    } catch { /* thread may be gone */ }
+  }
+
+  // Remove buttons from the DM/thread message that was clicked
+  try {
+    await interaction.message.edit({
+      content: `${interaction.message.content}\n\n✅ **Accepted** — deal done!`,
+      components: [],
+    });
+  } catch { /* message may not be editable */ }
+
+  await updateForumPost(result.listing, interaction.client, guildId);
+
+  try {
+    const buyer = await interaction.client.users.fetch(result.acceptedBid.userId);
+    await buyer.send(
+      `✅ Your bid on **${listing.itemName}** was accepted by ${listing.username}! Coordinate the exchange in the listing thread or message the seller directly.`,
+    );
+  } catch { /* DMs disabled */ }
+
+  for (const closedBid of result.closedBids) {
+    try {
+      const buyer = await interaction.client.users.fetch(closedBid.userId);
+      await buyer.send(`Sorry, **${listing.itemName}** has been sold to someone else. Thanks for your interest!`);
+    } catch { /* DMs disabled */ }
+  }
+
+  await interaction.editReply({ content: `Bid accepted! **${listing.itemName}** is now marked as sold.` });
+
+  const inLibrary = getGamesByUser(guildId, listing.userId).some(
+    (e) => e.gameName.toLowerCase() === listing.itemName.toLowerCase(),
+  );
+  if (inLibrary) {
+    await interaction.followUp({
+      content: `**${listing.itemName}** is in your library. Would you like to remove it now that it's sold?`,
+      components: [libraryRemoveRow(guildId, listingId)],
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+}
+
+// ── Button: Deny bid ─────────────────────────────────────────────────────────
+
+export async function handleDenyBid(interaction: ButtonInteraction, listingId: string, bidId: string): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const guildId = interaction.guildId!;
+  const listing = getListing(guildId, listingId);
+  if (!listing) { await interaction.editReply({ content: 'Listing not found.' }); return; }
+
+  const isSeller = listing.userId === interaction.user.id;
+  const bid = listing.bids.find((b) => b.id === bidId);
+  const isBuyer = bid?.userId === interaction.user.id;
+
+  if (!isSeller && !isBuyer) {
+    await interaction.editReply({ content: 'Only the seller or the bidder can deny/withdraw this bid.' });
+    return;
+  }
+
+  const result = denyBid(guildId, listingId, bidId);
+  if (!result) { await interaction.editReply({ content: 'Bid not found.' }); return; }
+
+  const event = isBuyer ? 'bid_withdrawn' : 'bid_denied';
+  appendMarketplaceLog({
+    timestamp: new Date().toISOString(),
+    guildId,
+    event,
+    listingId,
+    listingName: listing.itemName,
+    listingType: listing.type,
+    actorId: interaction.user.id,
+    actorUsername: interaction.user.username,
+    bidId,
+  });
+
+  // Remove buttons from the DM/thread message that was clicked
+  try {
+    const resultLabel = isBuyer ? '↩️ **Withdrawn** — bid withdrawn.' : '❌ **Declined** — bid denied.';
+    await interaction.message.edit({
+      content: `${interaction.message.content}\n\n${resultLabel}`,
+      components: [],
+    });
+  } catch { /* message may not be editable */ }
+
+  await updateForumPost(result.listing, interaction.client, guildId);
+
+  if (isSeller && bid) {
+    try {
+      const buyer = await interaction.client.users.fetch(bid.userId);
+      await buyer.send(`Your bid on **${listing.itemName}** was declined. The listing is back to ${result.listing.status}.`);
+    } catch { /* DMs disabled */ }
+  }
+
+  await interaction.editReply({ content: isBuyer ? 'Your bid has been withdrawn.' : 'Bid denied. The listing is back to active.' });
+}
+
+// ── Button: Counter bid ──────────────────────────────────────────────────────
+
+export async function handleCounterButton(interaction: ButtonInteraction, listingId: string, bidId: string): Promise<void> {
+  const guildId = interaction.guildId!;
+  const listing = getListing(guildId, listingId);
+  if (!listing) { await interaction.reply({ content: 'Listing not found.', flags: MessageFlags.Ephemeral }); return; }
+
+  const bid = listing.bids.find((b) => b.id === bidId);
+  const isSeller = listing.userId === interaction.user.id;
+  const isBuyer = bid?.userId === interaction.user.id;
+
+  if (!isSeller && !isBuyer) {
+    await interaction.reply({ content: 'Only the seller or the bidder can counter.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const modal = new ModalBuilder()
+    .setCustomId(`mp_counter_modal_${listingId}_${bidId}`)
+    .setTitle(`Counter offer — ${listing.itemName}`);
+
+  const components: ActionRowBuilder<TextInputBuilder>[] = [];
+
+  if (listing.type === 'sell') {
+    components.push(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('counter_amount')
+          .setLabel('Your counter offer (USD)')
+          .setPlaceholder('Enter amount, e.g. 30.00')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false),
+      ),
+    );
+  } else {
+    components.push(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('counter_offer')
+          .setLabel('Your counter offer')
+          .setPlaceholder('Describe what you\'re offering')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false),
+      ),
+    );
+  }
+
+  components.push(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId('counter_message')
+        .setLabel('Message (optional)')
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(false)
+        .setMaxLength(500),
+    ),
+  );
+
+  modal.addComponents(...components);
+  await interaction.showModal(modal);
+
+  // Strip the action buttons now that a counter is being composed.
+  // showModal() responds to the interaction; message.edit() is a separate REST call.
+  try {
+    await interaction.message.edit({
+      content: `${interaction.message.content}\n\n💬 **Counter offer sent** — waiting for response.`,
+      components: [],
+    });
+  } catch { /* message may not be editable */ }
+}
+
+// ── Modal: counter submitted ─────────────────────────────────────────────────
+
+export async function handleCounterModal(
+  interaction: ModalSubmitInteraction,
+  listingId: string,
+  bidId: string,
+): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const guildId = interaction.guildId!;
+  const listing = getListing(guildId, listingId);
+  if (!listing) { await interaction.editReply({ content: 'Listing not found.' }); return; }
+
+  const bid = listing.bids.find((b) => b.id === bidId);
+  if (!bid) { await interaction.editReply({ content: 'Bid not found.' }); return; }
+
+  const isSeller = listing.userId === interaction.user.id;
+  const isBuyer = bid.userId === interaction.user.id;
+  if (!isSeller && !isBuyer) { await interaction.editReply({ content: 'You cannot counter this bid.' }); return; }
+
+  const amountRaw = interaction.fields.getTextInputValue('counter_amount').trim();
+  const offerRaw = interaction.fields.getTextInputValue('counter_offer').trim();
+  const messageRaw = interaction.fields.getTextInputValue('counter_message').trim();
+
+  let amount: number | undefined;
+  if (amountRaw) {
+    amount = parseFloat(amountRaw.replace(/[^0-9.]/g, ''));
+    if (isNaN(amount)) { await interaction.editReply({ content: 'Invalid amount.' }); return; }
+  }
+
+  const fromName = interaction.member
+    ? (interaction.member as { displayName?: string }).displayName ?? interaction.user.username
+    : interaction.user.username;
+
+  const result = addCounter(guildId, listingId, bidId, {
+    fromUserId: interaction.user.id,
+    fromUsername: fromName,
+    amount,
+    offer: offerRaw || undefined,
+    message: messageRaw || undefined,
+  });
+
+  if (!result) { await interaction.editReply({ content: 'Could not submit counter.' }); return; }
+
+  appendMarketplaceLog({
+    timestamp: new Date().toISOString(),
+    guildId,
+    event: 'counter_made',
+    listingId,
+    listingName: listing.itemName,
+    listingType: listing.type,
+    actorId: interaction.user.id,
+    actorUsername: interaction.user.username,
+    bidId,
+    counterId: result.counter.id,
+    amount,
+    offer: offerRaw || undefined,
+  });
+
+  const counterLines: string[] = [`**Counter from ${fromName}** on **${listing.itemName}**`];
+  if (amount != null) counterLines.push(`Counter offer: **${formatPrice(amount)}**`);
+  if (offerRaw) counterLines.push(`Offering: **${offerRaw}**`);
+  if (messageRaw) counterLines.push(messageRaw);
+
+  const targetUserId = isSeller ? bid.userId : listing.userId;
+  const responseRow = isSeller ? buyerResponseRow(listingId, bidId) : bidActionRow(listingId, bidId);
+  const threadId = bid.negotiationThreadId ?? listing.forumThreadId;
+
+  let counterThread: ThreadChannel | null = null;
+  if (threadId) {
+    try {
+      counterThread = await interaction.client.channels.fetch(threadId) as ThreadChannel;
+      // Post text-only to thread; buttons go to the recipient via DM
+      await counterThread.send({ content: `${counterLines.join('\n')}\n📬 <@${targetUserId}> — check your DMs from the bot to respond.` });
+    } catch (err) {
+      console.error('[marketplace] counter post to thread failed:', err);
+    }
+  }
+
+  let dmSent = false;
+  try {
+    const target = await interaction.client.users.fetch(targetUserId);
+    await target.send({ content: counterLines.join('\n'), components: [responseRow] });
+    dmSent = true;
+  } catch { /* DMs disabled */ }
+
+  if (!dmSent && counterThread) {
+    try {
+      const targetMention = `<@${targetUserId}>`;
+      await counterThread.send({
+        content: `${targetMention} — your DMs are disabled. Use the buttons below to respond:`,
+        components: [responseRow],
+      });
+    } catch (err) {
+      console.error('[marketplace] fallback counter button post failed:', err);
+    }
+  }
+
+  await interaction.editReply({ content: 'Counter submitted.' });
+}
+
+// ── Button: buyer accepts counter ────────────────────────────────────────────
+
+export async function handleBuyerAcceptCounter(
+  interaction: ButtonInteraction,
+  listingId: string,
+  bidId: string,
+): Promise<void> {
+  const guildId = interaction.guildId!;
+  const listing = getListing(guildId, listingId);
+  if (!listing) { await interaction.reply({ content: 'Listing not found.', flags: MessageFlags.Ephemeral }); return; }
+
+  const bid = listing.bids.find((b) => b.id === bidId);
+  if (!bid || bid.userId !== interaction.user.id) {
+    await interaction.reply({ content: 'You are not the bidder on this offer.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const result = acceptBid(guildId, listingId, bidId);
+  if (!result) { await interaction.editReply({ content: 'Could not complete acceptance.' }); return; }
+
+  appendMarketplaceLog({
+    timestamp: new Date().toISOString(),
+    guildId,
+    event: 'bid_accepted',
+    listingId,
+    listingName: listing.itemName,
+    listingType: listing.type,
+    actorId: interaction.user.id,
+    actorUsername: interaction.user.username,
+    bidId,
+    details: 'buyer accepted counter',
+  });
+  appendMarketplaceLog({
+    timestamp: new Date().toISOString(),
+    guildId,
+    event: 'listing_sold',
+    listingId,
+    listingName: listing.itemName,
+    listingType: listing.type,
+    actorId: interaction.user.id,
+    actorUsername: interaction.user.username,
+  });
+
+  // Post visible conclusion to the thread before it gets archived
+  if (result.listing.forumThreadId) {
+    try {
+      const thread = await interaction.client.channels.fetch(result.listing.forumThreadId) as ThreadChannel;
+      const verb = listing.type === 'sell' ? 'sold' : 'traded';
+      await thread.send(
+        `✅ **Deal done!** <@${bid.userId}> accepted the counter offer from <@${listing.userId}> — **${listing.itemName}** is now ${verb}. Coordinate the exchange directly. This listing is now closed.`,
+      );
+    } catch { /* thread may be gone */ }
+  }
+
+  // Remove buttons from the DM message that was clicked
+  try {
+    await interaction.message.edit({
+      content: `${interaction.message.content}\n\n✅ **Accepted** — you accepted the counter offer!`,
+      components: [],
+    });
+  } catch { /* message may not be editable */ }
+
+  await updateForumPost(result.listing, interaction.client, guildId);
+
+  try {
+    const seller = await interaction.client.users.fetch(listing.userId);
+    const inLibrary = getGamesByUser(guildId, listing.userId).some(
+      (e) => e.gameName.toLowerCase() === listing.itemName.toLowerCase(),
+    );
+    const dmBase = `✅ The buyer accepted your counter on **${listing.itemName}**! Coordinate the exchange in the listing thread.`;
+    if (inLibrary) {
+      await seller.send({
+        content: `${dmBase}\n\n**${listing.itemName}** is in your library. Would you like to remove it now that it's sold?`,
+        components: [libraryRemoveRow(guildId, listing.id)],
+      });
+    } else {
+      await seller.send(dmBase);
+    }
+  } catch { /* DMs disabled */ }
+
+  for (const closedBid of result.closedBids) {
+    try {
+      const buyer = await interaction.client.users.fetch(closedBid.userId);
+      await buyer.send(`Sorry, **${listing.itemName}** has been sold to someone else.`);
+    } catch { /* DMs disabled */ }
+  }
+
+  await interaction.editReply({ content: `You accepted the counter — **${listing.itemName}** is now marked as sold. Coordinate the exchange with the seller!` });
+}

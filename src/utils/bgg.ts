@@ -23,6 +23,7 @@ export interface BGGGame {
   weight: number | null;
   thumbnail: string | null;
   expansions: BGGExpansion[];
+  parentGame?: BGGExpansion;
   tags: string[];
   howToPlayUrl: string | null;
 }
@@ -381,6 +382,10 @@ function parseBGGItem(item: any, id: string): Omit<BGGGame, 'howToPlayUrl'> {
     .map((l) => ({ id: String(l['@_id']), name: String(l['@_value']) }))
     .slice(0, 25);
 
+  const parentGame: BGGExpansion | undefined = links
+    .filter((l) => l['@_type'] === 'boardgameexpansion' && l['@_inbound'])
+    .map((l) => ({ id: String(l['@_id']), name: String(l['@_value']) }))[0];
+
   const seen = new Set<string>();
   const tags: string[] = [];
   for (const link of links) {
@@ -413,6 +418,7 @@ function parseBGGItem(item: any, id: string): Omit<BGGGame, 'howToPlayUrl'> {
         : String(item.thumbnail)
       : null,
     expansions,
+    parentGame,
     tags,
   };
 }
@@ -443,6 +449,154 @@ export async function getBGGGame(id: string): Promise<BGGGame> {
 
 // Batch fetch up to 20 games in a single XMLAPI2 call, then fetch videos individually.
 // videoDelayMs is the pause between each geekdo video API call.
+export interface BGGMarketplacePrice {
+  currency: string;
+  value: number;
+  condition: string;
+  listDate: string;
+}
+
+export interface BGGMarketplaceSummary {
+  listings: BGGMarketplacePrice[];
+  avgPrice: number | null;
+  minPrice: number | null;
+  maxPrice: number | null;
+  p25: number | null;
+  p50: number | null;
+  p75: number | null;
+  currency: string;
+}
+
+function percentile(sorted: number[], p: number): number {
+  if (sorted.length === 1) return sorted[0];
+  const idx = (p / 100) * (sorted.length - 1);
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+}
+
+export async function fetchBGGMarketplacePrices(bggId: string): Promise<BGGMarketplaceSummary | null> {
+  try {
+    const url = `https://boardgamegeek.com/xmlapi2/thing?id=${bggId}&marketplace=1`;
+    const xml = await fetchXML(url);
+    const parsed = parser.parse(xml);
+    const item = parsed?.items?.item;
+    if (!item) return null;
+
+    const rawListings = item.marketplacelistings?.listing ?? [];
+    const listingsArr: any[] = Array.isArray(rawListings) ? rawListings : [rawListings];
+
+    const usdListings = listingsArr.filter(
+      (l) => l?.price?.['@_currency'] === 'USD' && l?.price?.['@_value'],
+    );
+
+    const prices: BGGMarketplacePrice[] = usdListings.map((l) => ({
+      currency: 'USD',
+      value: parseFloat(l.price['@_value']),
+      condition: String(l.condition?.['@_value'] ?? 'unknown'),
+      listDate: String(l.listdate?.['@_value'] ?? ''),
+    }));
+
+    if (prices.length === 0) return { listings: [], avgPrice: null, minPrice: null, maxPrice: null, p25: null, p50: null, p75: null, currency: 'USD' };
+
+    const values = prices.map((p) => p.value).sort((a, b) => a - b);
+    const avg = values.reduce((a, b) => a + b, 0) / values.length;
+
+    return {
+      listings: prices,
+      avgPrice: Math.round(avg * 100) / 100,
+      minPrice: values[0],
+      maxPrice: values[values.length - 1],
+      p25: Math.round(percentile(values, 25) * 100) / 100,
+      p50: Math.round(percentile(values, 50) * 100) / 100,
+      p75: Math.round(percentile(values, 75) * 100) / 100,
+      currency: 'USD',
+    };
+  } catch {
+    return null;
+  }
+}
+
+export interface BGGMarketplaceCollectionGame {
+  bggGameId: string;
+  gameName: string;
+  thumbnail: string | null;
+  yearPublished: number | null;
+  forSale: boolean;
+  forTrade: boolean;
+}
+
+export async function fetchBGGMarketplaceCollection(
+  username: string,
+): Promise<BGGMarketplaceCollectionGame[] | null> {
+  const fetchPage = async (flag: 'forsale' | 'fortrade'): Promise<BGGMarketplaceCollectionGame[]> => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const url = `https://boardgamegeek.com/xmlapi2/collection?username=${encodeURIComponent(username)}&${flag}=1&subtype=boardgame`;
+      const res = await fetch(url, { headers: bggHeaders() });
+      if (res.status === 202) {
+        if (attempt === 0) await new Promise((r) => setTimeout(r, 3000));
+        continue;
+      }
+      if (!res.ok) return [];
+      const xml = await res.text();
+      const parsed = parser.parse(xml);
+      const raw = parsed?.items?.item ?? [];
+      const items: any[] = Array.isArray(raw) ? raw : [raw];
+      return items.map((item) => {
+        const rawName =
+          typeof item.name === 'string'
+            ? item.name
+            : String(item.name?.['#text'] ?? item.name ?? '');
+        const status = item.status ?? {};
+        const forsaleAttr = status['@_forsale'];
+        const fortradeAttr = status['@_fortrade'];
+        // Use per-item status attributes when present; fall back to trusting the filter parameter
+        const forSale = forsaleAttr !== undefined
+          ? (forsaleAttr === 1 || forsaleAttr === '1')
+          : flag === 'forsale';
+        const forTrade = fortradeAttr !== undefined
+          ? (fortradeAttr === 1 || fortradeAttr === '1')
+          : flag === 'fortrade';
+        return {
+          bggGameId: String(item['@_objectid']),
+          gameName: decodeEntities(rawName),
+          thumbnail: item.thumbnail ? `https:${item.thumbnail}` : null,
+          yearPublished: parseInt(item.yearpublished, 10) || null,
+          forSale,
+          forTrade,
+        };
+      }).filter((item) => item.forSale || item.forTrade);
+    }
+    return [];
+  };
+
+  try {
+    const [forSale, forTrade] = await Promise.all([
+      fetchPage('forsale'),
+      fetchPage('fortrade'),
+    ]);
+
+    const seen = new Set<string>();
+    const combined: BGGMarketplaceCollectionGame[] = [];
+    for (const game of [...forSale, ...forTrade]) {
+      if (!seen.has(game.bggGameId)) {
+        seen.add(game.bggGameId);
+        combined.push(game);
+      } else {
+        const existing = combined.find((g) => g.bggGameId === game.bggGameId);
+        if (existing) {
+          existing.forSale = existing.forSale || game.forSale;
+          existing.forTrade = existing.forTrade || game.forTrade;
+        }
+      }
+    }
+    return combined;
+  } catch (err) {
+    console.error('[BGG marketplace collection] error:', err);
+    return null;
+  }
+}
+
 export async function getBGGGamesBatch(ids: string[], videoDelayMs = 500): Promise<BGGGame[]> {
   if (ids.length === 0) return [];
   const url = `https://boardgamegeek.com/xmlapi2/thing?id=${ids.join(',')}&stats=1`;

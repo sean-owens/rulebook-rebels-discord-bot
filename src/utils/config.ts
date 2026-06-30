@@ -15,6 +15,9 @@ export interface GuildConfig {
   eventCategoryName: string;
   archiveCategoryName: string;
   archivedChannelRetentionDays: number; // 0 = never auto-delete
+  marketplaceChannelId: string;
+  marketplaceNegotiationMode: 'public' | 'private';
+  marketplaceTagIds: Record<string, string>;
 }
 
 const DEFAULT_CONFIG: GuildConfig = {
@@ -30,6 +33,9 @@ const DEFAULT_CONFIG: GuildConfig = {
   eventCategoryName: 'Monthly Events',
   archiveCategoryName: 'Archive',
   archivedChannelRetentionDays: 0,
+  marketplaceChannelId: '',
+  marketplaceNegotiationMode: 'public',
+  marketplaceTagIds: {},
 };
 
 type ConfigStore = Record<string, GuildConfig>;

@@ -7,19 +7,20 @@ enhancement notes:
 setup notes for adding to server:
 - create introductions channel (text)
 - create announcements channel (forum)
+- create marketplace channel (forum)
 
-- /gametags sync
+- /admin gametags sync
     - Creates Discord roles for all default genre and difficulty tags at once
     - Members can then assign themselves tags via /myroles
     - Custom tags can be added afterward with /gametags add
 
-- /welcome config
+- /admin welcome config
     - Needs: 
         - Welcome channel -> #introductions
         - Rules channel -> server rules channel
         - FB Group -> Link
 
-- /event config
+- /admin event config
     - Needs:
         - Start time
         - End time
@@ -27,3 +28,8 @@ setup notes for adding to server:
         - Description
         - Announcement Channel: #announcements (forum)
         - Event Channel access: RSVP Only
+
+- /marketplace admin config
+    - Needs:
+        - Channel: #marketplace (forum)
+        - Negotiation mode: public/private

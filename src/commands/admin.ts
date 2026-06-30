@@ -20,6 +20,10 @@ import {
   handleTest as handleWelcomeTest,
   handleGreet as handleWelcomeGreet,
 } from './welcome';
+import {
+  handleAdminConfig as handleMarketplaceConfig,
+  handleAdminPurge as handleMarketplacePurge,
+} from './marketplace';
 
 export const data = new SlashCommandBuilder()
   .setName('admin')
@@ -213,6 +217,53 @@ export const data = new SlashCommandBuilder()
             opt.setName('member').setDescription('The member to welcome').setRequired(true),
           ),
       ),
+  )
+  // ── marketplace group ─────────────────────────────────────────────────────────
+  .addSubcommandGroup((group) =>
+    group
+      .setName('marketplace')
+      .setDescription('Marketplace administration')
+      .addSubcommand((sub) =>
+        sub
+          .setName('config')
+          .setDescription('Configure the marketplace forum channel and negotiation mode')
+          .addChannelOption((opt) =>
+            opt
+              .setName('channel')
+              .setDescription('Forum channel where listings are posted')
+              .setRequired(false),
+          )
+          .addStringOption((opt) =>
+            opt
+              .setName('negotiation_mode')
+              .setDescription('Where negotiations happen (default: public)')
+              .setRequired(false)
+              .addChoices(
+                { name: 'Public — bids visible in the forum thread', value: 'public' },
+                { name: 'Private — each bid gets its own private thread', value: 'private' },
+              ),
+          ),
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('purge')
+          .setDescription('Delete marketplace listings (admin cleanup)')
+          .addUserOption((opt) =>
+            opt.setName('user').setDescription('Only purge listings from this user').setRequired(false),
+          )
+          .addStringOption((opt) =>
+            opt
+              .setName('status')
+              .setDescription('Which statuses to purge (default: all when user specified, sold+closed otherwise)')
+              .setRequired(false)
+              .addChoices(
+                { name: 'Active', value: 'active' },
+                { name: 'Active + Pending', value: 'active_pending' },
+                { name: 'Sold + Closed', value: 'sold_closed' },
+                { name: 'All', value: 'all' },
+              ),
+          ),
+      ),
   );
 
 export async function handleAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
@@ -253,5 +304,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     if (sub === 'config') await handleWelcomeConfig(interaction);
     else if (sub === 'test') await handleWelcomeTest(interaction);
     else if (sub === 'greet') await handleWelcomeGreet(interaction);
+  } else if (group === 'marketplace') {
+    if (sub === 'config') await handleMarketplaceConfig(interaction);
+    else if (sub === 'purge') await handleMarketplacePurge(interaction);
   }
 }

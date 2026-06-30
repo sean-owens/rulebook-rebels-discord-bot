@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { readJson, writeJson } from './db';
 import { GENRE_TAG_DEFINITIONS } from './tagDefinitions';
+import { matchesFuzzy } from './bggCatalog';
 
 const LIBRARY_FILE = 'library.json';
 const REQUESTS_FILE = 'library_requests.json';
@@ -66,20 +67,13 @@ export function findGamesByName(guildId: string, gameName: string): LibraryEntry
   );
 }
 
-function normalizeName(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]/g, '');
-}
-
 export function findGameNamesByPartial(guildId: string, term: string): string[] {
-  const normalizedTerm = normalizeName(term);
+  if (!term.trim()) return [];
   const seen = new Set<string>();
   const names: string[] = [];
   for (const e of loadLibrary().filter((e) => e.guildId === guildId)) {
     const key = e.gameName.toLowerCase();
-    const normalizedKey = normalizeName(e.gameName);
-    const forward = key.includes(term.toLowerCase()) || normalizedKey.includes(normalizedTerm);
-    const reverse = normalizedKey.length >= 3 && normalizedTerm.includes(normalizedKey);
-    if ((forward || reverse) && !seen.has(key)) {
+    if (matchesFuzzy(term, e.gameName) && !seen.has(key)) {
       seen.add(key);
       names.push(e.gameName);
     }

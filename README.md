@@ -52,6 +52,7 @@ Use the invite link in the `discord link` file at the repo root. When generating
 | Attach Files | Send the "Powered by BGG" logo attachment |
 | Read Message History | Update and edit existing embeds |
 | Manage Messages | Pin request messages, delete game cards |
+| Manage Threads | Archive marketplace forum threads when a listing is closed |
 | Mention @everyone and Roles | Mention roles in game request announcements |
 
 ---

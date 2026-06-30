@@ -10,17 +10,14 @@ vi.mock('../src/utils/bgg', () => ({
   BGG_TO_TAG: {},
 }));
 
-vi.mock('../src/utils/bggCatalog', () => ({
-  searchCatalog: vi.fn(() => []),
-  isCatalogLoaded: vi.fn(() => true),
-  // mirrors the real implementation in bggCatalog.ts
-  normalizeName: (s: string) =>
-    s
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim(),
-}));
+vi.mock('../src/utils/bggCatalog', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/utils/bggCatalog')>();
+  return {
+    ...actual,
+    searchCatalog: vi.fn(() => []),
+    isCatalogLoaded: vi.fn(() => true),
+  };
+});
 
 vi.mock('../src/utils/bggAccountStorage', () => ({
   getBggAccount: vi.fn(() => null),

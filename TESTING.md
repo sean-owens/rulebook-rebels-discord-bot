@@ -530,7 +530,166 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ---
 
-## 11. Edge Cases and Error Handling
+## 11. `/marketplace` — Community Marketplace
+
+### 11a. Setup (Admin)
+
+**What it does:** Configures the forum channel and negotiation mode for the marketplace (now under `/admin marketplace`).
+
+- [ ] Run `/admin marketplace config` with no options — confirm current config is displayed (channel and mode)
+- [ ] Run `/admin marketplace config channel:#marketplace-channel negotiation_mode:Public` — confirm settings saved, echoed back, and "Forum tags created/verified" shown
+- [ ] Try setting a regular text channel instead of a forum channel — confirm error: "must be a Forum Channel"
+- [ ] Run `/admin marketplace config negotiation_mode:Private` — confirm mode changes to private
+- [ ] After setting a forum channel, confirm the six tags (`For Sale`, `For Trade`, `Active`, `Pending`, `Sold`, `Closed`) are visible in the channel's tag list
+
+### 11b. `/marketplace post sell`
+
+**What it does:** Creates a for-sale listing, optionally enriched with BGG game details and current BGG marketplace price data.
+
+- [ ] Run `/marketplace post sell item:Wingspan bids_allowed:true condition:Very Good` — confirm BGG price screen appears (ephemeral) with current marketplace prices and "Powered by BGG" logo
+- [ ] Select a price option (use suggested, enter custom, or open to offers) — confirm forum post created with item name, price, condition, and "I'm Interested" button
+- [ ] Run with `bids_allowed:false` — confirm the listing embed shows "*(firm)*" next to the price
+- [ ] Select "List as open to offers" — confirm listing shows "Open to offers"
+- [ ] Run with `notes` — confirm notes appear in the listing embed
+- [ ] Confirm BGG thumbnail appears in the embed (if BGG found the item)
+- [ ] Confirm "Powered by BGG" logo appears in the forum post embed
+- [ ] Run when no marketplace channel is configured — confirm listing is still created, response notes no channel configured
+- [ ] Run with an item that has expansions — confirm expansion select step appears; selecting expansions shows combined price estimate
+
+### 11c. `/marketplace post trade`
+
+**What it does:** Creates a trade listing for an item you want to trade away.
+
+- [ ] Run `/marketplace post trade item:Catan condition:Good looking_for:Wingspan` — confirm trade listing posted to forum with "For Trade" tag and looking-for info
+- [ ] Run without `looking_for` — confirm listing shows "Open to offers"
+- [ ] Confirm "I'm Interested" button appears on the forum post
+
+### 11d. `/marketplace price`
+
+**What it does:** Looks up current BGG marketplace prices for an item without creating a listing.
+
+- [ ] Run `/marketplace price item:Wingspan` — confirm ephemeral embed shows price range, median, avg, distribution histogram, and "Powered by BGG" logo
+- [ ] Run with an item that has expansions — confirm expansion select step appears; selecting expansions shows per-item breakdown and combined estimate with total listing count
+- [ ] Run with a custom/non-BGG item (type a name not in the catalog) — confirm "not in the BGG catalog" error
+- [ ] Confirm no listing is created and nothing is posted to the marketplace channel
+
+### 11e. `/marketplace conditions`
+
+**What it does:** Shows the condition grading scale used for marketplace listings.
+
+- [ ] Run `/marketplace conditions` — confirm ephemeral embed appears with all five grades: New, Like New, Very Good, Good, Acceptable, each with a description
+- [ ] Confirm the embed is only visible to the user who ran the command
+
+### 11f. `/marketplace browse`
+
+**What it does:** Shows active listings in an ephemeral text list (up to 5 at a time).
+
+- [ ] Run with no listings — confirm "No active listings found"
+- [ ] Run with active listings — confirm list shows item name, price/offer, and seller username
+- [ ] Run with `type:sell` — confirm only sell listings appear
+- [ ] Run with `type:trade` — confirm only trade listings appear
+- [ ] Run with more than 5 active listings — confirm "Showing 5 of N. Check the marketplace channel for all listings."
+
+### 11g. `/marketplace my`
+
+**What it does:** Shows your own listings with their status, bids, and IDs.
+
+- [ ] Run with no listings — confirm "You don't have any listings"
+- [ ] Run with listings — confirm all your listings are shown with status, price/offer, open bid count, and listing ID
+
+### 11h. "I'm Interested" button flow
+
+**What it does:** Buyer clicks button, modal opens, bid is submitted, seller is notified.
+
+**Fixed-price sell listing:**
+- [ ] Click "I'm Interested" on a firm-price listing — confirm modal opens with a message field only (no bid amount field)
+- [ ] Submit the modal — confirm seller gets a DM notification with Accept/Deny/Counter buttons
+- [ ] Confirm the DM buttons disappear and a result stamp appears after the seller acts
+
+**Negotiable sell listing:**
+- [ ] Click "I'm Interested" on a negotiable listing — confirm modal shows asking price as reference and a bid amount field
+- [ ] Enter a bid amount and submit — confirm bid posted in forum thread (public mode) or private thread (private mode)
+- [ ] Confirm seller gets DM with bid amount and Accept/Deny/Counter buttons
+- [ ] Confirm listing status updates to 🟡 Pending in the forum post
+- [ ] Click "I'm Interested" again as the same user — confirm error: "You already have an open bid"
+- [ ] Click "I'm Interested" as the seller — confirm error: "You can't bid on your own listing"
+
+**Trade listing:**
+- [ ] Click "I'm Interested" on a trade listing — confirm modal shows "what I'll offer in exchange" field instead of price field
+- [ ] Submit with offer text — confirm offer appears in the forum thread notification
+
+### 11i. Negotiation — Accept / Deny / Counter
+
+**What it does:** Seller responds to bids with Accept, Deny, or Counter buttons sent via DM (or thread fallback if DMs are disabled).
+
+**Accept:**
+- [ ] Seller clicks Accept on a bid in their DM — confirm the DM message updates to "✅ Accepted — deal done!" with buttons removed
+- [ ] Confirm listing status becomes 🔴 Sold in forum post
+- [ ] Confirm buyer gets DM: "Your bid was accepted"
+- [ ] If other open bids exist, confirm those buyers get DM: "sold to someone else"
+- [ ] Confirm a "Deal done!" conclusion post appears in the forum thread before it archives
+- [ ] Confirm forum thread is archived
+
+**Deny:**
+- [ ] Seller clicks Deny — confirm DM message updates to "❌ Declined — bid denied." with buttons removed
+- [ ] Confirm buyer is notified
+- [ ] If no other open bids, confirm listing reverts to 🟢 Active
+- [ ] If other bids still open, confirm listing stays 🟡 Pending
+
+**Counter:**
+- [ ] Seller clicks Counter — confirm modal opens for counter amount and message
+- [ ] Confirm DM message updates to "💬 Counter offer sent — waiting for response." with buttons removed
+- [ ] Buyer receives DM with counter details and Accept/Decline buttons
+- [ ] Buyer accepts counter — confirm buyer's DM updates to "✅ Accepted" with buttons removed; listing becomes Sold; seller notified
+- [ ] Buyer declines counter — confirm DM updates to "↩️ Withdrawn" with buttons removed
+
+### 11j. Negotiation modes
+
+**What it does:** Controls whether bid negotiation is visible publicly in the forum thread or in a private thread.
+
+- [ ] With negotiation_mode=public: click "I'm Interested" — confirm bid notification posted in the public forum thread (visible to all); Accept/Deny/Counter buttons go to seller via DM
+- [ ] With negotiation_mode=private: click "I'm Interested" — confirm a private thread is created with buyer, seller, and bot; bid notification posted there; buttons go to seller via DM
+
+### 11k. `/marketplace close` and `/marketplace reopen`
+
+**What it does:** Seller closes a listing; either party can reopen it if the deal falls through.
+
+- [ ] Run `/marketplace close <id>` as the seller — confirm listing status becomes ⚫ Closed and forum post updates
+- [ ] Run `/marketplace close <id>` as a different user (non-admin) — confirm "You can only close your own listings"
+- [ ] Run `/marketplace reopen <id>` as the seller — confirm listing status returns to Active (or Pending if bids exist)
+- [ ] Run `/marketplace reopen <id>` as a different user — confirm error
+
+### 11l. `/admin marketplace purge`
+
+**What it does:** Admin bulk-deletes listings by status, with an optional user filter.
+
+- [ ] Run as non-admin — confirm "requires Manage Server permission"
+- [ ] Run as admin with no options — confirm sold + closed listings deleted, active/pending remain; reply shows `(filter: sold_closed)`
+- [ ] Run with `user:@member` and no status — confirm ALL of that member's listings are purged (default becomes `all` when user is specified); reply shows `(filter: all)`
+- [ ] Run with `status:Active` — confirm only active listings are removed, pending/sold/closed remain
+- [ ] Run with `status:Active + Pending` — confirm active and pending listings are removed
+- [ ] Run with `status:All` — confirm every listing is removed
+- [ ] Confirm purge count and filter label are reported accurately in the reply
+
+### 11m. Transaction log
+
+**What it does:** Every marketplace event is appended to `data/marketplace_log.jsonl`.
+
+- [ ] After creating a listing, open `data/marketplace_log.jsonl` — confirm a `listing_created` entry with correct `guildId`, `listingId`, `listingName`, `actorId`, and `timestamp`
+- [ ] After a bid is accepted, confirm `bid_accepted` and `listing_sold` entries appear
+- [ ] After a bid is denied, confirm `bid_denied` entry appears
+- [ ] After an admin purge, confirm `admin_purge` entry with count in `details`
+- [ ] Confirm no entries are missing for any action in the flow above
+
+### 11n. Permission boundaries
+
+- [ ] Regular member: can use `post sell`, `post trade`, `price`, `conditions`, `browse`, `my`, `close` (own listings), `reopen` (own listings) — confirm all work
+- [ ] Regular member: try `/admin marketplace config` and `/admin marketplace purge` — confirm "requires Manage Server permission"
+- [ ] Admin: can close any user's listing via `/marketplace close`
+
+---
+
+## 12. Edge Cases and Error Handling
 
 - [ ] Run any command in a DM (outside a server) — confirm graceful failure
 - [ ] Run `/game suggest` in a channel with no active event and no upcoming events — confirm "There are no upcoming events" message

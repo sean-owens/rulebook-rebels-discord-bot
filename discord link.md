@@ -1,4 +1,4 @@
-https://discord.com/oauth2/authorize?client_id=1518299080932200458&permissions=8858627120&integration_type=0&scope=applications.commands+bot
+https://discord.com/oauth2/authorize?client_id=1518299080932200458&permissions=26038496304&integration_type=0&scope=applications.commands+bot
 
 --- Bot Invite Link Reference ---
 
@@ -18,5 +18,6 @@ Required permissions:
   Attach Files               — Send the "Powered by BGG" logo as a file attachment
   Read Message History       — Read existing messages to update/edit embeds
   Manage Messages            — Pin request messages, delete game cards on cancel
+  Manage Threads             — Archive marketplace forum threads when a listing is closed
   Mention @everyone and Roles — Mention roles in game request announcements
 

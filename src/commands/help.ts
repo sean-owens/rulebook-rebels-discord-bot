@@ -63,6 +63,19 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
           '`profile` — View your currently linked BoardGameGeek account',
         ].join('\n'),
       },
+      {
+        name: '🛒  /marketplace',
+        value: [
+          '`post sell` — List an item for sale (BGG-assisted with expansion and price reference; custom items supported)',
+          '`post trade` — List an item you want to trade away',
+          '`price` — Look up current BGG marketplace prices without creating a listing',
+          '`conditions` — Show the condition grading scale (New → Acceptable)',
+          '`browse` — Browse active listings (filter by sell or trade)',
+          '`my` — View and manage your own listings',
+          '`close` — Close one of your listings',
+          '`reopen` — Reopen a closed or sold listing',
+        ].join('\n'),
+      },
       ...(isHost
         ? [
             {
@@ -93,6 +106,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
                 '`/admin welcome config` — Configure the welcome message and channel',
                 '`/admin welcome test` — Preview the welcome message',
                 '`/admin welcome greet` — Manually send the welcome message to a member',
+                '`/admin marketplace config` — Set the marketplace forum channel and negotiation mode',
+                '`/admin marketplace purge` — Delete old/closed marketplace listings',
               ].join('\n'),
             },
           ]

@@ -13,14 +13,44 @@ export interface BGGCatalogEntry {
 let entries: BGGCatalogEntry[] = [];
 let exactIndex = new Map<string, BGGCatalogEntry[]>();
 let wordIndex = new Map<string, number[]>();
+let sortedWords: string[] = [];
 let _loaded = false;
+
+function lowerBound(arr: string[], target: string): number {
+  let lo = 0, hi = arr.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid] < target) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+function prefixMatchIndices(prefix: string): Set<number> {
+  const result = new Set<number>();
+  const start = lowerBound(sortedWords, prefix);
+  for (let i = start; i < sortedWords.length && sortedWords[i].startsWith(prefix); i++) {
+    for (const idx of wordIndex.get(sortedWords[i]) ?? []) {
+      result.add(idx);
+    }
+  }
+  return result;
+}
 
 export function normalizeName(s: string): string {
   return s
     .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/[-]/g, ' ')          // treat hyphens as word separators
+    .replace(/[^a-z0-9\s]/g, '')  // strip remaining punctuation
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+export function matchesFuzzy(query: string, name: string): boolean {
+  const qTokens = tokenize(query);
+  if (qTokens.length === 0) return false;
+  const nTokens = tokenize(name);
+  return qTokens.every((qt) => nTokens.some((nt) => nt.startsWith(qt)));
 }
 
 function tokenize(s: string): string[] {
@@ -94,6 +124,7 @@ function buildIndexes(csvText: string): void {
     }
   }
 
+  sortedWords = [...wordIndex.keys()].sort();
   _loaded = true;
 }
 
@@ -161,11 +192,11 @@ export function searchCatalog(query: string, limit = 5): BGGCatalogEntry[] {
     return sortResults(exactMatches).slice(0, limit);
   }
 
-  // Token intersection: all words in query must appear in the name
+  // Prefix intersection: every query token must prefix-match at least one word in the entry name
   const tokens = tokenize(query);
   if (tokens.length === 0) return [];
 
-  const sets = tokens.map((t) => new Set(wordIndex.get(t) ?? []));
+  const sets = tokens.map((t) => prefixMatchIndices(t));
   sets.sort((a, b) => a.size - b.size);
 
   const candidates = new Set(sets[0]);
@@ -187,5 +218,6 @@ export function _resetCatalog(): void {
   entries = [];
   exactIndex = new Map();
   wordIndex = new Map();
+  sortedWords = [];
   _loaded = false;
 }
