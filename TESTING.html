@@ -1,3 +1,494 @@
+<title>Rulebook Rebels — Testing Guide</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+
+<style>
+  :root {
+    --paper: #eef0e9;
+    --paper-raised: #f7f8f3;
+    --ink: #1e2b27;
+    --ink-soft: #4b5a53;
+    --rule: #ccd1c4;
+    --rule-strong: #aab3a0;
+    --accent: #b87a1f;
+    --accent-ink: #4a3311;
+    --tier-member: #2f6a8c;
+    --tier-host: #3f7d55;
+    --tier-admin: #963a32;
+    --tier-system: #5d5771;
+    --tier-edge: #6b6458;
+    --code-bg: #e2e6d9;
+    --shadow: 0 1px 2px rgba(30, 43, 39, 0.08), 0 8px 24px rgba(30, 43, 39, 0.06);
+    --serif: Georgia, Cambria, "Times New Roman", serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #121917;
+      --paper-raised: #1a2320;
+      --ink: #e5ecE6;
+      --ink-soft: #a9b7ac;
+      --rule: #2c3733;
+      --rule-strong: #3d4a44;
+      --accent: #dd9f45;
+      --accent-ink: #2a1c08;
+      --tier-member: #6fa8cc;
+      --tier-host: #74b98c;
+      --tier-admin: #d3897f;
+      --tier-system: #9d97b5;
+      --tier-edge: #a39c8d;
+      --code-bg: #22302a;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 28px rgba(0, 0, 0, 0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #121917;
+    --paper-raised: #1a2320;
+    --ink: #e5ecE6;
+    --ink-soft: #a9b7ac;
+    --rule: #2c3733;
+    --rule-strong: #3d4a44;
+    --accent: #dd9f45;
+    --accent-ink: #2a1c08;
+    --tier-member: #6fa8cc;
+    --tier-host: #74b98c;
+    --tier-admin: #d3897f;
+    --tier-system: #9d97b5;
+    --tier-edge: #a39c8d;
+    --code-bg: #22302a;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 28px rgba(0, 0, 0, 0.35);
+  }
+  :root[data-theme="light"] {
+    --paper: #eef0e9;
+    --paper-raised: #f7f8f3;
+    --ink: #1e2b27;
+    --ink-soft: #4b5a53;
+    --rule: #ccd1c4;
+    --rule-strong: #aab3a0;
+    --accent: #b87a1f;
+    --accent-ink: #4a3311;
+    --tier-member: #2f6a8c;
+    --tier-host: #3f7d55;
+    --tier-admin: #963a32;
+    --tier-system: #5d5771;
+    --tier-edge: #6b6458;
+    --code-bg: #e2e6d9;
+    --shadow: 0 1px 2px rgba(30, 43, 39, 0.08), 0 8px 24px rgba(30, 43, 39, 0.06);
+  }
+
+  * { box-sizing: border-box; }
+  html { color-scheme: light dark; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15.5px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); }
+  code {
+    font-family: var(--mono);
+    font-size: 0.88em;
+    background: var(--code-bg);
+    padding: 0.1em 0.4em;
+    border-radius: 4px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  strong { font-weight: 650; }
+
+  /* ---------- Shell layout ---------- */
+  .shell {
+    display: grid;
+    grid-template-columns: 300px minmax(0, 1fr);
+    max-width: 1180px;
+    margin: 0 auto;
+    align-items: start;
+  }
+  @media (max-width: 880px) {
+    .shell { grid-template-columns: 1fr; }
+  }
+
+  /* ---------- Rail (session tracker) ---------- */
+  .rail {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    max-height: 100vh;
+    overflow-y: auto;
+    padding: 28px 22px 40px;
+    border-right: 1px solid var(--rule);
+  }
+  @media (max-width: 880px) {
+    .rail {
+      position: relative;
+      max-height: none;
+      border-right: none;
+      border-bottom: 1px solid var(--rule);
+    }
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 22px;
+  }
+  .brand .mark {
+    width: 30px; height: 30px; border-radius: 7px;
+    background: linear-gradient(155deg, var(--accent), var(--tier-admin));
+    box-shadow: var(--shadow);
+    position: relative;
+    flex: none;
+  }
+  .brand .mark::after {
+    content: "";
+    position: absolute; inset: 7px;
+    border-radius: 50%;
+    background: var(--paper-raised);
+    opacity: 0.85;
+  }
+  .brand .name {
+    font-family: var(--serif);
+    font-weight: 700;
+    font-size: 16.5px;
+    line-height: 1.15;
+  }
+  .brand .sub {
+    font-size: 11px;
+    color: var(--ink-soft);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .tracker-label {
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    margin: 0 0 8px;
+    font-weight: 600;
+  }
+  .overall {
+    background: var(--paper-raised);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 14px 14px 12px;
+    margin-bottom: 18px;
+    box-shadow: var(--shadow);
+  }
+  .overall-count {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    font-family: var(--serif);
+  }
+  .overall-count .num {
+    font-size: 26px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  .overall-count .den {
+    font-size: 12.5px;
+    color: var(--ink-soft);
+  }
+  .bar {
+    height: 7px;
+    border-radius: 6px;
+    background: var(--rule);
+    overflow: hidden;
+    margin-top: 8px;
+  }
+  .bar > span {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+    width: 0%;
+    transition: width 0.25s ease;
+  }
+
+  .reset-btn {
+    width: 100%;
+    margin-top: 10px;
+    padding: 7px 10px;
+    font-size: 12.5px;
+    font-family: var(--sans);
+    font-weight: 600;
+    border-radius: 7px;
+    border: 1px solid var(--rule-strong);
+    background: transparent;
+    color: var(--ink-soft);
+    cursor: pointer;
+  }
+  .reset-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .reset-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .navlist { list-style: none; margin: 0; padding: 0; }
+  .navlist li { margin-bottom: 6px; }
+  .navlink {
+    display: block;
+    text-decoration: none;
+    color: var(--ink);
+    border: 1px solid transparent;
+    border-left: 3px solid var(--tier-c, var(--rule-strong));
+    border-radius: 6px;
+    padding: 8px 10px 8px 11px;
+    background: var(--paper-raised);
+  }
+  .navlink:hover { border-color: var(--tier-c, var(--rule-strong)); }
+  .navlink .t { display: flex; justify-content: space-between; align-items: baseline; }
+  .navlink .title { font-weight: 650; font-size: 13.2px; }
+  .navlink .count { font-size: 11px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+  .navlink .mini-bar { height: 4px; border-radius: 3px; background: var(--rule); margin-top: 6px; overflow: hidden; }
+  .navlink .mini-bar > span { display: block; height: 100%; background: var(--tier-c, var(--accent)); width: 0%; }
+
+  .rail-foot {
+    margin-top: 22px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--rule);
+    font-size: 11.5px;
+    color: var(--ink-soft);
+  }
+
+  /* ---------- Main content ---------- */
+  .content { padding: 40px 44px 90px; min-width: 0; }
+  @media (max-width: 620px) { .content { padding: 28px 18px 70px; } }
+
+  .hero { margin-bottom: 30px; max-width: 62ch; }
+  .hero .eyebrow {
+    font-size: 11.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 700;
+    margin-bottom: 10px;
+  }
+  .hero h1 {
+    font-family: var(--serif);
+    font-size: 34px;
+    line-height: 1.12;
+    margin: 0 0 10px;
+    text-wrap: balance;
+  }
+  .hero p { color: var(--ink-soft); margin: 0; }
+
+  .intro-block {
+    max-width: 68ch;
+    margin-bottom: 10px;
+  }
+  .intro-block p { max-width: 68ch; }
+  .intro-block ul.plain { padding-left: 1.2em; }
+  .intro-block ul.plain li { margin-bottom: 8px; }
+
+  hr.divider {
+    border: none;
+    border-top: 1px solid var(--rule);
+    margin: 34px 0;
+  }
+
+  /* Part banner */
+  .part { scroll-margin-top: 14px; }
+  .part-banner {
+    border-left: 5px solid var(--tier-c, var(--accent));
+    background: var(--paper-raised);
+    border-radius: 0 10px 10px 0;
+    padding: 16px 20px;
+    margin: 0 0 22px;
+    box-shadow: var(--shadow);
+  }
+  .part-banner .eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: var(--tier-c, var(--accent));
+    margin-bottom: 6px;
+  }
+  .part-banner h1 {
+    font-family: var(--serif);
+    font-size: 25px;
+    margin: 0 0 6px;
+    text-wrap: balance;
+  }
+  .part-banner p { margin: 0; color: var(--ink-soft); max-width: 66ch; }
+
+  /* Section (h2) with ledger tag */
+  .sec-head { display: flex; align-items: baseline; gap: 10px; margin: 30px 0 4px; scroll-margin-top: 14px; }
+  .sec-head.h3 { margin: 20px 0 4px; }
+  .tag {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ink-soft);
+    border: 1px solid var(--rule-strong);
+    border-radius: 5px;
+    padding: 2px 6px;
+    line-height: 1.5;
+    flex: none;
+    background: var(--paper-raised);
+  }
+  h2.plain, h3.plain { font-family: var(--serif); }
+  .sec-head h2 { font-family: var(--serif); font-size: 18.5px; margin: 0; }
+  .sec-head h3 { font-family: var(--serif); font-size: 16px; margin: 0; }
+  h4.mini {
+    font-family: var(--sans);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    font-weight: 700;
+    margin: 18px 0 6px;
+    padding-left: 2px;
+    border-bottom: 1px dotted var(--rule-strong);
+    padding-bottom: 4px;
+  }
+
+  .callout {
+    display: flex;
+    gap: 10px;
+    background: var(--code-bg);
+    border-radius: 8px;
+    padding: 10px 13px;
+    margin: 6px 0 12px;
+    font-size: 14px;
+  }
+  .callout .lbl {
+    flex: none;
+    font-weight: 700;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    padding-top: 2px;
+  }
+  p.run-in {
+    font-weight: 700;
+    margin: 14px 0 4px;
+    font-size: 13.5px;
+  }
+  p.body-text { margin: 6px 0 10px; color: var(--ink); max-width: 68ch; }
+
+  /* Checklist */
+  ul.checklist { list-style: none; margin: 0 0 8px; padding: 0; }
+  ul.checklist > li {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 5px 4px;
+    border-radius: 6px;
+  }
+  ul.checklist > li:hover { background: var(--paper-raised); }
+  .box {
+    flex: none;
+    width: 17px; height: 17px;
+    margin-top: 2px;
+    border: 1.6px solid var(--rule-strong);
+    border-radius: 4px;
+    cursor: pointer;
+    position: relative;
+    background: var(--paper);
+  }
+  .box:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .box.on { background: var(--accent); border-color: var(--accent); }
+  .box.on::after {
+    content: "";
+    position: absolute; left: 4px; top: 1px;
+    width: 5px; height: 9px;
+    border: solid var(--paper);
+    border-width: 0 2px 2px 0;
+    transform: rotate(38deg);
+  }
+  .itemtext { flex: 1; }
+  .itemtext.done { color: var(--ink-soft); text-decoration: line-through; text-decoration-color: var(--rule-strong); }
+  ul.subnote { list-style: disc; margin: 4px 0 4px 27px; padding: 0; color: var(--ink-soft); font-size: 14px; }
+  ul.subnote li { margin: 2px 0; }
+  ul.checklist.nested { margin: 4px 0 2px 8px; padding-left: 12px; border-left: 2px solid var(--rule); }
+  ul.checklist.nested > li { padding: 3px 4px; }
+
+  ul.plainlist { margin: 6px 0 12px; padding-left: 1.3em; }
+  ul.plainlist li { margin-bottom: 6px; }
+
+  .part-end-space { height: 8px; }
+
+  /* ---------- Print ---------- */
+  @media print {
+    /* Neutralize any fixed-viewport/scroll-container sizing (ours or the
+       artifact host's) so the paginator sees the document's full height
+       instead of clipping to one screen's worth of content. */
+    html, body {
+      height: auto !important;
+      max-height: none !important;
+      overflow: visible !important;
+      position: static !important;
+    }
+    .shell {
+      display: block !important;
+      height: auto !important;
+      max-height: none !important;
+      overflow: visible !important;
+      max-width: none;
+    }
+    .rail, .top-actions { display: none !important; }
+    .content {
+      padding: 0 6px;
+      height: auto !important;
+      max-height: none !important;
+      overflow: visible !important;
+    }
+    #render-target { height: auto !important; overflow: visible !important; }
+    body { background: #fff; color: #111; font-size: 11.5px; }
+    .part { break-before: page; }
+    .part:first-of-type { break-before: avoid; }
+    .part-banner { box-shadow: none; border-left-width: 4px; }
+    ul.checklist > li { break-inside: avoid; }
+    .box { border-color: #333; }
+    .box.on { background: #333; border-color: #333; }
+    a { color: inherit; text-decoration: none; }
+    .hero { break-after: avoid; }
+  }
+</style>
+
+<div class="shell">
+  <aside class="rail">
+    <div class="brand">
+      <div class="mark" aria-hidden="true"></div>
+      <div>
+        <div class="name">Rulebook Rebels</div>
+        <div class="sub">Testing Guide</div>
+      </div>
+    </div>
+
+    <p class="tracker-label">Session tracker</p>
+    <div class="overall">
+      <div class="overall-count">
+        <span class="num" id="overall-num">0</span>
+        <span class="den">of <span id="overall-den">0</span> checked</span>
+      </div>
+      <div class="bar"><span id="overall-bar"></span></div>
+      <button class="reset-btn" id="reset-btn" type="button">Reset all checks</button>
+    </div>
+
+    <p class="tracker-label">Jump to a tier</p>
+    <ul class="navlist" id="navlist"></ul>
+
+    <div class="rail-foot">
+      Checked state is saved in this browser only. Reset between test rounds, or before handing this off to the next tester.
+    </div>
+  </aside>
+
+  <main class="content" id="content">
+    <div class="hero">
+      <div class="eyebrow">Manual QA · Discord Bot</div>
+      <h1>Rulebook Rebels Bot — Testing Guide</h1>
+      <p>A tiered checklist for verifying bot behavior in Discord. Work through the part that matches the role you were handed — each is self-contained.</p>
+    </div>
+    <div id="render-target"></div>
+  </main>
+</div>
+
+<script type="text/markdown" id="src">
 # Rulebook Rebels Bot — Testing Guide
 
 This document describes every feature in the bot and provides a checklist of test cases to verify correct behavior. All tests are performed in Discord using slash commands unless otherwise noted.
@@ -1023,7 +1514,7 @@ Admins retain full Regular Member and Host access, so this part fully repeats Pa
 - [ ] Confirm `/library clear` description says "Remove all your own games at once"
 - [ ] Confirm the response is ephemeral
 - [ ] Confirm `/admin` commands **are visible** in the Discord slash command picker, along with `/host`
-- [ ] Confirm `/admin library syncall` is listed in the Admin section
+- [ ] Confirm `/admin library syncall` is listed in the Admin section (currently missing from the embed — flag to dev if still absent)
 
 ## 3.2 `/event` — Event Viewing
 
@@ -1728,3 +2219,296 @@ Run through this section once, regardless of which tier you're testing.
 - [ ] Suggest a game when the event's channel has been archived — confirm "no longer active" message
 - [ ] Verify bot handles BGG being unreachable — confirm graceful fallback to local catalog or manual entry
 - [ ] Confirm all ephemeral responses are only visible to the invoking user
+</script>
+
+<script>
+(function () {
+  var TIER_META = {
+    "Part 1": { key: "member", label: "Regular Member" },
+    "Part 2": { key: "host", label: "Host" },
+    "Part 3": { key: "admin", label: "Admin" },
+    "Part 4": { key: "system", label: "System & Automated" },
+    "Part 5": { key: "edge", label: "Edge Cases" }
+  };
+
+  function esc(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function inline(s) {
+    s = esc(s);
+    s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+    s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    return s;
+  }
+  function numTag(text) {
+    var m = text.match(/^(\d+\.\d+[a-z]?)\s+(.*)$/);
+    if (m) return { tag: m[1], rest: m[2] };
+    return null;
+  }
+
+  function parse(raw) {
+    var lines = raw.split("\n");
+    var out = [];
+    var i = 0;
+    var itemCounter = 0;
+
+    function peekIndentDash(line) {
+      return /^\s{2,}- /.test(line);
+    }
+
+    while (i < lines.length) {
+      var line = lines[i];
+
+      if (/^\s*$/.test(line)) { i++; continue; }
+      if (/^---\s*$/.test(line)) { out.push({ type: "hr" }); i++; continue; }
+
+      var h1 = line.match(/^#\s+(.*)$/);
+      if (h1) {
+        var text = h1[1].trim();
+        var partMatch = text.match(/^(Part \d)\s*[—-]\s*(.*)$/);
+        if (partMatch) {
+          var meta = TIER_META[partMatch[1]] || { key: "", label: "" };
+          out.push({ type: "part", tierKey: meta.key, eyebrow: partMatch[1], title: partMatch[2] });
+        } else {
+          out.push({ type: "doctitle", title: text });
+        }
+        i++; continue;
+      }
+
+      var h2 = line.match(/^##\s+(.*)$/);
+      if (h2) {
+        var t2 = h2[1].trim();
+        var nt2 = numTag(t2);
+        out.push({ type: "h2", tag: nt2 ? nt2.tag : null, text: nt2 ? nt2.rest : t2 });
+        i++; continue;
+      }
+
+      var h3 = line.match(/^###\s+(.*)$/);
+      if (h3) {
+        var t3 = h3[1].trim();
+        var nt3 = numTag(t3);
+        out.push({ type: "h3", tag: nt3 ? nt3.tag : null, text: nt3 ? nt3.rest : t3 });
+        i++; continue;
+      }
+
+      var h4 = line.match(/^####\s+(.*)$/);
+      if (h4) {
+        out.push({ type: "h4", text: h4[1].trim() });
+        i++; continue;
+      }
+
+      var lead = line.match(/^\*\*What it does:\*\*\s*(.*)$/);
+      if (lead) {
+        out.push({ type: "callout", text: lead[1].trim() });
+        i++; continue;
+      }
+
+      var runIn = line.match(/^\*\*([^*]+):\*\*\s*$/);
+      if (runIn) {
+        out.push({ type: "runin", text: runIn[1].trim() + ":" });
+        i++; continue;
+      }
+
+      var chk = line.match(/^- \[ \]\s*(.*)$/);
+      if (chk) {
+        itemCounter++;
+        var item = { type: "check", id: "chk-" + itemCounter, text: chk[1].trim(), children: [], nested: false };
+        i++;
+        while (i < lines.length && peekIndentDash(lines[i])) {
+          var nestedChk = lines[i].match(/^\s{2,}- \[ \]\s*(.*)$/);
+          if (nestedChk) {
+            itemCounter++;
+            item.nested = true;
+            item.children.push({ id: "chk-" + itemCounter, text: nestedChk[1].trim() });
+          } else {
+            var sub = lines[i].match(/^\s{2,}- (.*)$/);
+            if (sub) item.children.push({ id: null, text: sub[1].trim() });
+          }
+          i++;
+        }
+        out.push(item);
+        continue;
+      }
+
+      var plainLi = line.match(/^- (.*)$/);
+      if (plainLi) {
+        out.push({ type: "plainli", text: plainLi[1].trim() });
+        i++; continue;
+      }
+
+      out.push({ type: "p", text: line.trim() });
+      i++;
+    }
+    return out;
+  }
+
+  function render(blocks) {
+    var html = [];
+    var navParts = [];
+    var openPart = false;
+    var openChecklist = false;
+    var openPlainlist = false;
+
+    function closeLists() {
+      if (openChecklist) { html.push("</ul>"); openChecklist = false; }
+      if (openPlainlist) { html.push("</ul>"); openPlainlist = false; }
+    }
+
+    blocks.forEach(function (b) {
+      if (b.type === "doctitle") return; // shown in hero already
+      if (b.type === "hr") { closeLists(); return; }
+
+      if (b.type === "part") {
+        closeLists();
+        if (openPart) html.push("</section>");
+        html.push('<section class="part" id="part-' + b.tierKey + '" data-tier="' + b.tierKey + '">');
+        html.push(
+          '<div class="part-banner" style="--tier-c:var(--tier-' + b.tierKey + ')">' +
+          '<div class="eyebrow">' + esc(b.eyebrow) + '</div>' +
+          '<h1>' + inline(b.title) + "</h1>" +
+          "</div>"
+        );
+        navParts.push({ key: b.tierKey, eyebrow: b.eyebrow, title: b.title });
+        openPart = true;
+        return;
+      }
+
+      if (b.type === "h2") {
+        closeLists();
+        html.push('<div class="sec-head" id="sec-' + (b.tag || Math.random().toString(36).slice(2)) + '">' +
+          (b.tag ? '<span class="tag">' + esc(b.tag) + "</span>" : "") +
+          "<h2>" + inline(b.text) + "</h2></div>");
+        return;
+      }
+      if (b.type === "h3") {
+        closeLists();
+        html.push('<div class="sec-head h3">' +
+          (b.tag ? '<span class="tag">' + esc(b.tag) + "</span>" : "") +
+          "<h3>" + inline(b.text) + "</h3></div>");
+        return;
+      }
+      if (b.type === "h4") { closeLists(); html.push("<h4 class=\"mini\">" + inline(b.text) + "</h4>"); return; }
+
+      if (b.type === "callout") {
+        closeLists();
+        html.push('<div class="callout"><span class="lbl">What it does</span><span>' + inline(b.text) + "</span></div>");
+        return;
+      }
+      if (b.type === "runin") { closeLists(); html.push('<p class="run-in">' + inline(b.text) + "</p>"); return; }
+
+      if (b.type === "check") {
+        if (!openChecklist) { html.push('<ul class="checklist">'); openChecklist = true; }
+        if (openPlainlist) { html.push("</ul>"); openPlainlist = false; }
+        var kids = "";
+        if (b.children.length && b.nested) {
+          kids = '<ul class="checklist nested">' + b.children.map(function (c) {
+            return '<li><div class="box" role="checkbox" tabindex="0" aria-checked="false" data-id="' + c.id + '"></div>' +
+              '<div class="itemtext" data-textfor="' + c.id + '">' + inline(c.text) + "</div></li>";
+          }).join("") + "</ul>";
+        } else if (b.children.length) {
+          kids = '<ul class="subnote">' + b.children.map(function (c) { return "<li>" + inline(c.text) + "</li>"; }).join("") + "</ul>";
+        }
+        html.push(
+          '<li><div class="box" role="checkbox" tabindex="0" aria-checked="false" data-id="' + b.id + '"></div>' +
+          '<div class="itemtext" data-textfor="' + b.id + '">' + inline(b.text) + kids + "</div></li>"
+        );
+        return;
+      }
+
+      if (b.type === "plainli") {
+        if (openChecklist) { html.push("</ul>"); openChecklist = false; }
+        if (!openPlainlist) { html.push('<ul class="plainlist">'); openPlainlist = true; }
+        html.push("<li>" + inline(b.text) + "</li>");
+        return;
+      }
+
+      // plain paragraph
+      closeLists();
+      html.push('<p class="body-text">' + inline(b.text) + "</p>");
+    });
+
+    closeLists();
+    if (openPart) html.push("</section>");
+    return { html: html.join("\n"), navParts: navParts };
+  }
+
+  var raw = document.getElementById("src").textContent;
+  var blocks = parse(raw);
+  var result = render(blocks);
+  document.getElementById("render-target").innerHTML = result.html;
+
+  // Build sidebar nav
+  var navHtml = result.navParts.map(function (p) {
+    return (
+      '<li><a class="navlink" href="#part-' + p.key + '" style="--tier-c:var(--tier-' + p.key + ')">' +
+      '<div class="t"><span class="title">' + esc(p.eyebrow) + "</span>" +
+      '<span class="count" data-navcount="' + p.key + '">0/0</span></div>' +
+      "<div>" + esc(p.title) + "</div>" +
+      '<div class="mini-bar" style="--tier-c:var(--tier-' + p.key + ')"><span data-navbar="' + p.key + '"></span></div>' +
+      "</a></li>"
+    );
+  }).join("");
+  document.getElementById("navlist").innerHTML = navHtml;
+
+  // ---- Checklist state (persisted per-artifact in localStorage) ----
+  var STORE_KEY = "rr-testing-guide-checks-v1";
+  function loadState() {
+    try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch (e) { return {}; }
+  }
+  function saveState(state) {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {}
+  }
+  var state = loadState();
+
+  var boxes = Array.prototype.slice.call(document.querySelectorAll(".box"));
+
+  function updateProgress() {
+    var overallTotal = boxes.length;
+    var overallDone = boxes.filter(function (b) { return b.classList.contains("on"); }).length;
+    document.getElementById("overall-num").textContent = overallDone;
+    document.getElementById("overall-den").textContent = overallTotal;
+    document.getElementById("overall-bar").style.width = (overallTotal ? (100 * overallDone / overallTotal) : 0) + "%";
+
+    document.querySelectorAll(".part").forEach(function (section) {
+      var key = section.getAttribute("data-tier");
+      var partBoxes = section.querySelectorAll(".box");
+      var total = partBoxes.length;
+      var done = 0;
+      partBoxes.forEach(function (b) { if (b.classList.contains("on")) done++; });
+      var countEl = document.querySelector('[data-navcount="' + key + '"]');
+      var barEl = document.querySelector('[data-navbar="' + key + '"]');
+      if (countEl) countEl.textContent = done + "/" + total;
+      if (barEl) barEl.style.width = (total ? (100 * done / total) : 0) + "%";
+    });
+  }
+
+  function setChecked(box, on) {
+    var id = box.getAttribute("data-id");
+    box.classList.toggle("on", on);
+    box.setAttribute("aria-checked", on ? "true" : "false");
+    var txt = document.querySelector('[data-textfor="' + id + '"]');
+    if (txt) txt.classList.toggle("done", on);
+    state[id] = on;
+  }
+
+  boxes.forEach(function (box) {
+    var id = box.getAttribute("data-id");
+    if (state[id]) setChecked(box, true);
+    function toggle() { setChecked(box, !box.classList.contains("on")); saveState(state); updateProgress(); }
+    box.addEventListener("click", toggle);
+    box.addEventListener("keydown", function (e) {
+      if (e.key === " " || e.key === "Enter") { e.preventDefault(); toggle(); }
+    });
+  });
+
+  document.getElementById("reset-btn").addEventListener("click", function () {
+    if (!confirm("Reset all checked items for a new test round?")) return;
+    state = {};
+    saveState(state);
+    boxes.forEach(function (b) { setChecked(b, false); });
+    updateProgress();
+  });
+
+  updateProgress();
+})();
+</script>

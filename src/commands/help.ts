@@ -98,6 +98,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
                 '`/admin event config` — Set server-wide defaults for new events (location, time, description)',
                 "`/admin library clear` — Clear a specific member's entire library",
                 "`/admin library sync` — Re-sync a game's data from BoardGameGeek",
+                '`/admin library syncall` — Re-sync every game in the library from BoardGameGeek',
                 '`/admin tags add` — Add a game genre tag (creates a Discord role)',
                 '`/admin tags remove` — Remove a game genre tag',
                 '`/admin tags list` — List all current tags',
