@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import {
   addGame,
+  addGamesBulk,
   removeGame,
   findGamesByName,
   findGameNamesByPartial,
@@ -18,6 +19,8 @@ import {
   confirmBring,
   getGameInfo,
   upsertGameInfo,
+  upsertGameInfosBulk,
+  loadGameInfos,
 } from '../src/utils/libraryStorage';
 
 describe('libraryStorage', () => {
@@ -76,6 +79,50 @@ describe('libraryStorage', () => {
       await addGame('guild-1', 'user1', 'Wingspan');
       expect(await addGame('guild-2', 'user1', 'Wingspan')).toBe('added');
       expect(await loadLibrary()).toHaveLength(2);
+    });
+  });
+
+  // ── addGamesBulk ───────────────────────────────────────────────────────────
+
+  describe('addGamesBulk', () => {
+    it('adds each game and returns aligned results in input order', async () => {
+      const results = await addGamesBulk('guild-1', 'user1', [
+        { gameName: 'Wingspan' },
+        { gameName: 'Catan' },
+      ]);
+      expect(results).toEqual(['added', 'added']);
+      expect(await loadLibrary()).toHaveLength(2);
+    });
+
+    it('flags duplicates against games already in the library', async () => {
+      await addGame('guild-1', 'user1', 'Wingspan');
+      const results = await addGamesBulk('guild-1', 'user1', [{ gameName: 'Wingspan' }]);
+      expect(results).toEqual(['duplicate']);
+      expect(await loadLibrary()).toHaveLength(1);
+    });
+
+    it('flags duplicates within the same batch (case-insensitive)', async () => {
+      const results = await addGamesBulk('guild-1', 'user1', [
+        { gameName: 'Wingspan' },
+        { gameName: 'wingspan' },
+      ]);
+      expect(results).toEqual(['added', 'duplicate']);
+      expect(await loadLibrary()).toHaveLength(1);
+    });
+
+    it('matches duplicates by objectid across different names', async () => {
+      const results = await addGamesBulk('guild-1', 'user1', [
+        { gameName: 'Wingspan', objectid: 'obj-123' },
+        { gameName: 'Wingspan (Different Spelling)', objectid: 'obj-123' },
+      ]);
+      expect(results).toEqual(['added', 'duplicate']);
+    });
+
+    it('does one read and one write regardless of batch size', async () => {
+      const games = Array.from({ length: 25 }, (_, i) => ({ gameName: `Game ${i}` }));
+      const results = await addGamesBulk('guild-1', 'user1', games);
+      expect(results.every((r) => r === 'added')).toBe(true);
+      expect(await loadLibrary()).toHaveLength(25);
     });
   });
 
@@ -346,6 +393,35 @@ describe('libraryStorage', () => {
     it('is case-insensitive for lookup', async () => {
       await upsertGameInfo({ gameName: 'Wingspan', updatedAt: new Date().toISOString() });
       expect(await getGameInfo('wingspan')).toBeDefined();
+    });
+  });
+
+  // ── upsertGameInfosBulk ────────────────────────────────────────────────────
+
+  describe('upsertGameInfosBulk', () => {
+    it('inserts multiple new entries in one write', async () => {
+      const now = new Date().toISOString();
+      await upsertGameInfosBulk([
+        { gameName: 'Wingspan', playTime: 70, updatedAt: now },
+        { gameName: 'Catan', playTime: 90, updatedAt: now },
+      ]);
+      const infos = await loadGameInfos();
+      expect(infos).toHaveLength(2);
+      expect((await getGameInfo('Catan'))?.playTime).toBe(90);
+    });
+
+    it('updates existing entries by name (case-insensitive) instead of duplicating', async () => {
+      const now = new Date().toISOString();
+      await upsertGameInfo({ gameName: 'Wingspan', playTime: 60, updatedAt: now });
+      await upsertGameInfosBulk([{ gameName: 'wingspan', playTime: 90, updatedAt: now }]);
+      const infos = await loadGameInfos();
+      expect(infos).toHaveLength(1);
+      expect(infos[0].playTime).toBe(90);
+    });
+
+    it('is a no-op for an empty batch', async () => {
+      await upsertGameInfosBulk([]);
+      expect(await loadGameInfos()).toHaveLength(0);
     });
   });
 

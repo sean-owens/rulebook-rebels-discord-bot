@@ -58,7 +58,7 @@ export async function handleAdd(interaction: ChatInputCommandInteraction): Promi
   });
 
   const type = (interaction.options.getString('type') ?? 'genre') as 'genre' | 'difficulty';
-  await addGameRole(interaction.guildId!, { roleId: discordRole.id, name, type });
+  await addGameRole(interaction.guildId!, { roleId: discordRole.id, name, type, botCreated: true });
   await interaction.editReply(`Tag **${name}** created! Members can select it with \`/myroles\`.`);
 }
 
@@ -77,15 +77,28 @@ export async function handleRemove(interaction: ChatInputCommandInteraction): Pr
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-  try {
-    const discordRole = await interaction.guild!.roles.fetch(tag.roleId);
-    if (discordRole) await discordRole.delete(`Game tag removed by ${interaction.user.tag}`);
-  } catch {
-    // Role may have already been manually deleted
+  // Only delete the Discord role itself if the bot created it. Roles that were
+  // linked to a pre-existing role (via sync finding a same-named role) aren't
+  // owned by the bot and must not be deleted out from under the server.
+  let deletedRole = false;
+  if (tag.botCreated !== false) {
+    try {
+      const discordRole = await interaction.guild!.roles.fetch(tag.roleId);
+      if (discordRole) {
+        await discordRole.delete(`Game tag removed by ${interaction.user.tag}`);
+        deletedRole = true;
+      }
+    } catch {
+      // Role may have already been manually deleted
+    }
   }
 
   await removeGameRole(interaction.guildId!, tag.roleId);
-  await interaction.editReply(`Tag **${name}** removed.`);
+  await interaction.editReply(
+    deletedRole
+      ? `Tag **${name}** removed.`
+      : `Tag **${name}** untracked. The Discord role was linked from an existing role (not created by the bot) and was left in place — delete it manually if you want it gone.`,
+  );
 }
 
 export async function handleSync(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -108,10 +121,31 @@ export async function handleSync(interaction: ChatInputCommandInteraction): Prom
     return;
   }
 
+  // Look up the server's actual Discord roles so we can reuse a same-named
+  // role instead of creating a duplicate.
+  const guildRoles = await interaction.guild!.roles.fetch();
+  const rolesByName = new Map(guildRoles.map((role) => [role.name.toLowerCase(), role]));
+
   let created = 0;
+  let linked = 0;
   const failed: string[] = [];
 
-  for (const tag of genreToCreate) {
+  const syncTag = async (
+    tag: { name: string; color: string },
+    type: 'genre' | 'difficulty',
+  ): Promise<void> => {
+    const existingDiscordRole = rolesByName.get(tag.name.toLowerCase());
+    if (existingDiscordRole) {
+      await addGameRole(interaction.guildId!, {
+        roleId: existingDiscordRole.id,
+        name: tag.name,
+        type,
+        botCreated: false,
+      });
+      linked++;
+      return;
+    }
+
     const color = parseInt(tag.color.replace('#', ''), 16);
     try {
       const discordRole = await interaction.guild!.roles.create({
@@ -120,32 +154,20 @@ export async function handleSync(interaction: ChatInputCommandInteraction): Prom
         mentionable: false,
         reason: `Game tag sync by ${interaction.user.tag}`,
       });
-      await addGameRole(interaction.guildId!, { roleId: discordRole.id, name: tag.name, type: 'genre' });
-      created++;
-    } catch {
-      failed.push(tag.name);
-    }
-  }
-
-  for (const tag of diffToCreate) {
-    const color = parseInt(tag.color.replace('#', ''), 16);
-    try {
-      const discordRole = await interaction.guild!.roles.create({
-        name: tag.name,
-        color,
-        mentionable: false,
-        reason: `Difficulty role sync by ${interaction.user.tag}`,
-      });
       await addGameRole(interaction.guildId!, {
         roleId: discordRole.id,
         name: tag.name,
-        type: 'difficulty',
+        type,
+        botCreated: true,
       });
       created++;
     } catch {
       failed.push(tag.name);
     }
-  }
+  };
+
+  for (const tag of genreToCreate) await syncTag(tag, 'genre');
+  for (const tag of diffToCreate) await syncTag(tag, 'difficulty');
 
   const skipped =
     GENRE_TAG_DEFINITIONS.length -
@@ -153,7 +175,9 @@ export async function handleSync(interaction: ChatInputCommandInteraction): Prom
     (DIFFICULTY_TAG_DEFINITIONS.length - diffToCreate.length);
   const parts: string[] = [];
   if (created > 0) parts.push(`**${created}** role${created !== 1 ? 's' : ''} created`);
-  if (skipped > 0) parts.push(`**${skipped}** already existed`);
+  if (linked > 0)
+    parts.push(`**${linked}** existing role${linked !== 1 ? 's' : ''} linked (already on the server)`);
+  if (skipped > 0) parts.push(`**${skipped}** already synced`);
   if (failed.length > 0) parts.push(`**${failed.length}** failed: ${failed.join(', ')}`);
 
   await interaction.editReply(
@@ -193,8 +217,16 @@ export async function handleClear(interaction: ChatInputCommandInteraction): Pro
     return;
   }
 
+  // Only delete Discord roles the bot actually created. Roles linked from a
+  // pre-existing same-named role (via sync) are not owned by the bot and must
+  // not be deleted — they're just untracked.
   let deleted = 0;
+  let kept = 0;
   for (const tag of removed) {
+    if (tag.botCreated === false) {
+      kept++;
+      continue;
+    }
     try {
       const discordRole = await interaction.guild!.roles.fetch(tag.roleId);
       if (discordRole) await discordRole.delete(`Game tags cleared by ${interaction.user.tag}`);
@@ -204,7 +236,13 @@ export async function handleClear(interaction: ChatInputCommandInteraction): Pro
     }
   }
 
+  const parts: string[] = [`**${deleted}** role${deleted !== 1 ? 's' : ''} deleted`];
+  if (kept > 0)
+    parts.push(
+      `**${kept}** linked role${kept !== 1 ? 's' : ''} untracked but left in place (not created by the bot)`,
+    );
+
   await interaction.editReply(
-    `Cleared **${deleted}** game tag role${deleted !== 1 ? 's' : ''}. Use \`/admin tags sync\` to recreate them.`,
+    `Cleared ${parts.join(', ')}. Use \`/admin tags sync\` to recreate/relink them.`,
   );
 }

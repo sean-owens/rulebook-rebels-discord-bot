@@ -19,6 +19,7 @@ import {
 import {
   loadLibraryForGuild,
   addGame,
+  addGamesBulk,
   removeGame,
   clearUserLibrary,
   getGamesByUser,
@@ -27,6 +28,7 @@ import {
   getGameInfo,
   loadGameInfos,
   upsertGameInfo,
+  upsertGameInfosBulk,
   GameInfo,
   GAME_TAGS,
   Complexity,
@@ -2179,24 +2181,37 @@ async function handleImportBgg(interaction: ChatInputCommandInteraction): Promis
     return;
   }
 
+  const validGames = games.filter((g) => !!g.gameName);
+
+  // Batch the library-add and game-info upserts into one read + one write
+  // each, rather than one round trip per game — with a large BGG collection
+  // (100s of games) that per-game pattern made this command take minutes.
+  const addResults = await addGamesBulk(
+    guildId,
+    userId,
+    validGames.map((g) => ({ gameName: g.gameName, objectid: g.bggGameId, isExpansion: g.isExpansion })),
+  );
+
+  const existingInfos = await loadGameInfos();
+  const existingByName = new Map(existingInfos.map((i) => [i.gameName.toLowerCase(), i]));
+
   let addedGames = 0;
   let addedExpansions = 0;
   let skipped = 0;
   const collectionEntries: UserCollectionEntry[] = [];
+  const infosToUpsert: GameInfo[] = [];
 
-  for (const game of games) {
-    if (!game.gameName) continue;
-
-    const result = await addGame(guildId, userId, game.gameName, game.bggGameId, game.isExpansion);
-    if (result === 'added') {
+  for (let i = 0; i < validGames.length; i++) {
+    const game = validGames[i];
+    if (addResults[i] === 'added') {
       if (game.isExpansion) addedExpansions++;
       else addedGames++;
     } else {
       skipped++;
     }
 
-    const existing = await getGameInfo(game.gameName);
-    await upsertGameInfo({
+    const existing = existingByName.get(game.gameName.toLowerCase());
+    infosToUpsert.push({
       gameName: game.gameName,
       objectid: game.bggGameId,
       minPlayers: existing?.minPlayers ?? game.minPlayers ?? undefined,
@@ -2222,6 +2237,7 @@ async function handleImportBgg(interaction: ChatInputCommandInteraction): Promis
     });
   }
 
+  await upsertGameInfosBulk(infosToUpsert);
   await mergeUserCollection(guildId, userId, collectionEntries);
 
   const parts: string[] = [];
@@ -2309,11 +2325,9 @@ async function processCsvText(
   userId: string,
 ): Promise<{ added: number; skipped: number; expansions: number }> {
   const lines = text.split(/\r?\n/).filter((l) => l.trim());
-  let added = 0;
-  let skipped = 0;
   let expansions = 0;
 
-  if (lines.length === 0) return { added, skipped, expansions };
+  if (lines.length === 0) return { added: 0, skipped: 0, expansions };
 
   // Detect BGG CSV format by checking header row for known BGG columns
   const headers = parseCsvLine(lines[0]).map((h) => h.toLowerCase());
@@ -2330,6 +2344,17 @@ async function processCsvText(
 
   const dataLines = isBgg ? lines.slice(1) : lines;
 
+  interface Row {
+    gameName: string;
+    objectid?: string;
+    minPlayers?: number;
+    maxPlayers?: number;
+    bestPlayers?: number;
+    playTime?: number;
+    weight?: number;
+  }
+  const rows: Row[] = [];
+
   for (const rawLine of dataLines) {
     const fields = parseCsvLine(rawLine);
     const gameName = fields[nameIdx]?.trim();
@@ -2343,36 +2368,56 @@ async function processCsvText(
     }
 
     const objectid = idIdx !== -1 ? fields[idIdx]?.trim() || undefined : undefined;
-    const result = await addGame(guildId, userId, gameName, objectid);
-    if (result === 'added') added++;
-    else skipped++;
+    const row: Row = { gameName, objectid };
 
     if (isBgg) {
-      const minPlayers =
+      row.minPlayers =
         minPlayersIdx !== -1 ? parseInt(fields[minPlayersIdx], 10) || undefined : undefined;
-      const maxPlayers =
+      row.maxPlayers =
         maxPlayersIdx !== -1 ? parseInt(fields[maxPlayersIdx], 10) || undefined : undefined;
-      const bestPlayers =
+      row.bestPlayers =
         bestPlayersIdx !== -1 ? parseInt(fields[bestPlayersIdx], 10) || undefined : undefined;
-      const playTime =
+      row.playTime =
         playTimeIdx !== -1 ? parseInt(fields[playTimeIdx], 10) || undefined : undefined;
       const rawWeight = weightIdx !== -1 ? parseFloat(fields[weightIdx]) : NaN;
-      const weight = !isNaN(rawWeight) && rawWeight > 0 ? rawWeight : undefined;
-      const existing = await getGameInfo(gameName);
-      await upsertGameInfo({
-        gameName,
-        objectid,
-        minPlayers: existing?.minPlayers ?? minPlayers,
-        maxPlayers: existing?.maxPlayers ?? maxPlayers,
-        bestPlayers: existing?.bestPlayers ?? bestPlayers,
-        playTime: existing?.playTime ?? playTime,
-        weight: existing?.weight ?? weight,
-        complexity: existing?.complexity ?? (weight ? weightTag(weight) : undefined),
+      row.weight = !isNaN(rawWeight) && rawWeight > 0 ? rawWeight : undefined;
+    }
+
+    rows.push(row);
+  }
+
+  if (rows.length === 0) return { added: 0, skipped: 0, expansions };
+
+  // Batch the library-add and game-info upserts into one read + one write
+  // each, rather than one round trip per CSV row.
+  const addResults = await addGamesBulk(
+    guildId,
+    userId,
+    rows.map((r) => ({ gameName: r.gameName, objectid: r.objectid })),
+  );
+  const added = addResults.filter((r) => r === 'added').length;
+  const skipped = addResults.filter((r) => r === 'duplicate').length;
+
+  if (isBgg) {
+    const existingInfos = await loadGameInfos();
+    const existingByName = new Map(existingInfos.map((i) => [i.gameName.toLowerCase(), i]));
+    const infosToUpsert: GameInfo[] = rows.map((r) => {
+      const existing = existingByName.get(r.gameName.toLowerCase());
+      return {
+        gameName: r.gameName,
+        objectid: r.objectid,
+        minPlayers: existing?.minPlayers ?? r.minPlayers,
+        maxPlayers: existing?.maxPlayers ?? r.maxPlayers,
+        bestPlayers: existing?.bestPlayers ?? r.bestPlayers,
+        playTime: existing?.playTime ?? r.playTime,
+        weight: existing?.weight ?? r.weight,
+        complexity: existing?.complexity ?? (r.weight ? weightTag(r.weight) : undefined),
         tags: existing?.tags,
         expansions: existing?.expansions,
         updatedAt: new Date().toISOString(),
-      });
-    }
+      };
+    });
+    await upsertGameInfosBulk(infosToUpsert);
   }
 
   return { added, skipped, expansions };

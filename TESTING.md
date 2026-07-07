@@ -1575,9 +1575,10 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.9f `/admin tags remove`
 
-**What it does:** Deletes a game tag and its Discord role.
+**What it does:** Untracks a game tag and deletes its Discord role — but only if the bot created that role. Tags that were linked to a pre-existing role via `/admin tags sync` (not created by the bot) are untracked without deleting the underlying Discord role.
 
-- [ ] `/admin tags remove name:Puzzle` — confirm Discord role is deleted and tag is removed
+- [ ] `/admin tags remove name:Puzzle` (bot-created role) — confirm Discord role is deleted, tag is removed, and the reply says "Tag **Puzzle** removed."
+- [ ] Remove a tag that was linked from a pre-existing role (see 3.9h) — confirm the Discord role is **not** deleted, the tag is untracked, and the reply explains the role was left in place
 - [ ] Attempt to remove a non-existent tag — confirm "No tag named X found. Use `/admin tags list`" error
 
 ### 3.9g `/admin tags list`
@@ -1589,18 +1590,21 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.9h `/admin tags sync`
 
-**What it does:** Creates Discord roles for all built-in game tags and difficulty levels (skips any that already exist).
+**What it does:** Ensures a Discord role exists for every built-in game tag and difficulty level. If a role with the same name (case-insensitive) already exists on the server, it is linked/reused instead of creating a duplicate; only tags with no matching role get a newly created one.
 
-- [ ] Run `/admin tags sync` on a fresh server — confirm all built-in genre tags and difficulty roles (Light, Medium, Heavy) are created
-- [ ] Run again — confirm "already existed" for all and no duplicates
+- [ ] Run `/admin tags sync` on a fresh server with no matching roles — confirm all built-in genre tags and difficulty roles (Light, Medium, Heavy) are created, and the summary reports "X roles created"
+- [ ] Manually create a Discord role with the exact name of one of the built-in tags (e.g. "Party") *before* running sync — confirm sync links to that existing role instead of creating a duplicate, and the summary reports "1 existing role linked"
+- [ ] Run sync again after a full sync — confirm "already synced" for all and no duplicates or re-creation
+- [ ] Confirm no two Discord roles end up with the same tag name after running sync repeatedly
 
 ### 3.9i `/admin tags clear`
 
-**What it does:** Removes all game tags and their Discord roles from the server.
+**What it does:** Untracks all game tags. Discord roles that the bot created are deleted; roles that were linked from a pre-existing role (via sync) are left in place and only untracked.
 
-- [ ] Run `/admin tags clear` — confirm all tag roles are deleted and the tag list is cleared
+- [ ] Run `/admin tags clear` with only bot-created tags — confirm all tag roles are deleted from Discord and the tag list is cleared
+- [ ] Run `/admin tags clear` when at least one tag was linked from a pre-existing role (see 3.9h) — confirm that role is **not** deleted from Discord, the reply reports it as "untracked but left in place", and bot-created roles are still deleted normally
 - [ ] Run with no tags set up — confirm "No game tags to remove"
-- [ ] Confirm the action suggests using `/admin tags sync` to recreate them
+- [ ] Confirm the action suggests using `/admin tags sync` to recreate/relink them
 
 ### 3.9j `/admin welcome config`
 

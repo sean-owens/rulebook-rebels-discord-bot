@@ -61,6 +61,36 @@ export async function addGame(
   return 'added';
 }
 
+// Bulk variant of addGame — does a single read + single write regardless of
+// how many games are added, instead of one round trip per game. Use this
+// whenever adding more than one game at a time (BGG/CSV imports).
+export async function addGamesBulk(
+  guildId: string,
+  userId: string,
+  games: Array<{ gameName: string; objectid?: string; isExpansion?: boolean }>,
+): Promise<('added' | 'duplicate')[]> {
+  const entries = await loadLibrary();
+  const results: ('added' | 'duplicate')[] = [];
+  for (const g of games) {
+    const exists = entries.some((e) => {
+      if (e.guildId !== guildId || e.userId !== userId) return false;
+      if (g.objectid && e.objectid === g.objectid) return true;
+      return e.gameName.toLowerCase() === g.gameName.toLowerCase();
+    });
+    if (exists) {
+      results.push('duplicate');
+      continue;
+    }
+    const entry: LibraryEntry = { guildId, userId, gameName: g.gameName, addedAt: new Date().toISOString() };
+    if (g.objectid) entry.objectid = g.objectid;
+    if (g.isExpansion) entry.isExpansion = true;
+    entries.push(entry);
+    results.push('added');
+  }
+  await saveLibrary(entries);
+  return results;
+}
+
 export async function findGamesByName(guildId: string, gameName: string): Promise<LibraryEntry[]> {
   return (await loadLibrary()).filter(
     (e) => e.guildId === guildId && e.gameName.toLowerCase() === gameName.toLowerCase(),
@@ -246,5 +276,19 @@ export async function upsertGameInfo(info: GameInfo): Promise<void> {
   const idx = infos.findIndex((i) => i.gameName.toLowerCase() === info.gameName.toLowerCase());
   if (idx >= 0) infos[idx] = info;
   else infos.push(info);
+  await saveGameInfos(infos);
+}
+
+// Bulk variant of upsertGameInfo — does a single read + single write for the
+// whole batch instead of one round trip per game. Use this when upserting
+// more than one GameInfo at a time (BGG/CSV imports).
+export async function upsertGameInfosBulk(updates: GameInfo[]): Promise<void> {
+  if (updates.length === 0) return;
+  const infos = await loadGameInfos();
+  for (const info of updates) {
+    const idx = infos.findIndex((i) => i.gameName.toLowerCase() === info.gameName.toLowerCase());
+    if (idx >= 0) infos[idx] = info;
+    else infos.push(info);
+  }
   await saveGameInfos(infos);
 }
