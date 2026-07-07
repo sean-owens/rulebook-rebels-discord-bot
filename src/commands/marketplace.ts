@@ -274,7 +274,7 @@ export async function handleAutocomplete(interaction: AutocompleteInteraction): 
     const userId = interaction.user.id;
     const query = focusedOption.value.toLowerCase();
 
-    const listings = getUserListings(guildId, userId).filter((l) =>
+    const listings = (await getUserListings(guildId, userId)).filter((l) =>
       sub === 'close'
         ? l.status === 'active' || l.status === 'pending'
         : l.status === 'sold' || l.status === 'closed',
@@ -449,7 +449,7 @@ async function ensureMarketplaceTags(
   forumChannel: ForumChannel,
   guildId: string,
 ): Promise<Record<string, string>> {
-  const config = getGuildConfig(guildId);
+  const config = await getGuildConfig(guildId);
   const tagIds: Record<string, string> = { ...config.marketplaceTagIds };
   const existingByName = new Map(forumChannel.availableTags.map((t) => [t.name, t.id]));
 
@@ -472,7 +472,7 @@ async function ensureMarketplaceTags(
     }
   }
 
-  updateGuildConfig(guildId, { marketplaceTagIds: tagIds });
+  await updateGuildConfig(guildId, { marketplaceTagIds: tagIds });
   return tagIds;
 }
 
@@ -577,7 +577,7 @@ async function updateForumPost(
     if (!thread) return;
 
     // Update applied tags to reflect current status
-    const config = getGuildConfig(guildId);
+    const config = await getGuildConfig(guildId);
     const tags = resolvedTags(config.marketplaceTagIds, listing.type, listing.status);
     if (tags.length > 0) {
       await (thread as any).setAppliedTags(tags);
@@ -918,9 +918,9 @@ async function finalizeSellListing(
   price: number | undefined,
 ): Promise<void> {
   const { guildId, userId, username, itemName, bggId, thumbnail, condition, notes, referenceLink, bidsAllowed, expansions, parentItem } = draft;
-  const config = getGuildConfig(guildId);
+  const config = await getGuildConfig(guildId);
 
-  const listing = createListing(guildId, {
+  const listing = await createListing(guildId, {
     guildId,
     userId,
     username,
@@ -937,7 +937,7 @@ async function finalizeSellListing(
     parentItem,
   });
 
-  appendMarketplaceLog({
+  await appendMarketplaceLog({
     timestamp: new Date().toISOString(),
     guildId,
     event: 'listing_created',
@@ -958,7 +958,7 @@ async function finalizeSellListing(
       if (channel?.type === ChannelType.GuildForum) {
         const threadId = await postListingToForum(listing, channel as ForumChannel, guildId);
         if (threadId) {
-          updateListing(guildId, listing.id, { forumThreadId: threadId });
+          await updateListing(guildId, listing.id, { forumThreadId: threadId });
           forumPosted = true;
           forumThreadId = threadId;
         }
@@ -1148,9 +1148,9 @@ async function createTradeListing(
   draft: Omit<SellDraft, 'expiresAt'>,
 ): Promise<void> {
   const { guildId, userId, username, itemName, bggId, thumbnail, condition, notes, referenceLink, lookingFor, expansions, parentItem } = draft;
-  const config = getGuildConfig(guildId);
+  const config = await getGuildConfig(guildId);
 
-  const listing = createListing(guildId, {
+  const listing = await createListing(guildId, {
     guildId, userId, username,
     type: 'trade',
     bggId, itemName, thumbnail, condition, notes, referenceLink,
@@ -1160,7 +1160,7 @@ async function createTradeListing(
     parentItem,
   });
 
-  appendMarketplaceLog({
+  await appendMarketplaceLog({
     timestamp: new Date().toISOString(),
     guildId,
     event: 'listing_created',
@@ -1179,7 +1179,7 @@ async function createTradeListing(
       const channel = await interaction.client.channels.fetch(config.marketplaceChannelId);
       if (channel?.type === ChannelType.GuildForum) {
         const threadId = await postListingToForum(listing, channel as ForumChannel, guildId);
-        if (threadId) { updateListing(guildId, listing.id, { forumThreadId: threadId }); forumPosted = true; forumThreadId = threadId; }
+        if (threadId) { await updateListing(guildId, listing.id, { forumThreadId: threadId }); forumPosted = true; forumThreadId = threadId; }
       }
     } catch (err) { console.error('[marketplace] forum channel fetch failed:', err); }
   }
@@ -1239,7 +1239,7 @@ async function handleBrowse(interaction: ChatInputCommandInteraction): Promise<v
   const guildId = interaction.guildId!;
   const typeFilter = interaction.options.getString('type') as 'sell' | 'trade' | null;
 
-  let listings = getActiveListingsForGuild(guildId);
+  let listings = await getActiveListingsForGuild(guildId);
   if (typeFilter) listings = listings.filter((l) => l.type === typeFilter);
 
   if (listings.length === 0) {
@@ -1277,7 +1277,7 @@ async function handleMy(interaction: ChatInputCommandInteraction): Promise<void>
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const guildId = interaction.guildId!;
-  const listings = getUserListings(guildId, interaction.user.id);
+  const listings = await getUserListings(guildId, interaction.user.id);
 
   if (listings.length === 0) {
     await interaction.editReply({ content: "You don't have any listings. Use `/marketplace post` to create one." });
@@ -1306,7 +1306,7 @@ async function handleClose(interaction: ChatInputCommandInteraction): Promise<vo
 
   const guildId = interaction.guildId!;
   const listingId = interaction.options.getString('id', true).trim();
-  const listing = getListing(guildId, listingId);
+  const listing = await getListing(guildId, listingId);
 
   if (!listing) {
     await interaction.editReply({ content: 'Listing not found.' });
@@ -1319,13 +1319,13 @@ async function handleClose(interaction: ChatInputCommandInteraction): Promise<vo
     return;
   }
 
-  const updated = closeListing(guildId, listingId);
+  const updated = await closeListing(guildId, listingId);
   if (!updated) {
     await interaction.editReply({ content: 'Could not close listing.' });
     return;
   }
 
-  appendMarketplaceLog({
+  await appendMarketplaceLog({
     timestamp: new Date().toISOString(),
     guildId,
     event: 'listing_closed',
@@ -1347,7 +1347,7 @@ async function handleReopen(interaction: ChatInputCommandInteraction): Promise<v
 
   const guildId = interaction.guildId!;
   const listingId = interaction.options.getString('id', true).trim();
-  const listing = getListing(guildId, listingId);
+  const listing = await getListing(guildId, listingId);
 
   if (!listing) {
     await interaction.editReply({ content: 'Listing not found.' });
@@ -1359,13 +1359,13 @@ async function handleReopen(interaction: ChatInputCommandInteraction): Promise<v
     return;
   }
 
-  const updated = reopenListing(guildId, listingId);
+  const updated = await reopenListing(guildId, listingId);
   if (!updated) {
     await interaction.editReply({ content: 'Could not reopen listing.' });
     return;
   }
 
-  appendMarketplaceLog({
+  await appendMarketplaceLog({
     timestamp: new Date().toISOString(),
     guildId,
     event: 'listing_reopened',
@@ -1406,7 +1406,7 @@ export async function handleAdminConfig(interaction: ChatInputCommandInteraction
   if (mode) patch.marketplaceNegotiationMode = mode;
 
   if (Object.keys(patch).length === 0) {
-    const config = getGuildConfig(guildId);
+    const config = await getGuildConfig(guildId);
     await interaction.editReply({
       content: [
         '**Current marketplace config:**',
@@ -1417,8 +1417,8 @@ export async function handleAdminConfig(interaction: ChatInputCommandInteraction
     return;
   }
 
-  updateGuildConfig(guildId, patch as Parameters<typeof updateGuildConfig>[1]);
-  const config = getGuildConfig(guildId);
+  await updateGuildConfig(guildId, patch as Parameters<typeof updateGuildConfig>[1]);
+  const config = await getGuildConfig(guildId);
 
   // Eagerly create forum tags so they're ready before any listing is posted
   if (patch.marketplaceChannelId && config.marketplaceChannelId) {
@@ -1464,12 +1464,12 @@ export async function handleAdminPurge(interaction: ChatInputCommandInteraction)
     statusOption === 'all' ? ['active', 'pending', 'sold', 'closed'] :
     ['sold', 'closed'];
 
-  const removed = purgeListings(guildId, {
+  const removed = await purgeListings(guildId, {
     userId: targetUser?.id,
     status: statusFilter,
   });
 
-  appendMarketplaceLog({
+  await appendMarketplaceLog({
     timestamp: new Date().toISOString(),
     guildId,
     event: 'admin_purge',
@@ -1570,7 +1570,7 @@ export async function handlePriceCustomModal(interaction: ModalSubmitInteraction
 
 export async function handleInterestButton(interaction: ButtonInteraction, listingId: string): Promise<void> {
   const guildId = interaction.guildId!;
-  const listing = getListing(guildId, listingId);
+  const listing = await getListing(guildId, listingId);
 
   if (!listing || listing.status === 'sold' || listing.status === 'closed') {
     await interaction.reply({ content: 'This listing is no longer available.', flags: MessageFlags.Ephemeral });
@@ -1640,7 +1640,7 @@ export async function handleBidModal(interaction: ModalSubmitInteraction, listin
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const guildId = interaction.guildId!;
-  const listing = getListing(guildId, listingId);
+  const listing = await getListing(guildId, listingId);
 
   if (!listing || listing.status === 'sold' || listing.status === 'closed') {
     await interaction.editReply({ content: 'This listing is no longer available.' });
@@ -1668,7 +1668,7 @@ export async function handleBidModal(interaction: ModalSubmitInteraction, listin
     ? (interaction.member as { displayName?: string }).displayName ?? interaction.user.username
     : interaction.user.username;
 
-  const result = addBid(guildId, listingId, {
+  const result = await addBid(guildId, listingId, {
     userId: interaction.user.id,
     username: bidderName,
     amount,
@@ -1681,7 +1681,7 @@ export async function handleBidModal(interaction: ModalSubmitInteraction, listin
     return;
   }
 
-  appendMarketplaceLog({
+  await appendMarketplaceLog({
     timestamp: new Date().toISOString(),
     guildId,
     event: 'bid_placed',
@@ -1695,7 +1695,7 @@ export async function handleBidModal(interaction: ModalSubmitInteraction, listin
     offer: offerRaw || undefined,
   });
 
-  const config = getGuildConfig(guildId);
+  const config = await getGuildConfig(guildId);
 
   const bidLines: string[] = [`**${bidderName}** is interested in **${listing.itemName}**`];
   if (amount != null) bidLines.push(`Bid: **${formatPrice(amount)}**`);
@@ -1855,12 +1855,12 @@ export async function handleLibraryRemove(
   listingId: string,
 ): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  const listing = getListing(guildId, listingId);
+  const listing = await getListing(guildId, listingId);
   if (!listing || listing.userId !== interaction.user.id) {
     await interaction.editReply({ content: 'Could not verify listing ownership.' });
     return;
   }
-  const result = removeGame(guildId, interaction.user.id, listing.itemName);
+  const result = await removeGame(guildId, interaction.user.id, listing.itemName);
   await interaction.editReply({
     content: result === 'removed'
       ? `**${listing.itemName}** has been removed from your library.`
@@ -1878,14 +1878,14 @@ export async function handleAcceptBid(interaction: ButtonInteraction, listingId:
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const guildId = interaction.guildId!;
-  const listing = getListing(guildId, listingId);
+  const listing = await getListing(guildId, listingId);
   if (!listing) { await interaction.editReply({ content: 'Listing not found.' }); return; }
   if (listing.userId !== interaction.user.id) { await interaction.editReply({ content: 'Only the seller can accept bids.' }); return; }
 
-  const result = acceptBid(guildId, listingId, bidId);
+  const result = await acceptBid(guildId, listingId, bidId);
   if (!result) { await interaction.editReply({ content: 'Bid not found.' }); return; }
 
-  appendMarketplaceLog({
+  await appendMarketplaceLog({
     timestamp: new Date().toISOString(),
     guildId,
     event: 'bid_accepted',
@@ -1896,7 +1896,7 @@ export async function handleAcceptBid(interaction: ButtonInteraction, listingId:
     actorUsername: interaction.user.username,
     bidId,
   });
-  appendMarketplaceLog({
+  await appendMarketplaceLog({
     timestamp: new Date().toISOString(),
     guildId,
     event: 'listing_sold',
@@ -1944,7 +1944,7 @@ export async function handleAcceptBid(interaction: ButtonInteraction, listingId:
 
   await interaction.editReply({ content: `Bid accepted! **${listing.itemName}** is now marked as sold.` });
 
-  const inLibrary = getGamesByUser(guildId, listing.userId).some(
+  const inLibrary = (await getGamesByUser(guildId, listing.userId)).some(
     (e) => e.gameName.toLowerCase() === listing.itemName.toLowerCase(),
   );
   if (inLibrary) {
@@ -1962,7 +1962,7 @@ export async function handleDenyBid(interaction: ButtonInteraction, listingId: s
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const guildId = interaction.guildId!;
-  const listing = getListing(guildId, listingId);
+  const listing = await getListing(guildId, listingId);
   if (!listing) { await interaction.editReply({ content: 'Listing not found.' }); return; }
 
   const isSeller = listing.userId === interaction.user.id;
@@ -1974,11 +1974,11 @@ export async function handleDenyBid(interaction: ButtonInteraction, listingId: s
     return;
   }
 
-  const result = denyBid(guildId, listingId, bidId);
+  const result = await denyBid(guildId, listingId, bidId);
   if (!result) { await interaction.editReply({ content: 'Bid not found.' }); return; }
 
   const event = isBuyer ? 'bid_withdrawn' : 'bid_denied';
-  appendMarketplaceLog({
+  await appendMarketplaceLog({
     timestamp: new Date().toISOString(),
     guildId,
     event,
@@ -2015,7 +2015,7 @@ export async function handleDenyBid(interaction: ButtonInteraction, listingId: s
 
 export async function handleCounterButton(interaction: ButtonInteraction, listingId: string, bidId: string): Promise<void> {
   const guildId = interaction.guildId!;
-  const listing = getListing(guildId, listingId);
+  const listing = await getListing(guildId, listingId);
   if (!listing) { await interaction.reply({ content: 'Listing not found.', flags: MessageFlags.Ephemeral }); return; }
 
   const bid = listing.bids.find((b) => b.id === bidId);
@@ -2091,7 +2091,7 @@ export async function handleCounterModal(
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const guildId = interaction.guildId!;
-  const listing = getListing(guildId, listingId);
+  const listing = await getListing(guildId, listingId);
   if (!listing) { await interaction.editReply({ content: 'Listing not found.' }); return; }
 
   const bid = listing.bids.find((b) => b.id === bidId);
@@ -2115,7 +2115,7 @@ export async function handleCounterModal(
     ? (interaction.member as { displayName?: string }).displayName ?? interaction.user.username
     : interaction.user.username;
 
-  const result = addCounter(guildId, listingId, bidId, {
+  const result = await addCounter(guildId, listingId, bidId, {
     fromUserId: interaction.user.id,
     fromUsername: fromName,
     amount,
@@ -2125,7 +2125,7 @@ export async function handleCounterModal(
 
   if (!result) { await interaction.editReply({ content: 'Could not submit counter.' }); return; }
 
-  appendMarketplaceLog({
+  await appendMarketplaceLog({
     timestamp: new Date().toISOString(),
     guildId,
     event: 'counter_made',
@@ -2190,7 +2190,7 @@ export async function handleBuyerAcceptCounter(
   bidId: string,
 ): Promise<void> {
   const guildId = interaction.guildId!;
-  const listing = getListing(guildId, listingId);
+  const listing = await getListing(guildId, listingId);
   if (!listing) { await interaction.reply({ content: 'Listing not found.', flags: MessageFlags.Ephemeral }); return; }
 
   const bid = listing.bids.find((b) => b.id === bidId);
@@ -2201,10 +2201,10 @@ export async function handleBuyerAcceptCounter(
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-  const result = acceptBid(guildId, listingId, bidId);
+  const result = await acceptBid(guildId, listingId, bidId);
   if (!result) { await interaction.editReply({ content: 'Could not complete acceptance.' }); return; }
 
-  appendMarketplaceLog({
+  await appendMarketplaceLog({
     timestamp: new Date().toISOString(),
     guildId,
     event: 'bid_accepted',
@@ -2216,7 +2216,7 @@ export async function handleBuyerAcceptCounter(
     bidId,
     details: 'buyer accepted counter',
   });
-  appendMarketplaceLog({
+  await appendMarketplaceLog({
     timestamp: new Date().toISOString(),
     guildId,
     event: 'listing_sold',
@@ -2250,7 +2250,7 @@ export async function handleBuyerAcceptCounter(
 
   try {
     const seller = await interaction.client.users.fetch(listing.userId);
-    const inLibrary = getGamesByUser(guildId, listing.userId).some(
+    const inLibrary = (await getGamesByUser(guildId, listing.userId)).some(
       (e) => e.gameName.toLowerCase() === listing.itemName.toLowerCase(),
     );
     const dmBase = `✅ The buyer accepted your counter on **${listing.itemName}**! Coordinate the exchange in the listing thread.`;

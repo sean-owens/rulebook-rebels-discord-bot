@@ -33,26 +33,28 @@ export interface GameNight {
   openChannel?: boolean;
 }
 
-export function loadGameNights(): GameNight[] {
+export async function loadGameNights(): Promise<GameNight[]> {
   return readJson<GameNight[]>(FILE, []);
 }
 
-export function saveGameNights(gamenights: GameNight[]): void {
-  writeJson(FILE, gamenights);
+export async function saveGameNights(gamenights: GameNight[]): Promise<void> {
+  await writeJson(FILE, gamenights);
 }
 
-export function findGameNight(id: string): GameNight | undefined {
-  return loadGameNights().find((g) => g.id === id);
+export async function findGameNight(id: string): Promise<GameNight | undefined> {
+  return (await loadGameNights()).find((g) => g.id === id);
 }
 
-export function findGameNightByDiscordEventId(discordEventId: string): GameNight | undefined {
-  return loadGameNights().find((g) => g.discordEventId === discordEventId);
+export async function findGameNightByDiscordEventId(
+  discordEventId: string,
+): Promise<GameNight | undefined> {
+  return (await loadGameNights()).find((g) => g.discordEventId === discordEventId);
 }
 
-export function upsertGameNight(gamenight: GameNight): void {
-  const all = loadGameNights();
+export async function upsertGameNight(gamenight: GameNight): Promise<void> {
+  const all = await loadGameNights();
   const idx = all.findIndex((g) => g.id === gamenight.id);
   if (idx >= 0) all[idx] = gamenight;
   else all.push(gamenight);
-  saveGameNights(all);
+  await saveGameNights(all);
 }

@@ -18,4 +18,4 @@ Since this discord bot is public facing, BGG Legal requires the following:
 https://boardgamegeek.com/image/7779581
 
 ## Backup Data
-There is a link that is provided to do an export of their DB info as-is. There is a copy of this data in the BGG/backup-data folder in this repo. However, if you need an update, [click here!](https://geek-export-stats.s3.amazonaws.com/boardgames_export/boardgames_ranks_2026-06-26.zip?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAJYFNCT7FKCE4O6TA%2F20260626%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260626T233724Z&X-Amz-SignedHeaders=host&X-Amz-Expires=600&X-Amz-Signature=01318758e721ddb5ae5ec73a83c5a08d30d4b79f7373aa16265c3aac8827609d)
+There is a link that is provided to do an export of their DB info as-is. There is a copy of this data in the BGG/backup-data folder in this repo. However, if you need an update, [click here!](https://boardgamegeek.com/data_dumps/bg_ranks)

@@ -22,34 +22,37 @@ export interface UserCollectionEntry {
 
 type Store = Record<string, Record<string, UserCollectionEntry[]>>;
 
-function load(): Store {
+function load(): Promise<Store> {
   return readJson<Store>(FILE, {});
 }
 
-function save(store: Store): void {
-  writeJson(FILE, store);
+function save(store: Store): Promise<void> {
+  return writeJson(FILE, store);
 }
 
-export function getUserCollection(guildId: string, userId: string): UserCollectionEntry[] {
-  return load()[guildId]?.[userId] ?? [];
+export async function getUserCollection(
+  guildId: string,
+  userId: string,
+): Promise<UserCollectionEntry[]> {
+  return (await load())[guildId]?.[userId] ?? [];
 }
 
-export function setUserCollection(
+export async function setUserCollection(
   guildId: string,
   userId: string,
   entries: UserCollectionEntry[],
-): void {
-  const store = load();
+): Promise<void> {
+  const store = await load();
   (store[guildId] ??= {})[userId] = entries;
-  save(store);
+  await save(store);
 }
 
-export function mergeUserCollection(
+export async function mergeUserCollection(
   guildId: string,
   userId: string,
   incoming: UserCollectionEntry[],
-): void {
-  const existing = getUserCollection(guildId, userId);
+): Promise<void> {
+  const existing = await getUserCollection(guildId, userId);
   const existingById = new Map(existing.map((e) => [e.bggGameId, e]));
 
   const merged = incoming.map((entry) => {
@@ -63,21 +66,21 @@ export function mergeUserCollection(
     };
   });
 
-  setUserCollection(guildId, userId, merged);
+  await setUserCollection(guildId, userId, merged);
 }
 
-export function updateCollectionEntry(
+export async function updateCollectionEntry(
   guildId: string,
   userId: string,
   bggGameId: string,
   updates: Partial<Pick<UserCollectionEntry, 'traded' | 'sold'>>,
-): boolean {
-  const store = load();
+): Promise<boolean> {
+  const store = await load();
   const entries = store[guildId]?.[userId];
   if (!entries) return false;
   const idx = entries.findIndex((e) => e.bggGameId === bggGameId);
   if (idx === -1) return false;
   entries[idx] = { ...entries[idx], ...updates };
-  save(store);
+  await save(store);
   return true;
 }

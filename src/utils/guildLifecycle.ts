@@ -19,35 +19,35 @@ interface DeletedGuild {
   deletedAt: string;
 }
 
-function loadDeletedGuilds(): DeletedGuild[] {
+function loadDeletedGuilds(): Promise<DeletedGuild[]> {
   return readJson<DeletedGuild[]>(DELETED_GUILDS_FILE, []);
 }
 
-function saveDeletedGuilds(guilds: DeletedGuild[]): void {
-  writeJson(DELETED_GUILDS_FILE, guilds);
+function saveDeletedGuilds(guilds: DeletedGuild[]): Promise<void> {
+  return writeJson(DELETED_GUILDS_FILE, guilds);
 }
 
-export function markGuildDeleted(guildId: string, guildName: string): void {
-  const guilds = loadDeletedGuilds().filter((g) => g.guildId !== guildId);
+export async function markGuildDeleted(guildId: string, guildName: string): Promise<void> {
+  const guilds = (await loadDeletedGuilds()).filter((g) => g.guildId !== guildId);
   guilds.push({ guildId, guildName, deletedAt: new Date().toISOString() });
-  saveDeletedGuilds(guilds);
+  await saveDeletedGuilds(guilds);
 }
 
 // Returns true if the guild was pending deletion (bot was re-added before data expired)
-export function restoreGuild(guildId: string): boolean {
-  const guilds = loadDeletedGuilds();
+export async function restoreGuild(guildId: string): Promise<boolean> {
+  const guilds = await loadDeletedGuilds();
   const idx = guilds.findIndex((g) => g.guildId === guildId);
   if (idx === -1) return false;
   guilds.splice(idx, 1);
-  saveDeletedGuilds(guilds);
+  await saveDeletedGuilds(guilds);
   return true;
 }
 
-function purgeGuildData(guildId: string): void {
+async function purgeGuildData(guildId: string): Promise<void> {
   // Array-based files: filter out entries belonging to this guild
   for (const file of ARRAY_FILES) {
-    const entries = readJson<Array<{ guildId?: string }>>(file, []);
-    writeJson(
+    const entries = await readJson<Array<{ guildId?: string }>>(file, []);
+    await writeJson(
       file,
       entries.filter((e) => e.guildId !== guildId),
     );
@@ -57,38 +57,38 @@ function purgeGuildData(guildId: string): void {
   // Cross-reference against the guild's event IDs (already purged above from gamenights,
   // so load before purge would be needed — but we purge gamenights first in the loop above).
   // Instead, keep a set of all remaining event IDs after purge and remove orphaned requests.
-  const remainingNights = readJson<Array<{ id: string }>>('gamenights.json', []);
+  const remainingNights = await readJson<Array<{ id: string }>>('gamenights.json', []);
   const validEventIds = new Set(remainingNights.map((n) => n.id));
-  const requests = readJson<Array<{ eventId?: string }>>('library_requests.json', []);
-  writeJson(
+  const requests = await readJson<Array<{ eventId?: string }>>('library_requests.json', []);
+  await writeJson(
     'library_requests.json',
     requests.filter((r) => !r.eventId || validEventIds.has(r.eventId)),
   );
 
   // Record-keyed files: delete the guild's top-level key
   for (const file of KEYED_FILES) {
-    const store = readJson<Record<string, unknown>>(file, {});
+    const store = await readJson<Record<string, unknown>>(file, {});
     delete store[guildId];
-    writeJson(file, store);
+    await writeJson(file, store);
   }
 
   console.log(`[GuildLifecycle] Purged all data for guild ${guildId}`);
 }
 
-export function runRetentionCleanup(): void {
+export async function runRetentionCleanup(): Promise<void> {
   const now = Date.now();
   const cutoff = RETENTION_DAYS * 24 * 60 * 60 * 1000;
-  const guilds = loadDeletedGuilds();
+  const guilds = await loadDeletedGuilds();
   const expired = guilds.filter((g) => now - new Date(g.deletedAt).getTime() > cutoff);
 
   for (const guild of expired) {
     console.log(
       `[GuildLifecycle] Retention window expired for "${guild.guildName}" (${guild.guildId}) — purging data`,
     );
-    purgeGuildData(guild.guildId);
+    await purgeGuildData(guild.guildId);
   }
 
   if (expired.length > 0) {
-    saveDeletedGuilds(guilds.filter((g) => now - new Date(g.deletedAt).getTime() <= cutoff));
+    await saveDeletedGuilds(guilds.filter((g) => now - new Date(g.deletedAt).getTime() <= cutoff));
   }
 }

@@ -33,34 +33,34 @@ export interface GameSuggestion {
   createdBy: string;
 }
 
-export function loadGames(): GameSuggestion[] {
+export async function loadGames(): Promise<GameSuggestion[]> {
   return readJson<GameSuggestion[]>(FILE, []);
 }
 
-export function saveGames(games: GameSuggestion[]): void {
-  writeJson(FILE, games);
+export async function saveGames(games: GameSuggestion[]): Promise<void> {
+  await writeJson(FILE, games);
 }
 
-export function findGame(id: string): GameSuggestion | undefined {
-  return loadGames().find((g) => g.id === id);
+export async function findGame(id: string): Promise<GameSuggestion | undefined> {
+  return (await loadGames()).find((g) => g.id === id);
 }
 
-export function findGamesByChannel(channelId: string): GameSuggestion[] {
-  return loadGames().filter((g) => g.channelId === channelId);
+export async function findGamesByChannel(channelId: string): Promise<GameSuggestion[]> {
+  return (await loadGames()).filter((g) => g.channelId === channelId);
 }
 
-export function findGamesByEvent(eventId: string): GameSuggestion[] {
-  return loadGames().filter((g) => g.eventId === eventId);
+export async function findGamesByEvent(eventId: string): Promise<GameSuggestion[]> {
+  return (await loadGames()).filter((g) => g.eventId === eventId);
 }
 
-export function removeGamesByEvent(eventId: string): void {
-  saveGames(loadGames().filter((g) => g.eventId !== eventId));
+export async function removeGamesByEvent(eventId: string): Promise<void> {
+  await saveGames((await loadGames()).filter((g) => g.eventId !== eventId));
 }
 
-export function upsertGame(game: GameSuggestion): void {
-  const all = loadGames();
+export async function upsertGame(game: GameSuggestion): Promise<void> {
+  const all = await loadGames();
   const idx = all.findIndex((g) => g.id === game.id);
   if (idx >= 0) all[idx] = game;
   else all.push(game);
-  saveGames(all);
+  await saveGames(all);
 }

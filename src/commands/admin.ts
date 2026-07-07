@@ -275,9 +275,9 @@ export async function handleAutocomplete(interaction: AutocompleteInteraction): 
     const focused = interaction.options.getFocused();
     const guildId = interaction.guildId!;
     const expansionNames = new Set(
-      loadLibraryForGuild(guildId).filter((e) => e.isExpansion).map((e) => e.gameName.toLowerCase()),
+      (await loadLibraryForGuild(guildId)).filter((e) => e.isExpansion).map((e) => e.gameName.toLowerCase()),
     );
-    const matches = findGameNamesByPartial(guildId, focused)
+    const matches = (await findGameNamesByPartial(guildId, focused))
       .filter((name) => !expansionNames.has(name.toLowerCase()))
       .slice(0, 25);
     await interaction.respond(matches.map((name) => ({ name, value: name })));

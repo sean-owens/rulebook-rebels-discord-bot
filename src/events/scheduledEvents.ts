@@ -15,10 +15,10 @@ import { updateAnnouncementPin } from '../utils/pins';
 export async function handleScheduledEventDelete(
   scheduledEvent: GuildScheduledEvent | PartialGuildScheduledEvent,
 ): Promise<void> {
-  const gn = findGameNightByDiscordEventId(scheduledEvent.id);
+  const gn = await findGameNightByDiscordEventId(scheduledEvent.id);
   if (!gn || gn.cancelled) return;
   gn.cancelled = true;
-  upsertGameNight(gn);
+  await upsertGameNight(gn);
   await cleanupCancelledNight(scheduledEvent.client, gn);
 }
 
@@ -26,12 +26,12 @@ export async function handleScheduledEventUpdate(
   _old: GuildScheduledEvent | PartialGuildScheduledEvent | null,
   newEvent: GuildScheduledEvent | PartialGuildScheduledEvent,
 ): Promise<void> {
-  const gn = findGameNightByDiscordEventId(newEvent.id);
+  const gn = await findGameNightByDiscordEventId(newEvent.id);
   if (!gn) return;
 
   if (newEvent.status === GuildScheduledEventStatus.Canceled && !gn.cancelled) {
     gn.cancelled = true;
-    upsertGameNight(gn);
+    await upsertGameNight(gn);
     await cleanupCancelledNight(newEvent.client, gn);
     await updateAnnouncementPin(newEvent.client, gn.guildId).catch(() => null);
   }
@@ -49,7 +49,7 @@ export async function handleScheduledEventUserRemove(
   scheduledEvent: GuildScheduledEvent | PartialGuildScheduledEvent,
   user: User | PartialUser,
 ): Promise<void> {
-  const gn = findGameNightByDiscordEventId(scheduledEvent.id);
+  const gn = await findGameNightByDiscordEventId(scheduledEvent.id);
   if (!gn || gn.cancelled || gn.archived) return;
 
   const userId = user.id;
@@ -58,7 +58,7 @@ export async function handleScheduledEventUserRemove(
   gn.rsvps.yes = gn.rsvps.yes.filter((id) => id !== userId);
   gn.rsvps.maybe = gn.rsvps.maybe.filter((id) => id !== userId);
   gn.rsvps.no.push(userId);
-  upsertGameNight(gn);
+  await upsertGameNight(gn);
 
   if (gn.eventChannelId) {
     try {
@@ -88,7 +88,7 @@ export async function handleScheduledEventUserAdd(
   scheduledEvent: GuildScheduledEvent | PartialGuildScheduledEvent,
   user: User | PartialUser,
 ): Promise<void> {
-  const gn = findGameNightByDiscordEventId(scheduledEvent.id);
+  const gn = await findGameNightByDiscordEventId(scheduledEvent.id);
   if (!gn || gn.cancelled || gn.archived) return;
 
   const userId = user.id;
@@ -97,7 +97,7 @@ export async function handleScheduledEventUserAdd(
   gn.rsvps.maybe = gn.rsvps.maybe.filter((id) => id !== userId);
   gn.rsvps.no = gn.rsvps.no.filter((id) => id !== userId);
   gn.rsvps.yes.push(userId);
-  upsertGameNight(gn);
+  await upsertGameNight(gn);
 
   if (gn.eventChannelId) {
     try {

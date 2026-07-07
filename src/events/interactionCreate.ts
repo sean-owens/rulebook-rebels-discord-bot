@@ -275,7 +275,7 @@ async function handleRsvp(
   type: 'yes' | 'maybe' | 'no',
   gnId: string,
 ): Promise<void> {
-  const gn = findGameNight(gnId);
+  const gn = await findGameNight(gnId);
   if (!gn || gn.cancelled) {
     await interaction.reply({ content: 'This event is no longer active.', flags: MessageFlags.Ephemeral });
     return;
@@ -286,7 +286,7 @@ async function handleRsvp(
   gn.rsvps.maybe = gn.rsvps.maybe.filter((id) => id !== userId);
   gn.rsvps.no = gn.rsvps.no.filter((id) => id !== userId);
   gn.rsvps[type].push(userId);
-  upsertGameNight(gn);
+  await upsertGameNight(gn);
 
   if (gn.eventChannelId && !gn.openChannel) {
     try {

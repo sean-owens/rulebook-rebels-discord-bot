@@ -67,35 +67,45 @@ export interface MarketplaceListing {
 
 type MarketplaceStore = Record<string, MarketplaceListing[]>;
 
-function load(): MarketplaceStore {
+function load(): Promise<MarketplaceStore> {
   return readJson<MarketplaceStore>(FILE, {});
 }
 
-function save(store: MarketplaceStore): void {
-  writeJson(FILE, store);
+function save(store: MarketplaceStore): Promise<void> {
+  return writeJson(FILE, store);
 }
 
-export function getListingsForGuild(guildId: string): MarketplaceListing[] {
-  return load()[guildId] ?? [];
+export async function getListingsForGuild(guildId: string): Promise<MarketplaceListing[]> {
+  return (await load())[guildId] ?? [];
 }
 
-export function getListing(guildId: string, listingId: string): MarketplaceListing | undefined {
-  return getListingsForGuild(guildId).find((l) => l.id === listingId);
+export async function getListing(
+  guildId: string,
+  listingId: string,
+): Promise<MarketplaceListing | undefined> {
+  return (await getListingsForGuild(guildId)).find((l) => l.id === listingId);
 }
 
-export function getActiveListingsForGuild(guildId: string): MarketplaceListing[] {
-  return getListingsForGuild(guildId).filter((l) => l.status === 'active' || l.status === 'pending');
+export async function getActiveListingsForGuild(
+  guildId: string,
+): Promise<MarketplaceListing[]> {
+  return (await getListingsForGuild(guildId)).filter(
+    (l) => l.status === 'active' || l.status === 'pending',
+  );
 }
 
-export function getUserListings(guildId: string, userId: string): MarketplaceListing[] {
-  return getListingsForGuild(guildId).filter((l) => l.userId === userId);
+export async function getUserListings(
+  guildId: string,
+  userId: string,
+): Promise<MarketplaceListing[]> {
+  return (await getListingsForGuild(guildId)).filter((l) => l.userId === userId);
 }
 
-export function createListing(
+export async function createListing(
   guildId: string,
   data: Omit<MarketplaceListing, 'id' | 'bids' | 'status' | 'createdAt' | 'updatedAt'>,
-): MarketplaceListing {
-  const store = load();
+): Promise<MarketplaceListing> {
+  const store = await load();
   const listings = store[guildId] ?? [];
   const now = new Date().toISOString();
   const listing: MarketplaceListing = {
@@ -108,31 +118,31 @@ export function createListing(
   };
   listings.push(listing);
   store[guildId] = listings;
-  save(store);
+  await save(store);
   return listing;
 }
 
-export function updateListing(
+export async function updateListing(
   guildId: string,
   listingId: string,
   patch: Partial<Pick<MarketplaceListing, 'status' | 'forumThreadId' | 'bids' | 'updatedAt'>>,
-): MarketplaceListing | undefined {
-  const store = load();
+): Promise<MarketplaceListing | undefined> {
+  const store = await load();
   const listings = store[guildId] ?? [];
   const idx = listings.findIndex((l) => l.id === listingId);
   if (idx === -1) return undefined;
   listings[idx] = { ...listings[idx], ...patch, updatedAt: new Date().toISOString() };
   store[guildId] = listings;
-  save(store);
+  await save(store);
   return listings[idx];
 }
 
-export function addBid(
+export async function addBid(
   guildId: string,
   listingId: string,
   bidData: Omit<Bid, 'id' | 'listingId' | 'status' | 'counters' | 'createdAt' | 'updatedAt'>,
-): { listing: MarketplaceListing; bid: Bid } | undefined {
-  const store = load();
+): Promise<{ listing: MarketplaceListing; bid: Bid } | undefined> {
+  const store = await load();
   const listings = store[guildId] ?? [];
   const idx = listings.findIndex((l) => l.id === listingId);
   if (idx === -1) return undefined;
@@ -157,17 +167,17 @@ export function addBid(
   listing.updatedAt = now;
 
   store[guildId] = listings;
-  save(store);
+  await save(store);
   return { listing, bid };
 }
 
-export function updateBid(
+export async function updateBid(
   guildId: string,
   listingId: string,
   bidId: string,
   patch: Partial<Pick<Bid, 'status' | 'negotiationThreadId' | 'counters'>>,
-): { listing: MarketplaceListing; bid: Bid } | undefined {
-  const store = load();
+): Promise<{ listing: MarketplaceListing; bid: Bid } | undefined> {
+  const store = await load();
   const listings = store[guildId] ?? [];
   const listingIdx = listings.findIndex((l) => l.id === listingId);
   if (listingIdx === -1) return undefined;
@@ -179,17 +189,17 @@ export function updateBid(
   listing.bids[bidIdx] = { ...listing.bids[bidIdx], ...patch, updatedAt: new Date().toISOString() };
   listing.updatedAt = new Date().toISOString();
   store[guildId] = listings;
-  save(store);
+  await save(store);
   return { listing, bid: listing.bids[bidIdx] };
 }
 
-export function addCounter(
+export async function addCounter(
   guildId: string,
   listingId: string,
   bidId: string,
   counter: Omit<Counter, 'id' | 'createdAt'>,
-): { listing: MarketplaceListing; bid: Bid; counter: Counter } | undefined {
-  const store = load();
+): Promise<{ listing: MarketplaceListing; bid: Bid; counter: Counter } | undefined> {
+  const store = await load();
   const listings = store[guildId] ?? [];
   const listingIdx = listings.findIndex((l) => l.id === listingId);
   if (listingIdx === -1) return undefined;
@@ -204,16 +214,16 @@ export function addCounter(
   listing.bids[bidIdx].updatedAt = now;
   listing.updatedAt = now;
   store[guildId] = listings;
-  save(store);
+  await save(store);
   return { listing, bid: listing.bids[bidIdx], counter: newCounter };
 }
 
-export function acceptBid(
+export async function acceptBid(
   guildId: string,
   listingId: string,
   bidId: string,
-): { listing: MarketplaceListing; acceptedBid: Bid; closedBids: Bid[] } | undefined {
-  const store = load();
+): Promise<{ listing: MarketplaceListing; acceptedBid: Bid; closedBids: Bid[] } | undefined> {
+  const store = await load();
   const listings = store[guildId] ?? [];
   const listingIdx = listings.findIndex((l) => l.id === listingId);
   if (listingIdx === -1) return undefined;
@@ -239,16 +249,16 @@ export function acceptBid(
   listing.status = 'sold';
   listing.updatedAt = now;
   store[guildId] = listings;
-  save(store);
+  await save(store);
   return { listing, acceptedBid: listing.bids[bidIdx], closedBids };
 }
 
-export function denyBid(
+export async function denyBid(
   guildId: string,
   listingId: string,
   bidId: string,
-): { listing: MarketplaceListing; bid: Bid } | undefined {
-  const store = load();
+): Promise<{ listing: MarketplaceListing; bid: Bid } | undefined> {
+  const store = await load();
   const listings = store[guildId] ?? [];
   const listingIdx = listings.findIndex((l) => l.id === listingId);
   if (listingIdx === -1) return undefined;
@@ -267,22 +277,22 @@ export function denyBid(
   }
   listing.updatedAt = now;
   store[guildId] = listings;
-  save(store);
+  await save(store);
   return { listing, bid: listing.bids[bidIdx] };
 }
 
-export function closeListing(
+export async function closeListing(
   guildId: string,
   listingId: string,
-): MarketplaceListing | undefined {
+): Promise<MarketplaceListing | undefined> {
   return updateListing(guildId, listingId, { status: 'closed' });
 }
 
-export function reopenListing(
+export async function reopenListing(
   guildId: string,
   listingId: string,
-): MarketplaceListing | undefined {
-  const store = load();
+): Promise<MarketplaceListing | undefined> {
+  const store = await load();
   const listings = store[guildId] ?? [];
   const idx = listings.findIndex((l) => l.id === listingId);
   if (idx === -1) return undefined;
@@ -292,15 +302,15 @@ export function reopenListing(
   listings[idx].status = hasOpenBids ? 'pending' : 'active';
   listings[idx].updatedAt = now;
   store[guildId] = listings;
-  save(store);
+  await save(store);
   return listings[idx];
 }
 
-export function purgeListings(
+export async function purgeListings(
   guildId: string,
   filter: { userId?: string; status?: ListingStatus[] },
-): number {
-  const store = load();
+): Promise<number> {
+  const store = await load();
   const listings = store[guildId] ?? [];
   const before = listings.length;
   store[guildId] = listings.filter((l) => {
@@ -308,7 +318,7 @@ export function purgeListings(
     if (filter.status && !filter.status.includes(l.status)) return true;
     return false;
   });
-  save(store);
+  await save(store);
   return before - store[guildId].length;
 }
 

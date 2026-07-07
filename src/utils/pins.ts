@@ -3,7 +3,7 @@ import { loadGameNights } from './storage';
 import { getGuildConfig } from './config';
 
 export async function updateAnnouncementPin(client: Client, guildId: string): Promise<void> {
-  const config = getGuildConfig(guildId);
+  const config = await getGuildConfig(guildId);
   if (!config.announcementsChannelId) return;
 
   let channel: TextChannel;
@@ -23,7 +23,7 @@ export async function updateAnnouncementPin(client: Client, guildId: string): Pr
 
   // Pin the next upcoming event
   const now = Date.now();
-  const next = loadGameNights()
+  const next = (await loadGameNights())
     .filter(
       (g) =>
         !g.cancelled &&

@@ -40,13 +40,16 @@ const DEFAULT_CONFIG: GuildConfig = {
 
 type ConfigStore = Record<string, GuildConfig>;
 
-export function getGuildConfig(guildId: string): GuildConfig {
-  return readJson<ConfigStore>(FILE, {})[guildId] ?? { ...DEFAULT_CONFIG };
+export async function getGuildConfig(guildId: string): Promise<GuildConfig> {
+  return (await readJson<ConfigStore>(FILE, {}))[guildId] ?? { ...DEFAULT_CONFIG };
 }
 
-export function updateGuildConfig(guildId: string, patch: Partial<GuildConfig>): GuildConfig {
-  const store = readJson<ConfigStore>(FILE, {});
-  store[guildId] = { ...getGuildConfig(guildId), ...patch };
-  writeJson(FILE, store);
+export async function updateGuildConfig(
+  guildId: string,
+  patch: Partial<GuildConfig>,
+): Promise<GuildConfig> {
+  const store = await readJson<ConfigStore>(FILE, {});
+  store[guildId] = { ...(await getGuildConfig(guildId)), ...patch };
+  await writeJson(FILE, store);
   return store[guildId];
 }

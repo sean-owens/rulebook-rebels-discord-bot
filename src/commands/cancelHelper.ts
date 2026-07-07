@@ -5,7 +5,7 @@ import { removeAllRequestsForEvent } from '../utils/libraryStorage';
 
 export async function cleanupCancelledNight(client: Client, gn: GameNight): Promise<void> {
   // Delete individual game card messages first (they may be in channels other than eventChannelId)
-  const games = findGamesByEvent(gn.id);
+  const games = await findGamesByEvent(gn.id);
   await Promise.allSettled(
     games.map(async (game) => {
       if (!game.channelId || !game.messageId) return;
@@ -52,6 +52,6 @@ export async function cleanupCancelledNight(client: Client, gn: GameNight): Prom
   }
 
   // Purge all stored game suggestions and library requests for this event
-  removeGamesByEvent(gn.id);
-  removeAllRequestsForEvent(gn.id);
+  await removeGamesByEvent(gn.id);
+  await removeAllRequestsForEvent(gn.id);
 }

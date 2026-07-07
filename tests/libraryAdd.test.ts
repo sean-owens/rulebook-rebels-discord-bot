@@ -95,7 +95,7 @@ describe('/library add — step ordering', () => {
   // --- Step 1a: exact match in user's own library ---
 
   it('step 1a: blocks when user already owns the exact game', async () => {
-    addGame('g1', 'u1', 'Wingspan');
+    await addGame('g1', 'u1', 'Wingspan');
     const interaction = makeAddInteraction('Wingspan');
     await execute(interaction);
     expect(interaction.reply).toHaveBeenCalledWith(
@@ -107,7 +107,7 @@ describe('/library add — step ordering', () => {
   });
 
   it('step 1a: match is case-insensitive', async () => {
-    addGame('g1', 'u1', 'Wingspan');
+    await addGame('g1', 'u1', 'Wingspan');
     const interaction = makeAddInteraction('wingspan');
     await execute(interaction);
     expect(interaction.reply).toHaveBeenCalledWith(
@@ -120,7 +120,7 @@ describe('/library add — step ordering', () => {
   // --- Step 1b: exact match in guild library owned by others ---
 
   it('step 1b: offers "adding your copy?" when others own the exact game', async () => {
-    addGame('g1', 'u2', 'Wingspan');
+    await addGame('g1', 'u2', 'Wingspan');
     const interaction = makeAddInteraction('Wingspan', 'g1', 'u1');
     await execute(interaction);
     expect(interaction.reply).toHaveBeenCalledWith(
@@ -132,7 +132,7 @@ describe('/library add — step ordering', () => {
   });
 
   it('step 1b: match against others is also case-insensitive', async () => {
-    addGame('g1', 'u2', 'Wingspan');
+    await addGame('g1', 'u2', 'Wingspan');
     const interaction = makeAddInteraction('wingspan', 'g1', 'u1');
     await execute(interaction);
     expect(interaction.reply).toHaveBeenCalledWith(
@@ -145,7 +145,7 @@ describe('/library add — step ordering', () => {
   // --- Step 2: partial match in guild library ---
 
   it('step 2: shows library partial select when similar game exists', async () => {
-    addGame('g1', 'u2', 'Wingspan');
+    await addGame('g1', 'u2', 'Wingspan');
     const interaction = makeAddInteraction('wing', 'g1', 'u1');
     await execute(interaction);
     expect(interaction.reply).toHaveBeenCalledWith(
@@ -157,7 +157,7 @@ describe('/library add — step ordering', () => {
   });
 
   it('step 2: partial select is shown before BGG catalog', async () => {
-    addGame('g1', 'u2', 'Wingspan');
+    await addGame('g1', 'u2', 'Wingspan');
     // BGG would also find Wingspan — library partial should win
     mockSearchCatalog.mockReturnValue([
       { id: '266192', name: 'Wingspan', year: 2019, isExpansion: false, rank: 10 },
@@ -186,11 +186,11 @@ describe('/library add — step ordering', () => {
       }),
     );
     expect(interaction.showModal).not.toHaveBeenCalled();
-    expect(getGamesByUser('g1', 'u1').some((e) => e.gameName === 'Wingspan')).toBe(false);
+    expect((await getGamesByUser('g1', 'u1')).some((e) => e.gameName === 'Wingspan')).toBe(false);
   });
 
   it('step 3a: BGG exact match re-checks library via normalized name (caught by step 2 normalized path)', async () => {
-    addGame('g1', 'u2', 'Brass: Birmingham');
+    await addGame('g1', 'u2', 'Brass: Birmingham');
     mockSearchCatalog.mockReturnValue([
       { id: '224517', name: 'Brass: Birmingham', year: 2018, isExpansion: false, rank: 5 },
     ]);
@@ -241,7 +241,7 @@ describe('/library add — step ordering', () => {
     const interaction = makeAddInteraction('My Custom Game', 'g1', 'u1');
     await execute(interaction);
     expect(interaction.showModal).toHaveBeenCalled();
-    expect(getGamesByUser('g1', 'u1').some((e) => e.gameName === 'My Custom Game')).toBe(true);
+    expect((await getGamesByUser('g1', 'u1')).some((e) => e.gameName === 'My Custom Game')).toBe(true);
   });
 
   it('step 4: adds as custom when BGG catalog is not loaded', async () => {
@@ -249,13 +249,13 @@ describe('/library add — step ordering', () => {
     const interaction = makeAddInteraction('Some Game', 'g1', 'u1');
     await execute(interaction);
     expect(interaction.showModal).toHaveBeenCalled();
-    expect(getGamesByUser('g1', 'u1').some((e) => e.gameName === 'Some Game')).toBe(true);
+    expect((await getGamesByUser('g1', 'u1')).some((e) => e.gameName === 'Some Game')).toBe(true);
   });
 
   // --- Guild isolation ---
 
   it('library checks are guild-scoped', async () => {
-    addGame('g1', 'u2', 'Wingspan'); // only in guild g1
+    await addGame('g1', 'u2', 'Wingspan'); // only in guild g1
     const interaction = makeAddInteraction('Wingspan', 'g2', 'u1'); // different guild
     await execute(interaction);
     // Should not find Wingspan in g2 → falls through to BGG/custom

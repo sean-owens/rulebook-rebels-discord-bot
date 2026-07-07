@@ -10,7 +10,7 @@ export async function archiveEventChannel(client: Client, gn: GameNight): Promis
   const guild = await client.guilds.fetch(gn.guildId);
   await guild.channels.fetch();
 
-  const { archiveCategoryName } = getGuildConfig(gn.guildId);
+  const { archiveCategoryName } = await getGuildConfig(gn.guildId);
   let archiveCategory = guild.channels.cache.find(
     (c) => c.type === ChannelType.GuildCategory && c.name === archiveCategoryName,
   );
@@ -67,7 +67,7 @@ export async function archiveEventChannel(client: Client, gn: GameNight): Promis
 
   gn.archived = true;
   gn.lockAt = lockDate.toISOString();
-  upsertGameNight(gn);
+  await upsertGameNight(gn);
 
   console.log(`Archived channel for game night ${gn.id}, will lock on ${lockDateStr}`);
 }
@@ -88,7 +88,7 @@ export async function lockEventChannel(client: Client, gn: GameNight): Promise<v
     await channel.send('*This channel is now read-only.*');
 
     gn.locked = true;
-    upsertGameNight(gn);
+    await upsertGameNight(gn);
 
     console.log(`Locked channel for game night ${gn.id}`);
   } catch (err) {
@@ -98,7 +98,7 @@ export async function lockEventChannel(client: Client, gn: GameNight): Promise<v
 
 export async function archiveExpiredEvents(client: Client): Promise<void> {
   const now = new Date();
-  const expired = loadGameNights().filter(
+  const expired = (await loadGameNights()).filter(
     (gn) =>
       !gn.cancelled &&
       !gn.archived &&
@@ -131,14 +131,14 @@ export async function archiveExpiredEvents(client: Client): Promise<void> {
         }
       }
       gn.archived = true;
-      upsertGameNight(gn);
+      await upsertGameNight(gn);
     }
   }
 }
 
 export async function checkPendingLocks(client: Client): Promise<void> {
   const now = new Date();
-  const pending = loadGameNights().filter(
+  const pending = (await loadGameNights()).filter(
     (gn) => gn.archived && !gn.locked && gn.lockAt && new Date(gn.lockAt) <= now,
   );
   for (const gn of pending) {
@@ -148,11 +148,11 @@ export async function checkPendingLocks(client: Client): Promise<void> {
 
 export async function deleteArchivedChannels(client: Client): Promise<void> {
   const now = new Date();
-  const candidates = loadGameNights().filter(
+  const candidates = (await loadGameNights()).filter(
     (gn) => gn.archived && gn.locked && gn.eventChannelId && !gn.channelDeleted && gn.lockAt,
   );
   for (const gn of candidates) {
-    const { archivedChannelRetentionDays } = getGuildConfig(gn.guildId);
+    const { archivedChannelRetentionDays } = await getGuildConfig(gn.guildId);
     if (!archivedChannelRetentionDays) continue; // 0 = disabled
 
     const retentionAfterLock = Math.max(0, archivedChannelRetentionDays - LOCK_DELAY_DAYS);
@@ -167,7 +167,7 @@ export async function deleteArchivedChannels(client: Client): Promise<void> {
       /* already deleted or inaccessible */
     }
     gn.channelDeleted = true;
-    upsertGameNight(gn);
+    await upsertGameNight(gn);
     console.log(`Auto-deleted archived channel for game night ${gn.id} after ${archivedChannelRetentionDays} days`);
   }
 }

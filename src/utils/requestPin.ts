@@ -3,12 +3,12 @@ import { loadGameNights, upsertGameNight } from './storage';
 import { getRequestsForEvent, loadLibraryForGuild, GameRequest } from './libraryStorage';
 import { findGamesByChannel, GameSuggestion } from './gameStorage';
 
-export function buildRequestEmbed(
+export async function buildRequestEmbed(
   guildId: string,
   requests: GameRequest[],
   nameMap: Record<string, string> = {},
-): EmbedBuilder {
-  const library = loadLibraryForGuild(guildId);
+): Promise<EmbedBuilder> {
+  const library = await loadLibraryForGuild(guildId);
 
   // Group by owner — a game with multiple owners appears under each
   const ownerMap = new Map<string, string[]>();
@@ -90,11 +90,11 @@ function buildGameListEmbed(games: GameSuggestion[]): EmbedBuilder {
 }
 
 export async function updateGameListPin(client: Client, eventId: string): Promise<void> {
-  const all = loadGameNights();
+  const all = await loadGameNights();
   const gameNight = all.find((gn) => gn.id === eventId);
   if (!gameNight?.eventChannelId) return;
 
-  const games = findGamesByChannel(gameNight.eventChannelId);
+  const games = await findGamesByChannel(gameNight.eventChannelId);
   const embed = buildGameListEmbed(games);
 
   let channel: TextChannel;
@@ -122,18 +122,18 @@ export async function updateGameListPin(client: Client, eventId: string): Promis
   }
 
   gameNight.gameListPinMessageId = msg.id;
-  upsertGameNight(gameNight);
+  await upsertGameNight(gameNight);
 }
 
 export async function updateRequestPin(client: Client, eventId: string): Promise<void> {
-  const all = loadGameNights();
+  const all = await loadGameNights();
   const gameNight = all.find((gn) => gn.id === eventId);
   if (!gameNight?.eventChannelId) return;
 
-  const requests = getRequestsForEvent(eventId);
+  const requests = await getRequestsForEvent(eventId);
 
   // Resolve display names for all library owners of the requested games
-  const library = loadLibraryForGuild(gameNight.guildId);
+  const library = await loadLibraryForGuild(gameNight.guildId);
   const ownerIds = [
     ...new Set(
       requests.flatMap((r) =>
@@ -159,7 +159,7 @@ export async function updateRequestPin(client: Client, eventId: string): Promise
     /* guild unavailable — names fall back inside buildRequestEmbed */
   }
 
-  const embed = buildRequestEmbed(gameNight.guildId, requests, nameMap);
+  const embed = await buildRequestEmbed(gameNight.guildId, requests, nameMap);
 
   let channel: TextChannel;
   try {
@@ -186,5 +186,5 @@ export async function updateRequestPin(client: Client, eventId: string): Promise
   }
 
   gameNight.requestPinMessageId = msg.id;
-  upsertGameNight(gameNight);
+  await upsertGameNight(gameNight);
 }

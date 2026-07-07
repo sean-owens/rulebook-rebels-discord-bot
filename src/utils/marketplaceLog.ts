@@ -1,5 +1,4 @@
-import fs from 'fs';
-import path from 'path';
+import { readText, writeText } from './db';
 
 export type MarketplaceEventType =
   | 'listing_created'
@@ -29,22 +28,17 @@ export interface MarketplaceLogEntry {
   details?: string;
 }
 
-function logFilePath(): string {
-  const dir = path.join(process.cwd(), 'data');
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  return path.join(dir, 'marketplace_log.jsonl');
-}
+const LOG_FILE = 'marketplace_log.jsonl';
 
-export function appendMarketplaceLog(entry: MarketplaceLogEntry): void {
+export async function appendMarketplaceLog(entry: MarketplaceLogEntry): Promise<void> {
   const line = JSON.stringify({ ...entry, timestamp: new Date().toISOString() }) + '\n';
-  fs.appendFileSync(logFilePath(), line, 'utf-8');
+  const existing = await readText(LOG_FILE, '');
+  await writeText(LOG_FILE, existing + line);
 }
 
-export function readMarketplaceLog(): MarketplaceLogEntry[] {
-  const file = logFilePath();
-  if (!fs.existsSync(file)) return [];
-  return fs
-    .readFileSync(file, 'utf-8')
+export async function readMarketplaceLog(): Promise<MarketplaceLogEntry[]> {
+  const content = await readText(LOG_FILE, '');
+  return content
     .split('\n')
     .filter(Boolean)
     .map((line) => JSON.parse(line) as MarketplaceLogEntry);

@@ -2,7 +2,7 @@ import { EmbedBuilder, GuildMember, TextChannel } from 'discord.js';
 import { getGuildConfig } from '../utils/config';
 
 export async function handleGuildMemberAdd(member: GuildMember): Promise<void> {
-  const config = getGuildConfig(member.guild.id);
+  const config = await getGuildConfig(member.guild.id);
 
   // ── Welcome embed in introductions channel ───────────────────────────────
   if (config.welcomeChannelId) {

@@ -23,7 +23,7 @@ const SETUP_ROLES = [
 ];
 
 export async function handleGuildCreate(guild: Guild): Promise<void> {
-  const restored = restoreGuild(guild.id);
+  const restored = await restoreGuild(guild.id);
   if (restored) {
     console.log(
       `[GuildCreate] Bot re-added to "${guild.name}" — data restored (was pending deletion)`,

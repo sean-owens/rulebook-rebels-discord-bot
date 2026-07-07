@@ -15,7 +15,7 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
   const ch = (id: string) => (id ? `<#${id}>` : '*not set*');
 
   if (Object.keys(patch).length === 0) {
-    const c = getGuildConfig(interaction.guildId!);
+    const c = await getGuildConfig(interaction.guildId!);
     await interaction.reply({
       content: [
         '**Welcome config:**',
@@ -28,7 +28,7 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
     return;
   }
 
-  const updated = updateGuildConfig(interaction.guildId!, patch);
+  const updated = await updateGuildConfig(interaction.guildId!, patch);
   await interaction.reply({
     content: [
       '**Welcome config updated:**',

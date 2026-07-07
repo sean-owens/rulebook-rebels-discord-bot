@@ -80,8 +80,8 @@ interface PendingRequestConfirm {
 }
 const pendingRequestConfirms = new Map<string, PendingRequestConfirm>();
 
-function pickPreferredOwner(eventId: string, attendingOwnerIds: string[]): string {
-  const requests = getRequestsForEvent(eventId);
+async function pickPreferredOwner(eventId: string, attendingOwnerIds: string[]): Promise<string> {
+  const requests = await getRequestsForEvent(eventId);
   const bringCounts = new Map<string, number>(attendingOwnerIds.map((id) => [id, 0]));
   for (const req of requests) {
     if (req.confirmedBy && bringCounts.has(req.confirmedBy)) {
@@ -99,12 +99,12 @@ function pickPreferredOwner(eventId: string, attendingOwnerIds: string[]): strin
   return chosen;
 }
 
-function buildExpansionNote(guildId: string, userId: string, gameName: string): string {
-  const info = getGameInfo(gameName);
+async function buildExpansionNote(guildId: string, userId: string, gameName: string): Promise<string> {
+  const info = await getGameInfo(gameName);
   if (!info?.bggExpansions?.length) return '';
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
   const userExpNames = new Set(
-    loadLibraryForGuild(guildId)
+    (await loadLibraryForGuild(guildId))
       .filter((e) => e.userId === userId && e.isExpansion)
       .map((e) => norm(e.gameName)),
   );
@@ -352,31 +352,36 @@ export const data = new SlashCommandBuilder()
       ),
   );
 
-function buildBringLines(
+async function buildBringLines(
   guildId: string,
-  requests: ReturnType<typeof getRequestsForEvent>,
+  requests: GameRequest[],
   userId: string,
-): string[] {
-  return requests
-    .filter((req) => {
-      if (!findGamesByName(guildId, req.gameName).some((e) => e.userId === userId)) return false;
-      if (req.preferredOwnerId && req.preferredOwnerId !== userId) return false;
-      return true;
-    })
-    .map((req) => {
-      const copies = req.copiesNeeded ?? 1;
-      const confirmed = req.confirmedBy === userId ? ' ✅ confirmed' : '';
-      const copiesNote = copies > 1 ? ` *(${copies} copies needed)*` : '';
-      const expansionNote =
-        req.preferredOwnerId === userId ? buildExpansionNote(guildId, userId, req.gameName) : '';
-      return `• **${req.gameName}**${expansionNote}${copiesNote}${confirmed}`;
-    });
+): Promise<string[]> {
+  const filtered: GameRequest[] = [];
+  for (const req of requests) {
+    if (!(await findGamesByName(guildId, req.gameName)).some((e) => e.userId === userId)) continue;
+    if (req.preferredOwnerId && req.preferredOwnerId !== userId) continue;
+    filtered.push(req);
+  }
+
+  const lines: string[] = [];
+  for (const req of filtered) {
+    const copies = req.copiesNeeded ?? 1;
+    const confirmed = req.confirmedBy === userId ? ' ✅ confirmed' : '';
+    const copiesNote = copies > 1 ? ` *(${copies} copies needed)*` : '';
+    const expansionNote =
+      req.preferredOwnerId === userId
+        ? await buildExpansionNote(guildId, userId, req.gameName)
+        : '';
+    lines.push(`• **${req.gameName}**${expansionNote}${copiesNote}${confirmed}`);
+  }
+  return lines;
 }
 
 async function handleBring(interaction: ChatInputCommandInteraction): Promise<void> {
   const gameName = interaction.options.getString('game')?.trim();
   const now = new Date();
-  const upcoming = loadGameNights()
+  const upcoming = (await loadGameNights())
     .filter((gn) => !gn.cancelled && !gn.archived && new Date(gn.startTimeISO) > now)
     .sort((a, b) => new Date(a.startTimeISO).getTime() - new Date(b.startTimeISO).getTime());
 
@@ -392,7 +397,7 @@ async function handleBring(interaction: ChatInputCommandInteraction): Promise<vo
     const event = channelEvent ?? upcoming[0];
 
     // Support partial/punctuation-tolerant lookup
-    const requests = getRequestsForEvent(event.id);
+    const requests = await getRequestsForEvent(event.id);
     const match =
       requests.find((r) => r.gameName.toLowerCase() === gameName.toLowerCase()) ??
       requests.find((r) => {
@@ -408,7 +413,7 @@ async function handleBring(interaction: ChatInputCommandInteraction): Promise<vo
       return;
     }
 
-    const result = confirmBring(
+    const result = await confirmBring(
       interaction.guildId!,
       event.id,
       match.gameName,
@@ -424,7 +429,7 @@ async function handleBring(interaction: ChatInputCommandInteraction): Promise<vo
     }
 
     // result === 'confirmed'
-    const expansionNote = buildExpansionNote(
+    const expansionNote = await buildExpansionNote(
       interaction.guildId!,
       interaction.user.id,
       match.gameName,
@@ -444,9 +449,9 @@ async function handleBring(interaction: ChatInputCommandInteraction): Promise<vo
 
   // ── View mode: /library bring (no game param) ────────────────────────────
   if (channelEvent) {
-    const lines = buildBringLines(
+    const lines = await buildBringLines(
       interaction.guildId!,
-      getRequestsForEvent(channelEvent.id),
+      await getRequestsForEvent(channelEvent.id),
       interaction.user.id,
     );
     if (lines.length === 0) {
@@ -474,9 +479,9 @@ async function handleBring(interaction: ChatInputCommandInteraction): Promise<vo
   let hasAny = false;
 
   for (const gn of upcoming) {
-    const lines = buildBringLines(
+    const lines = await buildBringLines(
       interaction.guildId!,
-      getRequestsForEvent(gn.id),
+      await getRequestsForEvent(gn.id),
       interaction.user.id,
     );
     if (lines.length === 0) continue;
@@ -558,7 +563,7 @@ export async function handleUnrequest(
   const isMod =
     forHost || (interaction.memberPermissions?.has(PermissionFlagsBits.ManageEvents) ?? false);
   const now = new Date();
-  const upcoming = loadGameNights()
+  const upcoming = (await loadGameNights())
     .filter((gn) => !gn.cancelled && !gn.archived && new Date(gn.startTimeISO) > now)
     .sort((a, b) => new Date(a.startTimeISO).getTime() - new Date(b.startTimeISO).getTime());
 
@@ -587,7 +592,7 @@ export async function handleUnrequest(
     return;
   }
 
-  const allRequests = getRequestsForEvent(channelEvent.id);
+  const allRequests = await getRequestsForEvent(channelEvent.id);
   const visible = isMod
     ? allRequests
     : allRequests.filter((r) => r.requestedBy === interaction.user.id);
@@ -611,7 +616,7 @@ export async function handleUnrequestEventSelect(
 ): Promise<void> {
   const eventId = interaction.values[0];
   const isMod = interaction.memberPermissions?.has(PermissionFlagsBits.ManageEvents) ?? false;
-  const allRequests = getRequestsForEvent(eventId);
+  const allRequests = await getRequestsForEvent(eventId);
   const visible = isMod
     ? allRequests
     : allRequests.filter((r) => r.requestedBy === interaction.user.id);
@@ -634,7 +639,7 @@ export async function handleUnrequestSelect(
   interaction: StringSelectMenuInteraction,
   eventId: string,
 ): Promise<void> {
-  const removed = removeRequests(interaction.values);
+  const removed = await removeRequests(interaction.values);
   try {
     await updateRequestPin(interaction.client, eventId);
   } catch {
@@ -651,7 +656,7 @@ export async function handleUnrequestAll(
   eventId: string,
 ): Promise<void> {
   const isMod = interaction.memberPermissions?.has(PermissionFlagsBits.ManageEvents) ?? false;
-  const removed = removeAllRequestsForEvent(eventId, isMod ? undefined : interaction.user.id);
+  const removed = await removeAllRequestsForEvent(eventId, isMod ? undefined : interaction.user.id);
   try {
     await updateRequestPin(interaction.client, eventId);
   } catch {
@@ -671,7 +676,7 @@ export async function handleUnrequestAll(
 }
 
 async function handleClear(interaction: ChatInputCommandInteraction): Promise<void> {
-  const count = clearUserLibrary(interaction.guildId!, interaction.user.id);
+  const count = await clearUserLibrary(interaction.guildId!, interaction.user.id);
   await interaction.reply({
     content:
       count > 0
@@ -685,7 +690,7 @@ export async function handleAdminLibraryClear(
   interaction: ChatInputCommandInteraction,
 ): Promise<void> {
   const targetUser = interaction.options.getUser('user', true);
-  const count = clearUserLibrary(interaction.guildId!, targetUser.id);
+  const count = await clearUserLibrary(interaction.guildId!, targetUser.id);
   await interaction.reply({
     content:
       count > 0
@@ -777,7 +782,7 @@ function buildListButtons(pageIdx: number, totalPages: number): ActionRowBuilder
 const LIST_PAGE_CHARS = 1000;
 
 async function handleList(interaction: ChatInputCommandInteraction): Promise<void> {
-  const entries = loadLibraryForGuild(interaction.guildId!).filter((e) => !e.isExpansion);
+  const entries = (await loadLibraryForGuild(interaction.guildId!)).filter((e) => !e.isExpansion);
 
   if (entries.length === 0) {
     await interaction.reply({
@@ -787,7 +792,7 @@ async function handleList(interaction: ChatInputCommandInteraction): Promise<voi
     return;
   }
 
-  const infos = loadGameInfos();
+  const infos = await loadGameInfos();
 
   // Group entries by normalized game name, preserving original casing from first entry
   const gameMap = new Map<string, { displayName: string; owners: string[] }>();
@@ -865,11 +870,11 @@ export async function handleSync(interaction: ChatInputCommandInteraction): Prom
   const input = interaction.options.getString('game', true).trim();
   const guildId = interaction.guildId!;
 
-  const exact = findGamesByName(guildId, input);
+  const exact = await findGamesByName(guildId, input);
   const canonical = exact.length > 0 ? exact[0].gameName : null;
 
   if (!canonical) {
-    const partials = findGameNamesByPartial(guildId, input);
+    const partials = await findGameNamesByPartial(guildId, input);
     const hint =
       partials.length > 0
         ? `\nDid you mean: ${partials
@@ -884,7 +889,7 @@ export async function handleSync(interaction: ChatInputCommandInteraction): Prom
     return;
   }
 
-  const info = getGameInfo(canonical);
+  const info = await getGameInfo(canonical);
   if (!info?.objectid) {
     await interaction.reply({
       content: `**${canonical}** has no BGG ID — nothing to sync.`,
@@ -904,11 +909,11 @@ export async function handleSync(interaction: ChatInputCommandInteraction): Prom
     return;
   }
 
-  const embed = buildGameViewEmbed(
+  const embed = await buildGameViewEmbed(
     guildId,
     canonical,
     interaction.user.id,
-    resolveComplexityMention(canonical, guildId),
+    await resolveComplexityMention(canonical, guildId),
   );
   if (embed) {
     await interaction.editReply({
@@ -920,8 +925,8 @@ export async function handleSync(interaction: ChatInputCommandInteraction): Prom
   }
 }
 
-function applyBGGDataToGameInfo(info: GameInfo, bggGame: BGGGame, force: boolean): void {
-  upsertGameInfo({
+async function applyBGGDataToGameInfo(info: GameInfo, bggGame: BGGGame, force: boolean): Promise<void> {
+  await upsertGameInfo({
     ...info,
     minPlayers: info.minPlayers ?? bggGame.minPlayers,
     maxPlayers: info.maxPlayers ?? bggGame.maxPlayers,
@@ -950,7 +955,7 @@ function applyBGGDataToGameInfo(info: GameInfo, bggGame: BGGGame, force: boolean
 }
 
 export async function handleSyncAll(interaction: ChatInputCommandInteraction): Promise<void> {
-  const allInfos = loadGameInfos().filter((i) => !!i.objectid);
+  const allInfos = (await loadGameInfos()).filter((i) => !!i.objectid);
 
   if (allInfos.length === 0) {
     await interaction.reply({
@@ -985,7 +990,7 @@ export async function handleSyncAll(interaction: ChatInputCommandInteraction): P
       for (const bggGame of games) {
         const info = idToInfo.get(bggGame.id);
         if (!info) continue;
-        applyBGGDataToGameInfo(info, bggGame, true);
+        await applyBGGDataToGameInfo(info, bggGame, true);
         updated++;
       }
     } catch {
@@ -1000,7 +1005,7 @@ export async function handleSyncAll(interaction: ChatInputCommandInteraction): P
 }
 
 export async function enrichFromBGG(canonical: string, force = false): Promise<void> {
-  const info = getGameInfo(canonical);
+  const info = await getGameInfo(canonical);
   if (!info?.objectid) return;
   if (
     !force &&
@@ -1014,30 +1019,33 @@ export async function enrichFromBGG(canonical: string, force = false): Promise<v
     return;
   try {
     const bggGame = await getBGGGame(info.objectid);
-    applyBGGDataToGameInfo(info, bggGame, force);
+    await applyBGGDataToGameInfo(info, bggGame, force);
   } catch (err) {
     if (force) throw err;
     // BGG unavailable — show game without enrichment (lazy enrichment, non-fatal)
   }
 }
 
-function resolveComplexityMention(gameName: string, guildId: string | null): string | undefined {
+async function resolveComplexityMention(
+  gameName: string,
+  guildId: string | null,
+): Promise<string | undefined> {
   if (!guildId) return undefined;
-  const info = getGameInfo(gameName);
+  const info = await getGameInfo(gameName);
   if (!info?.complexity) return undefined;
-  const role = getGameRoles(guildId).find(
+  const role = (await getGameRoles(guildId)).find(
     (r) => r.type === 'difficulty' && r.name.toLowerCase() === info.complexity!.toLowerCase(),
   );
   return role ? `<@&${role.roleId}>` : info.complexity;
 }
 
-function buildGameViewEmbed(
+async function buildGameViewEmbed(
   guildId: string,
   gameName: string,
   userId: string,
   complexityMention?: string,
-): EmbedBuilder | null {
-  const matches = findGamesByName(guildId, gameName);
+): Promise<EmbedBuilder | null> {
+  const matches = await findGamesByName(guildId, gameName);
   if (matches.length === 0) return null;
 
   const canonical = matches[0].gameName;
@@ -1045,16 +1053,19 @@ function buildGameViewEmbed(
   const owners = matches.map((e) => `<@${e.userId}>`);
 
   const now = new Date();
-  const upcomingEvents = loadGameNights()
+  const upcomingEvents = (await loadGameNights())
     .filter((gn) => !gn.cancelled && !gn.archived && new Date(gn.startTimeISO) > now)
     .sort((a, b) => new Date(a.startTimeISO).getTime() - new Date(b.startTimeISO).getTime());
   const nextEvent = upcomingEvents[0] ?? null;
 
-  const requestedEvents = upcomingEvents.filter((gn) =>
-    getRequestsForEvent(gn.id).some((r) => r.gameName.toLowerCase() === canonical.toLowerCase()),
-  );
+  const requestedEvents: typeof upcomingEvents = [];
+  for (const gn of upcomingEvents) {
+    if ((await getRequestsForEvent(gn.id)).some((r) => r.gameName.toLowerCase() === canonical.toLowerCase())) {
+      requestedEvents.push(gn);
+    }
+  }
 
-  const info = getGameInfo(canonical);
+  const info = await getGameInfo(canonical);
 
   const embed = new EmbedBuilder().setTitle(canonical).setColor(0x5865f2);
   if (info?.thumbnail) embed.setThumbnail(info.thumbnail);
@@ -1084,7 +1095,7 @@ function buildGameViewEmbed(
     embed.addFields({ name: 'Tags', value: info.tags.join(' • ') });
   }
   if (info?.bggExpansions?.length) {
-    const guildLibrary = loadLibraryForGuild(guildId);
+    const guildLibrary = await loadLibraryForGuild(guildId);
     const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
     const ownerMap = new Map<string, string[]>();
     for (const e of guildLibrary) {
@@ -1168,18 +1179,18 @@ async function handleView(interaction: ChatInputCommandInteraction): Promise<voi
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   await enrichFromBGG(gameName, false);
 
-  const embed = buildGameViewEmbed(
+  const embed = await buildGameViewEmbed(
     interaction.guildId!,
     gameName,
     interaction.user.id,
-    resolveComplexityMention(gameName, interaction.guildId),
+    await resolveComplexityMention(gameName, interaction.guildId),
   );
   if (embed) {
     await interaction.editReply({ embeds: [embed] });
     return;
   }
 
-  const partials = findGameNamesByPartial(interaction.guildId!, gameName);
+  const partials = await findGameNamesByPartial(interaction.guildId!, gameName);
   if (partials.length > 0 && partials.length <= 25) {
     await interaction.editReply({
       content: `**"${gameName}"** wasn't an exact match — did you mean one of these?`,
@@ -1213,11 +1224,11 @@ export async function handleLibraryViewSelect(
 
   await interaction.deferUpdate();
   await enrichFromBGG(gameName, false);
-  const embed = buildGameViewEmbed(
+  const embed = await buildGameViewEmbed(
     interaction.guildId!,
     gameName,
     interaction.user.id,
-    resolveComplexityMention(gameName, interaction.guildId),
+    await resolveComplexityMention(gameName, interaction.guildId),
   );
   if (!embed) {
     await interaction.editReply({
@@ -1230,7 +1241,7 @@ export async function handleLibraryViewSelect(
 }
 
 async function handleMine(interaction: ChatInputCommandInteraction): Promise<void> {
-  const entries = getGamesByUser(interaction.guildId!, interaction.user.id).filter(
+  const entries = (await getGamesByUser(interaction.guildId!, interaction.user.id)).filter(
     (e) => !e.isExpansion,
   );
 
@@ -1398,7 +1409,7 @@ async function addGameWithBGGDetails(
   interaction: ButtonInteraction | StringSelectMenuInteraction,
 ): Promise<void> {
   await interaction.deferUpdate();
-  addGame(guildId, userId, gameName, objectid);
+  await addGame(guildId, userId, gameName, objectid);
   let msg = `Added **${gameName}** to your library!`;
   try {
     const bggGame = await getBGGGame(objectid);
@@ -1415,7 +1426,7 @@ async function addGameWithBGGDetails(
       bggExpansions: bggGame.expansions.map((e) => e.name),
       updatedAt: new Date().toISOString(),
     };
-    upsertGameInfo(info);
+    await upsertGameInfo(info);
     msg = `Added **${gameName}** to your library with details from BGG!`;
   } catch {
     // BGG fetch failed — game still added, details can be filled in with /library edit
@@ -1432,8 +1443,8 @@ async function handleAdd(interaction: ChatInputCommandInteraction): Promise<void
 
   const guildId = interaction.guildId!;
   const userId = interaction.user.id;
-  const userGames = getGamesByUser(guildId, userId);
-  const library = loadLibraryForGuild(guildId);
+  const userGames = await getGamesByUser(guildId, userId);
+  const library = await loadLibraryForGuild(guildId);
 
   // 1a. Exact match in the user's own library
   if (userGames.some((e) => e.gameName.toLowerCase() === gameName.toLowerCase())) {
@@ -1471,7 +1482,7 @@ async function handleAdd(interaction: ChatInputCommandInteraction): Promise<void
   }
 
   // 2. Partial/fuzzy match in guild library — confirm before going to BGG
-  const partials = findGameNamesByPartial(guildId, gameName);
+  const partials = await findGameNamesByPartial(guildId, gameName);
   if (partials.length > 0 && partials.length <= 25) {
     pendingAdds.set(userId, { gameName, originalInput: gameName });
     const options = partials.map((name) =>
@@ -1550,7 +1561,7 @@ async function handleAdd(interaction: ChatInputCommandInteraction): Promise<void
   }
 
   // 4. No matches anywhere — add as custom game
-  addGame(guildId, userId, gameName);
+  await addGame(guildId, userId, gameName);
   pendingEdits.set(userId, gameName);
   await interaction.showModal(buildEditModal(gameName, undefined, 'Add Details'));
 }
@@ -1579,7 +1590,7 @@ export async function handleLibraryAddPartialSelect(
       }
     }
     // No BGG match — add as custom
-    addGame(guildId, userId, originalInput);
+    await addGame(guildId, userId, originalInput);
     pendingEdits.set(userId, originalInput);
     await interaction.showModal(buildEditModal(originalInput, undefined, 'Add Details'));
     return;
@@ -1587,7 +1598,7 @@ export async function handleLibraryAddPartialSelect(
 
   // User picked a game from the library partial list — add their copy
   const name = value.startsWith('lib|') ? value.slice(4) : value;
-  const userGames = getGamesByUser(guildId, userId);
+  const userGames = await getGamesByUser(guildId, userId);
   if (userGames.some((e) => e.gameName.toLowerCase() === name.toLowerCase())) {
     await interaction.update({
       content: `**${name}** is already in your library.`,
@@ -1595,12 +1606,12 @@ export async function handleLibraryAddPartialSelect(
     });
     return;
   }
-  const libGames = loadLibraryForGuild(guildId).filter(
+  const libGames = (await loadLibraryForGuild(guildId)).filter(
     (e) => e.gameName.toLowerCase() === name.toLowerCase() && e.userId !== userId,
   );
-  addGame(guildId, userId, name, libGames[0]?.objectid);
+  await addGame(guildId, userId, name, libGames[0]?.objectid);
   pendingEdits.set(userId, name);
-  await interaction.showModal(buildEditModal(name, getGameInfo(name), 'Add Details'));
+  await interaction.showModal(buildEditModal(name, await getGameInfo(name), 'Add Details'));
 }
 
 export async function handleAddConfirm(interaction: ButtonInteraction): Promise<void> {
@@ -1613,7 +1624,7 @@ export async function handleAddConfirm(interaction: ButtonInteraction): Promise<
     return;
   }
   pendingAdds.delete(interaction.user.id);
-  addGame(interaction.guildId!, interaction.user.id, pending.gameName, pending.objectid);
+  await addGame(interaction.guildId!, interaction.user.id, pending.gameName, pending.objectid);
   await interaction.update({
     content: `Added **${pending.gameName}** to your library. Other members can now request it for events.`,
     components: [],
@@ -1647,7 +1658,7 @@ export async function handleAddBggConfirm(interaction: ButtonInteraction): Promi
       interaction,
     );
   } else {
-    addGame(interaction.guildId!, interaction.user.id, pending.gameName);
+    await addGame(interaction.guildId!, interaction.user.id, pending.gameName);
     pendingEdits.set(interaction.user.id, pending.gameName);
     await interaction.showModal(buildEditModal(pending.gameName, undefined, 'Add Details'));
   }
@@ -1664,7 +1675,7 @@ export async function handleAddBggDismiss(interaction: ButtonInteraction): Promi
   }
   pendingAdds.delete(interaction.user.id);
   const nameToAdd = pending.originalInput ?? pending.gameName;
-  addGame(interaction.guildId!, interaction.user.id, nameToAdd);
+  await addGame(interaction.guildId!, interaction.user.id, nameToAdd);
   pendingEdits.set(interaction.user.id, nameToAdd);
   await interaction.showModal(buildEditModal(nameToAdd, undefined, 'Add Details'));
 }
@@ -1677,7 +1688,7 @@ export async function handleAddBggSelect(interaction: StringSelectMenuInteractio
 
   if (value === '__none__') {
     if (originalInput) {
-      addGame(interaction.guildId!, interaction.user.id, originalInput);
+      await addGame(interaction.guildId!, interaction.user.id, originalInput);
       pendingEdits.set(interaction.user.id, originalInput);
       await interaction.showModal(buildEditModal(originalInput, undefined, 'Add Details'));
     } else {
@@ -1692,7 +1703,7 @@ export async function handleAddBggSelect(interaction: StringSelectMenuInteractio
   const [id, name] = value.split('|', 2);
 
   // Check if user already owns the selected game
-  const userGames = getGamesByUser(interaction.guildId!, interaction.user.id);
+  const userGames = await getGamesByUser(interaction.guildId!, interaction.user.id);
   if (userGames.some((e) => e.gameName.toLowerCase() === name.toLowerCase())) {
     await interaction.update({
       content: `**${name}** is already in your library.`,
@@ -1702,7 +1713,7 @@ export async function handleAddBggSelect(interaction: StringSelectMenuInteractio
   }
 
   // Check if others own the selected game
-  const existing = findGamesByName(interaction.guildId!, name).filter(
+  const existing = (await findGamesByName(interaction.guildId!, name)).filter(
     (e) => e.userId !== interaction.user.id,
   );
   if (existing.length > 0) {
@@ -1734,13 +1745,13 @@ async function handleRemove(interaction: ChatInputCommandInteraction): Promise<v
   const gameName = interaction.options.getString('game', true).trim();
   const guildId = interaction.guildId!;
   const userId = interaction.user.id;
-  const result = removeGame(guildId, userId, gameName);
+  const result = await removeGame(guildId, userId, gameName);
 
   if (result === 'not_found') {
     const userGameNames = new Set(
-      getGamesByUser(guildId, userId).map((e) => e.gameName.toLowerCase()),
+      (await getGamesByUser(guildId, userId)).map((e) => e.gameName.toLowerCase()),
     );
-    const partials = findGameNamesByPartial(guildId, gameName).filter((name) =>
+    const partials = (await findGameNamesByPartial(guildId, gameName)).filter((name) =>
       userGameNames.has(name.toLowerCase()),
     );
 
@@ -1777,7 +1788,7 @@ export async function handleRemoveSelect(interaction: StringSelectMenuInteractio
     });
     return;
   }
-  const result = removeGame(interaction.guildId!, interaction.user.id, gameName);
+  const result = await removeGame(interaction.guildId!, interaction.user.id, gameName);
   if (result === 'not_found') {
     await interaction.update({
       content: `**${gameName}** wasn't found in your library.`,
@@ -1802,11 +1813,11 @@ async function showCopySelect(
 ): Promise<boolean> {
   if (attendingOwnerIds.length <= 1) return false;
 
-  const gameInfo = getGameInfo(canonicalName);
+  const gameInfo = await getGameInfo(canonicalName);
   if (!gameInfo?.bggExpansions?.length) return false;
 
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
-  const guildLibrary = loadLibraryForGuild(guildId);
+  const guildLibrary = await loadLibraryForGuild(guildId);
 
   const hasExpansions = attendingOwnerIds.some((ownerId) =>
     guildLibrary.some(
@@ -1878,11 +1889,11 @@ async function handleRequest(interaction: ChatInputCommandInteraction): Promise<
   const gameName = interaction.options.getString('game', true).trim();
 
   // Check the game exists in the library (someone must own it)
-  const library = loadLibraryForGuild(interaction.guildId!);
+  const library = await loadLibraryForGuild(interaction.guildId!);
   const matches = library.filter((e) => e.gameName.toLowerCase() === gameName.toLowerCase());
 
   if (matches.length === 0) {
-    const partials = findGameNamesByPartial(interaction.guildId!, gameName);
+    const partials = await findGameNamesByPartial(interaction.guildId!, gameName);
     if (partials.length > 0 && partials.length <= 25) {
       await interaction.reply({
         content: `**"${gameName}"** wasn't an exact match — did you mean one of these?`,
@@ -1925,7 +1936,7 @@ async function handleRequest(interaction: ChatInputCommandInteraction): Promise<
 
   // Find the target event — prefer the event channel we're currently in
   const now = new Date();
-  const upcoming = loadGameNights()
+  const upcoming = (await loadGameNights())
     .filter((gn) => !gn.cancelled && !gn.archived && new Date(gn.startTimeISO) > now)
     .sort((a, b) => new Date(a.startTimeISO).getTime() - new Date(b.startTimeISO).getTime());
 
@@ -1964,7 +1975,7 @@ async function handleRequest(interaction: ChatInputCommandInteraction): Promise<
   );
   if (showed) return;
 
-  const result = addRequest(event.id, canonicalName, interaction.user.id);
+  const result = await addRequest(event.id, canonicalName, interaction.user.id);
 
   if (result === 'duplicate') {
     await interaction.reply({
@@ -1999,11 +2010,11 @@ export async function handleLibraryRequestSelect(
     return;
   }
 
-  const library = loadLibraryForGuild(interaction.guildId!);
+  const library = await loadLibraryForGuild(interaction.guildId!);
   const matches = library.filter((e) => e.gameName.toLowerCase() === gameName.toLowerCase());
 
   const now = new Date();
-  const upcoming = loadGameNights()
+  const upcoming = (await loadGameNights())
     .filter((gn) => !gn.cancelled && !gn.archived && new Date(gn.startTimeISO) > now)
     .sort((a, b) => new Date(a.startTimeISO).getTime() - new Date(b.startTimeISO).getTime());
 
@@ -2042,7 +2053,7 @@ export async function handleLibraryRequestSelect(
   );
   if (showed) return;
 
-  const result = addRequest(event.id, canonicalName, interaction.user.id);
+  const result = await addRequest(event.id, canonicalName, interaction.user.id);
 
   if (result === 'duplicate') {
     await interaction.update({
@@ -2082,10 +2093,10 @@ export async function handleLibraryRequestCopySelect(
   const selected = interaction.values[0];
   const preferredOwnerId =
     selected === '__bot__'
-      ? pickPreferredOwner(pending.eventId, pending.attendingOwnerIds)
+      ? await pickPreferredOwner(pending.eventId, pending.attendingOwnerIds)
       : selected;
 
-  const result = addRequest(
+  const result = await addRequest(
     pending.eventId,
     pending.canonicalName,
     interaction.user.id,
@@ -2140,7 +2151,7 @@ async function handleImportBgg(interaction: ChatInputCommandInteraction): Promis
   const guildId = interaction.guildId!;
   const userId = interaction.user.id;
 
-  const bggAccount = getBggAccount(guildId, userId);
+  const bggAccount = await getBggAccount(guildId, userId);
   if (!bggAccount) {
     await interaction.reply({
       content:
@@ -2176,7 +2187,7 @@ async function handleImportBgg(interaction: ChatInputCommandInteraction): Promis
   for (const game of games) {
     if (!game.gameName) continue;
 
-    const result = addGame(guildId, userId, game.gameName, game.bggGameId, game.isExpansion);
+    const result = await addGame(guildId, userId, game.gameName, game.bggGameId, game.isExpansion);
     if (result === 'added') {
       if (game.isExpansion) addedExpansions++;
       else addedGames++;
@@ -2184,8 +2195,8 @@ async function handleImportBgg(interaction: ChatInputCommandInteraction): Promis
       skipped++;
     }
 
-    const existing = getGameInfo(game.gameName);
-    upsertGameInfo({
+    const existing = await getGameInfo(game.gameName);
+    await upsertGameInfo({
       gameName: game.gameName,
       objectid: game.bggGameId,
       minPlayers: existing?.minPlayers ?? game.minPlayers ?? undefined,
@@ -2211,7 +2222,7 @@ async function handleImportBgg(interaction: ChatInputCommandInteraction): Promis
     });
   }
 
-  mergeUserCollection(guildId, userId, collectionEntries);
+  await mergeUserCollection(guildId, userId, collectionEntries);
 
   const parts: string[] = [];
   if (addedGames > 0) parts.push(`**${addedGames}** game${addedGames !== 1 ? 's' : ''} added`);
@@ -2271,7 +2282,7 @@ async function handleImportCsv(interaction: ChatInputCommandInteraction): Promis
   let expansions = 0;
 
   for (const text of csvTexts) {
-    const result = processCsvText(text, guildId, userId);
+    const result = await processCsvText(text, guildId, userId);
     added += result.added;
     skipped += result.skipped;
     expansions += result.expansions;
@@ -2292,11 +2303,11 @@ async function handleImportCsv(interaction: ChatInputCommandInteraction): Promis
   await interaction.editReply(`Import complete — ${parts.join(', ')}.`);
 }
 
-function processCsvText(
+async function processCsvText(
   text: string,
   guildId: string,
   userId: string,
-): { added: number; skipped: number; expansions: number } {
+): Promise<{ added: number; skipped: number; expansions: number }> {
   const lines = text.split(/\r?\n/).filter((l) => l.trim());
   let added = 0;
   let skipped = 0;
@@ -2332,7 +2343,7 @@ function processCsvText(
     }
 
     const objectid = idIdx !== -1 ? fields[idIdx]?.trim() || undefined : undefined;
-    const result = addGame(guildId, userId, gameName, objectid);
+    const result = await addGame(guildId, userId, gameName, objectid);
     if (result === 'added') added++;
     else skipped++;
 
@@ -2347,8 +2358,8 @@ function processCsvText(
         playTimeIdx !== -1 ? parseInt(fields[playTimeIdx], 10) || undefined : undefined;
       const rawWeight = weightIdx !== -1 ? parseFloat(fields[weightIdx]) : NaN;
       const weight = !isNaN(rawWeight) && rawWeight > 0 ? rawWeight : undefined;
-      const existing = getGameInfo(gameName);
-      upsertGameInfo({
+      const existing = await getGameInfo(gameName);
+      await upsertGameInfo({
         gameName,
         objectid,
         minPlayers: existing?.minPlayers ?? minPlayers,
@@ -2371,7 +2382,7 @@ async function handleEdit(interaction: ChatInputCommandInteraction): Promise<voi
   const gameName = interaction.options.getString('game', true).trim();
 
   // Must be in the library (owned by someone)
-  const matches = findGamesByName(interaction.guildId!, gameName);
+  const matches = await findGamesByName(interaction.guildId!, gameName);
   if (matches.length === 0) {
     await interaction.reply({
       content: `**${gameName}** isn't in the group library. Only games in the library can be edited.`,
@@ -2392,7 +2403,7 @@ async function handleEdit(interaction: ChatInputCommandInteraction): Promise<voi
   }
 
   const canonical = matches[0].gameName;
-  const existing = getGameInfo(canonical);
+  const existing = await getGameInfo(canonical);
 
   pendingEdits.set(interaction.user.id, canonical);
   await interaction.showModal(buildEditModal(canonical, existing));
@@ -2415,7 +2426,7 @@ export async function handleEditModal(interaction: ModalSubmitInteraction): Prom
   const expansionsRaw = interaction.fields.getTextInputValue('expansions').trim();
   const complexityRaw = interaction.fields.getTextInputValue('complexity').trim();
 
-  const existing = getGameInfo(gameName);
+  const existing = await getGameInfo(gameName);
 
   let minPlayers: number | undefined = existing?.minPlayers;
   let maxPlayers: number | undefined = existing?.maxPlayers;
@@ -2516,7 +2527,7 @@ export async function handleEditModal(interaction: ModalSubmitInteraction): Prom
     return;
   }
 
-  upsertGameInfo(info);
+  await upsertGameInfo(info);
   await interaction.reply({ content: `Details saved for **${gameName}**.`, flags: MessageFlags.Ephemeral });
 }
 
@@ -2545,7 +2556,7 @@ export async function handleComplexityFix(
     return;
   }
   pendingEditFixes.delete(interaction.user.id);
-  upsertGameInfo(updatedInfo);
+  await upsertGameInfo(updatedInfo);
   await interaction.update({
     content: `Details saved for **${updatedInfo.gameName}**.`,
     components: [],
@@ -2567,7 +2578,7 @@ export async function handleTagsFix(interaction: StringSelectMenuInteraction): P
     ...(pending.info.tags ?? []),
     ...selected.filter((t) => !pending.info.tags?.includes(t)),
   ];
-  upsertGameInfo({ ...pending.info, tags: merged.length > 0 ? merged : pending.info.tags });
+  await upsertGameInfo({ ...pending.info, tags: merged.length > 0 ? merged : pending.info.tags });
   await interaction.update({
     content: `Details saved for **${pending.info.gameName}**.`,
     components: [],
@@ -2584,7 +2595,7 @@ export async function handleTagsSkip(interaction: ButtonInteraction): Promise<vo
     return;
   }
   pendingEditFixes.delete(interaction.user.id);
-  upsertGameInfo(pending.info);
+  await upsertGameInfo(pending.info);
   await interaction.update({
     content: `Details saved for **${pending.info.gameName}**.`,
     components: [],
@@ -2599,8 +2610,8 @@ async function handleRandom(interaction: ChatInputCommandInteraction): Promise<v
   ].filter((t): t is string => t !== null);
   const complexity = interaction.options.getString('complexity') as Complexity | null;
 
-  const library = loadLibraryForGuild(interaction.guildId!);
-  const infos = loadGameInfos();
+  const library = await loadLibraryForGuild(interaction.guildId!);
+  const infos = await loadGameInfos();
 
   // Deduplicate to one entry per game
   const seen = new Set<string>();
@@ -2714,8 +2725,8 @@ async function handleSearch(interaction: ChatInputCommandInteraction): Promise<v
     return;
   }
 
-  const library = loadLibraryForGuild(interaction.guildId!);
-  const infos = loadGameInfos();
+  const library = await loadLibraryForGuild(interaction.guildId!);
+  const infos = await loadGameInfos();
 
   const seen = new Set<string>();
   const matches: Array<{ displayName: string; owners: string[]; info: GameInfo | undefined }> = [];

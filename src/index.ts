@@ -34,7 +34,10 @@ client.on('guildMemberAdd', handleGuildMemberAdd);
 client.on('guildCreate', handleGuildCreate);
 client.on('guildDelete', handleGuildDelete);
 
-runRetentionCleanup();
-setInterval(runRetentionCleanup, 24 * 60 * 60 * 1000);
+runRetentionCleanup().catch((err) => console.error('[GuildLifecycle] Retention cleanup error:', err));
+setInterval(
+  () => runRetentionCleanup().catch((err) => console.error('[GuildLifecycle] Retention cleanup error:', err)),
+  24 * 60 * 60 * 1000,
+);
 
 client.login(process.env.DISCORD_TOKEN);

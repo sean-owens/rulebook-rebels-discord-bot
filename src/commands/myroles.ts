@@ -183,7 +183,7 @@ async function initPending(
 }
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
-  const allTags = getGameRoles(interaction.guildId!);
+  const allTags = await getGameRoles(interaction.guildId!);
 
   if (allTags.length === 0) {
     await interaction.reply({
@@ -212,7 +212,7 @@ export async function handleMyRolesDiff(
   roleId: string,
 ): Promise<void> {
   await interaction.deferUpdate();
-  const allTags = getGameRoles(interaction.guildId!);
+  const allTags = await getGameRoles(interaction.guildId!);
   const { difficultyTags } = splitTags(allTags);
   const selected = await initPending(interaction, allTags);
 
@@ -225,7 +225,7 @@ export async function handleMyRolesDiff(
 
 export async function handleMyRolesNext(interaction: ButtonInteraction): Promise<void> {
   await interaction.deferUpdate();
-  const allTags = getGameRoles(interaction.guildId!);
+  const allTags = await getGameRoles(interaction.guildId!);
   const { genreTags, difficultyTags } = splitTags(allTags);
   const selected = await initPending(interaction, allTags);
 
@@ -234,7 +234,7 @@ export async function handleMyRolesNext(interaction: ButtonInteraction): Promise
 
 export async function handleMyRolesBackDiff(interaction: ButtonInteraction): Promise<void> {
   await interaction.deferUpdate();
-  const allTags = getGameRoles(interaction.guildId!);
+  const allTags = await getGameRoles(interaction.guildId!);
   const { difficultyTags } = splitTags(allTags);
   const selected = await initPending(interaction, allTags);
 
@@ -247,7 +247,7 @@ export async function handleMyRolesTag(
   roleId: string,
 ): Promise<void> {
   await interaction.deferUpdate();
-  const allTags = getGameRoles(interaction.guildId!);
+  const allTags = await getGameRoles(interaction.guildId!);
   const { genreTags, difficultyTags } = splitTags(allTags);
   const selected = await initPending(interaction, allTags);
 
@@ -266,7 +266,7 @@ export async function handleMyRolesPage(
   page: number,
 ): Promise<void> {
   await interaction.deferUpdate();
-  const allTags = getGameRoles(interaction.guildId!);
+  const allTags = await getGameRoles(interaction.guildId!);
   const { genreTags, difficultyTags } = splitTags(allTags);
   const selected = await initPending(interaction, allTags);
 
@@ -276,7 +276,7 @@ export async function handleMyRolesPage(
 export async function handleMyRolesSubmit(interaction: ButtonInteraction): Promise<void> {
   await interaction.deferUpdate();
 
-  const allTags = getGameRoles(interaction.guildId!);
+  const allTags = await getGameRoles(interaction.guildId!);
   const { genreTags, difficultyTags } = splitTags(allTags);
   const member = await interaction.guild!.members.fetch(interaction.user.id);
 

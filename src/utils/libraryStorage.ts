@@ -27,26 +27,26 @@ export interface GameRequest {
   preferredOwnerId?: string;
 }
 
-export function loadLibrary(): LibraryEntry[] {
+export async function loadLibrary(): Promise<LibraryEntry[]> {
   return readJson<LibraryEntry[]>(LIBRARY_FILE, []);
 }
 
-function saveLibrary(entries: LibraryEntry[]): void {
-  writeJson(LIBRARY_FILE, entries);
+async function saveLibrary(entries: LibraryEntry[]): Promise<void> {
+  await writeJson(LIBRARY_FILE, entries);
 }
 
-export function loadLibraryForGuild(guildId: string): LibraryEntry[] {
-  return loadLibrary().filter((e) => e.guildId === guildId);
+export async function loadLibraryForGuild(guildId: string): Promise<LibraryEntry[]> {
+  return (await loadLibrary()).filter((e) => e.guildId === guildId);
 }
 
-export function addGame(
+export async function addGame(
   guildId: string,
   userId: string,
   gameName: string,
   objectid?: string,
   isExpansion?: boolean,
-): 'added' | 'duplicate' {
-  const entries = loadLibrary();
+): Promise<'added' | 'duplicate'> {
+  const entries = await loadLibrary();
   const exists = entries.some((e) => {
     if (e.guildId !== guildId || e.userId !== userId) return false;
     if (objectid && e.objectid === objectid) return true;
@@ -57,21 +57,21 @@ export function addGame(
   if (objectid) entry.objectid = objectid;
   if (isExpansion) entry.isExpansion = true;
   entries.push(entry);
-  saveLibrary(entries);
+  await saveLibrary(entries);
   return 'added';
 }
 
-export function findGamesByName(guildId: string, gameName: string): LibraryEntry[] {
-  return loadLibrary().filter(
+export async function findGamesByName(guildId: string, gameName: string): Promise<LibraryEntry[]> {
+  return (await loadLibrary()).filter(
     (e) => e.guildId === guildId && e.gameName.toLowerCase() === gameName.toLowerCase(),
   );
 }
 
-export function findGameNamesByPartial(guildId: string, term: string): string[] {
+export async function findGameNamesByPartial(guildId: string, term: string): Promise<string[]> {
   if (!term.trim()) return [];
   const seen = new Set<string>();
   const names: string[] = [];
-  for (const e of loadLibrary().filter((e) => e.guildId === guildId)) {
+  for (const e of (await loadLibrary()).filter((e) => e.guildId === guildId)) {
     const key = e.gameName.toLowerCase();
     if (matchesFuzzy(term, e.gameName) && !seen.has(key)) {
       seen.add(key);
@@ -81,19 +81,19 @@ export function findGameNamesByPartial(guildId: string, term: string): string[] 
   return names.sort((a, b) => a.localeCompare(b));
 }
 
-export function clearUserLibrary(guildId: string, userId: string): number {
-  const entries = loadLibrary();
+export async function clearUserLibrary(guildId: string, userId: string): Promise<number> {
+  const entries = await loadLibrary();
   const remaining = entries.filter((e) => !(e.guildId === guildId && e.userId === userId));
-  saveLibrary(remaining);
+  await saveLibrary(remaining);
   return entries.length - remaining.length;
 }
 
-export function removeGame(
+export async function removeGame(
   guildId: string,
   userId: string,
   gameName: string,
-): 'removed' | 'not_found' {
-  const entries = loadLibrary();
+): Promise<'removed' | 'not_found'> {
+  const entries = await loadLibrary();
   const idx = entries.findIndex(
     (e) =>
       e.guildId === guildId &&
@@ -102,29 +102,29 @@ export function removeGame(
   );
   if (idx === -1) return 'not_found';
   entries.splice(idx, 1);
-  saveLibrary(entries);
+  await saveLibrary(entries);
   return 'removed';
 }
 
-export function getGamesByUser(guildId: string, userId: string): LibraryEntry[] {
-  return loadLibrary().filter((e) => e.guildId === guildId && e.userId === userId);
+export async function getGamesByUser(guildId: string, userId: string): Promise<LibraryEntry[]> {
+  return (await loadLibrary()).filter((e) => e.guildId === guildId && e.userId === userId);
 }
 
-export function loadRequests(): GameRequest[] {
+export async function loadRequests(): Promise<GameRequest[]> {
   return readJson<GameRequest[]>(REQUESTS_FILE, []);
 }
 
-function saveRequests(requests: GameRequest[]): void {
-  writeJson(REQUESTS_FILE, requests);
+async function saveRequests(requests: GameRequest[]): Promise<void> {
+  await writeJson(REQUESTS_FILE, requests);
 }
 
-export function addRequest(
+export async function addRequest(
   eventId: string,
   gameName: string,
   requestedBy: string,
   preferredOwnerId?: string,
-): 'added' | 'duplicate' {
-  const requests = loadRequests();
+): Promise<'added' | 'duplicate'> {
+  const requests = await loadRequests();
   const exists = requests.some(
     (r) => r.eventId === eventId && r.gameName.toLowerCase() === gameName.toLowerCase(),
   );
@@ -138,56 +138,63 @@ export function addRequest(
   };
   if (preferredOwnerId) req.preferredOwnerId = preferredOwnerId;
   requests.push(req);
-  saveRequests(requests);
+  await saveRequests(requests);
   return 'added';
 }
 
-export function getRequestsForEvent(eventId: string): GameRequest[] {
-  return loadRequests().filter((r) => r.eventId === eventId);
+export async function getRequestsForEvent(eventId: string): Promise<GameRequest[]> {
+  return (await loadRequests()).filter((r) => r.eventId === eventId);
 }
 
-export function removeRequests(requestIds: string[]): number {
-  const requests = loadRequests();
+export async function removeRequests(requestIds: string[]): Promise<number> {
+  const requests = await loadRequests();
   const remaining = requests.filter((r) => !requestIds.includes(r.id));
-  saveRequests(remaining);
+  await saveRequests(remaining);
   return requests.length - remaining.length;
 }
 
-export function removeAllRequestsForEvent(eventId: string, userId?: string): number {
-  const requests = loadRequests();
+export async function removeAllRequestsForEvent(
+  eventId: string,
+  userId?: string,
+): Promise<number> {
+  const requests = await loadRequests();
   const remaining = requests.filter((r) => {
     if (r.eventId !== eventId) return true;
     if (userId) return r.requestedBy !== userId;
     return false;
   });
-  saveRequests(remaining);
+  await saveRequests(remaining);
   return requests.length - remaining.length;
 }
 
-export function updateRequestCopies(eventId: string, gameName: string, copies: number): void {
-  const requests = loadRequests();
+export async function updateRequestCopies(
+  eventId: string,
+  gameName: string,
+  copies: number,
+): Promise<void> {
+  const requests = await loadRequests();
   const idx = requests.findIndex(
     (r) => r.eventId === eventId && r.gameName.toLowerCase() === gameName.toLowerCase(),
   );
   if (idx >= 0) {
     requests[idx].copiesNeeded = copies;
-    saveRequests(requests);
+    await saveRequests(requests);
   }
 }
 
-export function confirmBring(
+export async function confirmBring(
   guildId: string,
   eventId: string,
   gameName: string,
   userId: string,
-): 'confirmed' | 'not_requested' | 'not_owner' {
-  const requests = loadRequests();
+): Promise<'confirmed' | 'not_requested' | 'not_owner'> {
+  const requests = await loadRequests();
   const idx = requests.findIndex(
     (r) => r.eventId === eventId && r.gameName.toLowerCase() === gameName.toLowerCase(),
   );
   if (idx === -1) return 'not_requested';
 
-  const owns = loadLibrary().some(
+  const owns = (await loadLibrary()).some(
     (e) =>
       e.guildId === guildId &&
       e.userId === userId &&
@@ -196,7 +203,7 @@ export function confirmBring(
   if (!owns) return 'not_owner';
 
   requests[idx].confirmedBy = userId;
-  saveRequests(requests);
+  await saveRequests(requests);
   return 'confirmed';
 }
 
@@ -222,22 +229,22 @@ export interface GameInfo {
   updatedAt: string;
 }
 
-export function loadGameInfos(): GameInfo[] {
+export async function loadGameInfos(): Promise<GameInfo[]> {
   return readJson<GameInfo[]>(GAME_INFO_FILE, []);
 }
 
-function saveGameInfos(infos: GameInfo[]): void {
-  writeJson(GAME_INFO_FILE, infos);
+async function saveGameInfos(infos: GameInfo[]): Promise<void> {
+  await writeJson(GAME_INFO_FILE, infos);
 }
 
-export function getGameInfo(gameName: string): GameInfo | undefined {
-  return loadGameInfos().find((i) => i.gameName.toLowerCase() === gameName.toLowerCase());
+export async function getGameInfo(gameName: string): Promise<GameInfo | undefined> {
+  return (await loadGameInfos()).find((i) => i.gameName.toLowerCase() === gameName.toLowerCase());
 }
 
-export function upsertGameInfo(info: GameInfo): void {
-  const infos = loadGameInfos();
+export async function upsertGameInfo(info: GameInfo): Promise<void> {
+  const infos = await loadGameInfos();
   const idx = infos.findIndex((i) => i.gameName.toLowerCase() === info.gameName.toLowerCase());
   if (idx >= 0) infos[idx] = info;
   else infos.push(info);
-  saveGameInfos(infos);
+  await saveGameInfos(infos);
 }

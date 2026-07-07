@@ -21,53 +21,53 @@ describe('bggAccountStorage', () => {
   const G = 'guild1';
   const U = 'user1';
 
-  it('returns undefined when no account is linked', () => {
-    expect(getBggAccount(G, U)).toBeUndefined();
+  it('returns undefined when no account is linked', async () => {
+    expect(await getBggAccount(G, U)).toBeUndefined();
   });
 
-  it('stores and retrieves a linked account', () => {
-    setBggAccount(G, U, 'boardgamefan');
-    const account = getBggAccount(G, U);
+  it('stores and retrieves a linked account', async () => {
+    await setBggAccount(G, U, 'boardgamefan');
+    const account = await getBggAccount(G, U);
     expect(account?.bggUsername).toBe('boardgamefan');
     expect(account?.userId).toBe(U);
     expect(account?.linkedAt).toBeTruthy();
   });
 
-  it('overwrites an existing link with a new username', () => {
-    setBggAccount(G, U, 'oldname');
-    setBggAccount(G, U, 'newname');
-    expect(getBggAccount(G, U)?.bggUsername).toBe('newname');
+  it('overwrites an existing link with a new username', async () => {
+    await setBggAccount(G, U, 'oldname');
+    await setBggAccount(G, U, 'newname');
+    expect((await getBggAccount(G, U))?.bggUsername).toBe('newname');
   });
 
-  it('does not affect other users in the same guild', () => {
-    setBggAccount(G, U, 'user1bgg');
-    setBggAccount(G, 'user2', 'user2bgg');
-    expect(getBggAccount(G, U)?.bggUsername).toBe('user1bgg');
-    expect(getBggAccount(G, 'user2')?.bggUsername).toBe('user2bgg');
+  it('does not affect other users in the same guild', async () => {
+    await setBggAccount(G, U, 'user1bgg');
+    await setBggAccount(G, 'user2', 'user2bgg');
+    expect((await getBggAccount(G, U))?.bggUsername).toBe('user1bgg');
+    expect((await getBggAccount(G, 'user2'))?.bggUsername).toBe('user2bgg');
   });
 
-  it('does not affect other guilds', () => {
-    setBggAccount(G, U, 'user1bgg');
-    setBggAccount('guild2', U, 'otherbgg');
-    expect(getBggAccount(G, U)?.bggUsername).toBe('user1bgg');
-    expect(getBggAccount('guild2', U)?.bggUsername).toBe('otherbgg');
+  it('does not affect other guilds', async () => {
+    await setBggAccount(G, U, 'user1bgg');
+    await setBggAccount('guild2', U, 'otherbgg');
+    expect((await getBggAccount(G, U))?.bggUsername).toBe('user1bgg');
+    expect((await getBggAccount('guild2', U))?.bggUsername).toBe('otherbgg');
   });
 
-  it('removes a linked account and returns true', () => {
-    setBggAccount(G, U, 'boardgamefan');
-    const result = removeBggAccount(G, U);
+  it('removes a linked account and returns true', async () => {
+    await setBggAccount(G, U, 'boardgamefan');
+    const result = await removeBggAccount(G, U);
     expect(result).toBe(true);
-    expect(getBggAccount(G, U)).toBeUndefined();
+    expect(await getBggAccount(G, U)).toBeUndefined();
   });
 
-  it('returns false when removing a non-existent account', () => {
-    expect(removeBggAccount(G, U)).toBe(false);
+  it('returns false when removing a non-existent account', async () => {
+    expect(await removeBggAccount(G, U)).toBe(false);
   });
 
-  it('only removes the target user, not others in the same guild', () => {
-    setBggAccount(G, U, 'user1bgg');
-    setBggAccount(G, 'user2', 'user2bgg');
-    removeBggAccount(G, U);
-    expect(getBggAccount(G, 'user2')?.bggUsername).toBe('user2bgg');
+  it('only removes the target user, not others in the same guild', async () => {
+    await setBggAccount(G, U, 'user1bgg');
+    await setBggAccount(G, 'user2', 'user2bgg');
+    await removeBggAccount(G, U);
+    expect((await getBggAccount(G, 'user2'))?.bggUsername).toBe('user2bgg');
   });
 });

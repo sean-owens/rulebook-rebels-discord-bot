@@ -39,7 +39,7 @@ export async function handleAdd(interaction: ChatInputCommandInteraction): Promi
   const colorStr = interaction.options.getString('color') ?? '#5865F2';
   const colorNum = parseInt(colorStr.replace('#', ''), 16);
 
-  const existing = getGameRoles(interaction.guildId!);
+  const existing = await getGameRoles(interaction.guildId!);
   if (existing.some((r) => r.name.toLowerCase() === name.toLowerCase())) {
     await interaction.reply({
       content: `A tag named **${name}** already exists.`,
@@ -58,13 +58,13 @@ export async function handleAdd(interaction: ChatInputCommandInteraction): Promi
   });
 
   const type = (interaction.options.getString('type') ?? 'genre') as 'genre' | 'difficulty';
-  addGameRole(interaction.guildId!, { roleId: discordRole.id, name, type });
+  await addGameRole(interaction.guildId!, { roleId: discordRole.id, name, type });
   await interaction.editReply(`Tag **${name}** created! Members can select it with \`/myroles\`.`);
 }
 
 export async function handleRemove(interaction: ChatInputCommandInteraction): Promise<void> {
   const name = interaction.options.getString('name', true).trim();
-  const tags = getGameRoles(interaction.guildId!);
+  const tags = await getGameRoles(interaction.guildId!);
   const tag = tags.find((r) => r.name.toLowerCase() === name.toLowerCase());
 
   if (!tag) {
@@ -84,14 +84,14 @@ export async function handleRemove(interaction: ChatInputCommandInteraction): Pr
     // Role may have already been manually deleted
   }
 
-  removeGameRole(interaction.guildId!, tag.roleId);
+  await removeGameRole(interaction.guildId!, tag.roleId);
   await interaction.editReply(`Tag **${name}** removed.`);
 }
 
 export async function handleSync(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-  const existing = getGameRoles(interaction.guildId!);
+  const existing = await getGameRoles(interaction.guildId!);
   const existingNames = new Set(existing.map((r) => r.name.toLowerCase()));
 
   const genreToCreate = GENRE_TAG_DEFINITIONS.filter(
@@ -120,7 +120,7 @@ export async function handleSync(interaction: ChatInputCommandInteraction): Prom
         mentionable: false,
         reason: `Game tag sync by ${interaction.user.tag}`,
       });
-      addGameRole(interaction.guildId!, { roleId: discordRole.id, name: tag.name, type: 'genre' });
+      await addGameRole(interaction.guildId!, { roleId: discordRole.id, name: tag.name, type: 'genre' });
       created++;
     } catch {
       failed.push(tag.name);
@@ -136,7 +136,7 @@ export async function handleSync(interaction: ChatInputCommandInteraction): Prom
         mentionable: false,
         reason: `Difficulty role sync by ${interaction.user.tag}`,
       });
-      addGameRole(interaction.guildId!, {
+      await addGameRole(interaction.guildId!, {
         roleId: discordRole.id,
         name: tag.name,
         type: 'difficulty',
@@ -162,7 +162,7 @@ export async function handleSync(interaction: ChatInputCommandInteraction): Prom
 }
 
 export async function handleList(interaction: ChatInputCommandInteraction): Promise<void> {
-  const tags = getGameRoles(interaction.guildId!);
+  const tags = await getGameRoles(interaction.guildId!);
 
   if (tags.length === 0) {
     await interaction.reply({
@@ -187,7 +187,7 @@ export async function handleList(interaction: ChatInputCommandInteraction): Prom
 export async function handleClear(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-  const removed = clearGameRoles(interaction.guildId!);
+  const removed = await clearGameRoles(interaction.guildId!);
   if (removed.length === 0) {
     await interaction.editReply('No game tags to remove.');
     return;

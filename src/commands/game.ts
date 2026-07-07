@@ -59,8 +59,8 @@ import { getGuildConfig } from '../utils/config';
 const MANUAL_VALUE = '__manual__';
 const BGG_VALUE = '__bgg__';
 
-function findDuplicateGame(eventId: string, title: string): GameSuggestion | undefined {
-  return loadGames().find(
+async function findDuplicateGame(eventId: string, title: string): Promise<GameSuggestion | undefined> {
+  return (await loadGames()).find(
     (g) => g.eventId === eventId && g.title.toLowerCase() === title.toLowerCase(),
   );
 }
@@ -131,11 +131,11 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   else if (sub === 'cancel') await handleGameCancel(interaction);
 }
 
-function findGameNightForInteraction(
+async function findGameNightForInteraction(
   userId: string,
   channelId: string | null,
-): GameNight | undefined {
-  const active = loadGameNights().filter((gn) => !gn.cancelled && !gn.archived);
+): Promise<GameNight | undefined> {
+  const active = (await loadGameNights()).filter((gn) => !gn.cancelled && !gn.archived);
   if (channelId) {
     const byChannel = active.find((gn) => gn.eventChannelId === channelId);
     if (byChannel) return byChannel;
@@ -239,7 +239,7 @@ async function handleSuggest(interaction: ChatInputCommandInteraction): Promise<
   const withExpansions = interaction.options.getBoolean('with_expansions') ?? false;
 
   const now = new Date();
-  const upcoming = loadGameNights()
+  const upcoming = (await loadGameNights())
     .filter(
       (gn) =>
         !gn.cancelled && !gn.archived && gn.eventChannelId && new Date(gn.startTimeISO) > now,
@@ -262,16 +262,18 @@ async function handleSuggest(interaction: ChatInputCommandInteraction): Promise<
   } else if (upcoming.length > 1) {
     // Outside an event channel with multiple events — show picker.
     pendingEventSuggest.set(interaction.user.id, { title, withExpansions });
-    const options = upcoming.map((gn) => {
-      const alreadySuggested = findGamesByEvent(gn.id).some(
-        (g) => g.title.toLowerCase() === title.toLowerCase(),
-      );
-      const desc = `${alreadySuggested ? '⚠️ already suggested · ' : ''}${gn.time} @ ${gn.location || 'TBD'}`.slice(0, 100);
-      return new StringSelectMenuOptionBuilder()
-        .setLabel(gn.date.slice(0, 100))
-        .setValue(gn.id)
-        .setDescription(desc);
-    });
+    const options = await Promise.all(
+      upcoming.map(async (gn) => {
+        const alreadySuggested = (await findGamesByEvent(gn.id)).some(
+          (g) => g.title.toLowerCase() === title.toLowerCase(),
+        );
+        const desc = `${alreadySuggested ? '⚠️ already suggested · ' : ''}${gn.time} @ ${gn.location || 'TBD'}`.slice(0, 100);
+        return new StringSelectMenuOptionBuilder()
+          .setLabel(gn.date.slice(0, 100))
+          .setValue(gn.id)
+          .setDescription(desc);
+      }),
+    );
     const select = new StringSelectMenuBuilder()
       .setCustomId('game_event_select')
       .setPlaceholder('Choose an event...')
@@ -287,9 +289,9 @@ async function handleSuggest(interaction: ChatInputCommandInteraction): Promise<
   const gameNight = channelMatch ?? upcoming[0];
 
   // Check the group library — exact match first
-  const libraryMatches = findGamesByName(interaction.guildId!, title);
+  const libraryMatches = await findGamesByName(interaction.guildId!, title);
   if (libraryMatches.length > 0) {
-    const info = getGameInfo(title);
+    const info = await getGameInfo(title);
     const ownerIds = libraryMatches.map((e) => e.userId);
     if (withExpansions && info?.objectid) {
       await showLibraryExpansionPicker(
@@ -313,7 +315,7 @@ async function handleSuggest(interaction: ChatInputCommandInteraction): Promise<
   }
 
   // Partial match in library — prompt user to confirm which game
-  const partials = findGameNamesByPartial(interaction.guildId!, title);
+  const partials = await findGameNamesByPartial(interaction.guildId!, title);
   if (partials.length > 0 && partials.length <= 25) {
     const options = partials.map((name) =>
       new StringSelectMenuOptionBuilder().setLabel(name.slice(0, 100)).setValue(name),
@@ -348,7 +350,7 @@ export async function handleEventSelect(interaction: StringSelectMenuInteraction
   const pending = pendingEventSuggest.get(interaction.user.id);
   pendingEventSuggest.delete(interaction.user.id);
 
-  const gameNight = loadGameNights().find(
+  const gameNight = (await loadGameNights()).find(
     (gn) => gn.id === eventId && !gn.cancelled && !gn.archived,
   );
   if (!gameNight) {
@@ -361,9 +363,9 @@ export async function handleEventSelect(interaction: StringSelectMenuInteraction
   const title = pending?.title ?? '';
   const withExpansions = pending?.withExpansions ?? false;
 
-  const libraryMatches = findGamesByName(interaction.guildId!, title);
+  const libraryMatches = await findGamesByName(interaction.guildId!, title);
   if (libraryMatches.length > 0) {
-    const info = getGameInfo(title);
+    const info = await getGameInfo(title);
     const ownerIds = libraryMatches.map((e) => e.userId);
     if (withExpansions && info?.objectid) {
       await showLibraryExpansionPicker(
@@ -386,7 +388,7 @@ export async function handleEventSelect(interaction: StringSelectMenuInteraction
     return;
   }
 
-  const partials = findGameNamesByPartial(interaction.guildId!, title);
+  const partials = await findGameNamesByPartial(interaction.guildId!, title);
   if (partials.length > 0 && partials.length <= 25) {
     const options = partials.map((name) =>
       new StringSelectMenuOptionBuilder().setLabel(name.slice(0, 100)).setValue(name),
@@ -449,7 +451,7 @@ function bringGameRow(): ActionRowBuilder<ButtonBuilder> {
 // ── List scheduled games ──────────────────────────────────────────────────────
 
 async function handleGameList(interaction: ChatInputCommandInteraction): Promise<void> {
-  const isEventChannel = loadGameNights().some(
+  const isEventChannel = (await loadGameNights()).some(
     (gn) => !gn.cancelled && !gn.archived && gn.eventChannelId === interaction.channelId,
   );
   if (!isEventChannel) {
@@ -461,7 +463,7 @@ async function handleGameList(interaction: ChatInputCommandInteraction): Promise
     return;
   }
 
-  const games = findGamesByChannel(interaction.channelId!);
+  const games = await findGamesByChannel(interaction.channelId!);
 
   if (games.length === 0) {
     await interaction.reply({
@@ -495,7 +497,7 @@ async function handleGameList(interaction: ChatInputCommandInteraction): Promise
 
 async function handleGameCancel(interaction: ChatInputCommandInteraction): Promise<void> {
   const title = interaction.options.getString('title', true).trim();
-  const games = findGamesByChannel(interaction.channelId!);
+  const games = await findGamesByChannel(interaction.channelId!);
   const match = games.find((g) => g.title.toLowerCase() === title.toLowerCase());
 
   if (!match) {
@@ -523,13 +525,13 @@ async function handleGameCancel(interaction: ChatInputCommandInteraction): Promi
     /* message may already be deleted */
   }
 
-  const remaining = loadGames().filter((g) => g.id !== match.id);
-  saveGames(remaining);
+  const remaining = (await loadGames()).filter((g) => g.id !== match.id);
+  await saveGames(remaining);
   // Remove the auto-request if the canceller originally created it
-  const req = getRequestsForEvent(match.eventId).find(
+  const req = (await getRequestsForEvent(match.eventId)).find(
     (r) => r.gameName.toLowerCase() === match.title.toLowerCase(),
   );
-  if (req && req.requestedBy === interaction.user.id) removeRequests([req.id]);
+  if (req && req.requestedBy === interaction.user.id) await removeRequests([req.id]);
   try {
     await updateGameListPin(interaction.client, match.eventId);
   } catch {
@@ -551,7 +553,7 @@ export async function handleHostGameCancel(
   interaction: ChatInputCommandInteraction,
 ): Promise<void> {
   const title = interaction.options.getString('title', true).trim();
-  const games = findGamesByChannel(interaction.channelId!);
+  const games = await findGamesByChannel(interaction.channelId!);
   const match = games.find((g) => g.title.toLowerCase() === title.toLowerCase());
 
   if (!match) {
@@ -571,13 +573,13 @@ export async function handleHostGameCancel(
     /* message may already be deleted */
   }
 
-  const remaining = loadGames().filter((g) => g.id !== match.id);
-  saveGames(remaining);
+  const remaining = (await loadGames()).filter((g) => g.id !== match.id);
+  await saveGames(remaining);
   // Remove the auto-request if the original suggestor created it
-  const hostReq = getRequestsForEvent(match.eventId).find(
+  const hostReq = (await getRequestsForEvent(match.eventId)).find(
     (r) => r.gameName.toLowerCase() === match.title.toLowerCase(),
   );
-  if (hostReq && hostReq.requestedBy === match.createdBy) removeRequests([hostReq.id]);
+  if (hostReq && hostReq.requestedBy === match.createdBy) await removeRequests([hostReq.id]);
   try {
     await updateGameListPin(interaction.client, match.eventId);
   } catch {
@@ -647,7 +649,7 @@ export async function handleLibraryExpansionSelect(
   const pending = pendingLibraryGame.get(interaction.user.id);
   pendingLibraryGame.delete(interaction.user.id);
 
-  const gameNight = findGameNightForInteraction(interaction.user.id, interaction.channelId);
+  const gameNight = await findGameNightForInteraction(interaction.user.id, interaction.channelId);
   if (!gameNight) {
     await interaction.update({
       content: 'This event channel is no longer active.',
@@ -697,7 +699,7 @@ async function postLibraryGame(
   ownerIds: string[],
   expansions: GameExpansion[],
 ): Promise<void> {
-  const duplicate = findDuplicateGame(gameNight.id, gameName);
+  const duplicate = await findDuplicateGame(gameNight.id, gameName);
   if (duplicate) {
     const msg = duplicateReply(duplicate);
     if (interaction.isChatInputCommand()) {
@@ -731,7 +733,7 @@ async function postLibraryGame(
 
   if (info?.objectid) {
     await enrichFromBGG(gameName, false);
-    info = getGameInfo(gameName) ?? info;
+    info = (await getGameInfo(gameName)) ?? info;
   }
 
   const minPlayers = info?.minPlayers ?? 2;
@@ -772,15 +774,15 @@ async function postLibraryGame(
   const owners = ownerIds.map((id) => `<@${id}>`).join(', ');
   const msg = await channel.send({
     content: `Owned by: ${owners}`,
-    embeds: [buildGameEmbed(game, {})],
+    embeds: [await buildGameEmbed(game, {})],
     files: [buildBggAttachment()],
     components: [buildGameButtons(id, false)],
   });
 
   game.messageId = msg.id;
-  upsertGame(game);
+  await upsertGame(game);
 
-  addRequest(gameNight.id, gameName, interaction.user.id);
+  await addRequest(gameNight.id, gameName, interaction.user.id);
   try {
     await updateRequestPin(interaction.client, gameNight.id);
   } catch {
@@ -812,7 +814,7 @@ export async function handleLibrarySuggestSelect(
   interaction: StringSelectMenuInteraction,
 ): Promise<void> {
   const value = interaction.values[0];
-  const gameNight = findGameNightForInteraction(interaction.user.id, interaction.channelId);
+  const gameNight = await findGameNightForInteraction(interaction.user.id, interaction.channelId);
   if (!gameNight) {
     await interaction.update({
       content: 'This event channel is no longer active.',
@@ -836,8 +838,8 @@ export async function handleLibrarySuggestSelect(
   pendingLibrarySuggest.delete(interaction.user.id);
   const withExpansions = libPending?.withExpansions ?? false;
 
-  const libraryMatches = findGamesByName(interaction.guildId!, value);
-  const info = getGameInfo(value);
+  const libraryMatches = await findGamesByName(interaction.guildId!, value);
+  const info = await getGameInfo(value);
   const ownerIds = libraryMatches.map((e) => e.userId);
 
   if (withExpansions && info?.objectid) {
@@ -857,7 +859,7 @@ export async function handleGameSelect(interaction: StringSelectMenuInteraction)
     return;
   }
 
-  const gameNight = findGameNightForInteraction(interaction.user.id, interaction.channelId);
+  const gameNight = await findGameNightForInteraction(interaction.user.id, interaction.channelId);
   if (!gameNight) {
     await interaction.update({
       content: 'This event channel is no longer active.',
@@ -894,7 +896,7 @@ export async function handleGameSelectWithExp(
     return;
   }
 
-  const gameNight = findGameNightForInteraction(interaction.user.id, interaction.channelId);
+  const gameNight = await findGameNightForInteraction(interaction.user.id, interaction.channelId);
   if (!gameNight) {
     await interaction.update({
       content: 'This event channel is no longer active.',
@@ -944,7 +946,7 @@ export async function handleExpansionSelect(
   interaction: StringSelectMenuInteraction,
   bggId: string,
 ): Promise<void> {
-  const gameNight = findGameNightForInteraction(interaction.user.id, interaction.channelId);
+  const gameNight = await findGameNightForInteraction(interaction.user.id, interaction.channelId);
   if (!gameNight) {
     await interaction.update({
       content: 'This event channel is no longer active.',
@@ -977,7 +979,7 @@ export async function handleManualBtn(interaction: ButtonInteraction): Promise<v
 // ── Modal submission ──────────────────────────────────────────────────────────
 
 export async function handleManualGameSubmit(interaction: ModalSubmitInteraction): Promise<void> {
-  const active = loadGameNights().filter((gn) => !gn.cancelled && !gn.archived);
+  const active = (await loadGameNights()).filter((gn) => !gn.cancelled && !gn.archived);
   const gameNight =
     active.find((gn) => gn.eventChannelId === interaction.channelId) ??
     active.find((gn) => gn.id === pendingEventContext.get(interaction.user.id));
@@ -993,7 +995,7 @@ export async function handleManualGameSubmit(interaction: ModalSubmitInteraction
 
   const title = interaction.fields.getTextInputValue('title').trim();
 
-  const duplicate = findDuplicateGame(gameNight.id, title);
+  const duplicate = await findDuplicateGame(gameNight.id, title);
   if (duplicate) {
     await interaction.editReply({ content: duplicateReply(duplicate), components: [] });
     return;
@@ -1035,15 +1037,15 @@ export async function handleManualGameSubmit(interaction: ModalSubmitInteraction
 
   const channel = (await interaction.client.channels.fetch(eventChannelId)) as TextChannel;
   const msg = await channel.send({
-    embeds: [buildGameEmbed(game, {})],
+    embeds: [await buildGameEmbed(game, {})],
     files: [buildBggAttachment()],
     components: [buildGameButtons(id, false)],
   });
 
   game.messageId = msg.id;
-  upsertGame(game);
+  await upsertGame(game);
 
-  addRequest(gameNight.id, title, interaction.user.id);
+  await addRequest(gameNight.id, title, interaction.user.id);
   try {
     await updateRequestPin(interaction.client, gameNight.id);
   } catch {
@@ -1070,7 +1072,7 @@ export async function handleGameJoin(
   gameId: string,
 ): Promise<void> {
   const { findGame, upsertGame: save } = await import('../utils/gameStorage');
-  const game = findGame(gameId);
+  const game = await findGame(gameId);
   if (!game) {
     await interaction.reply({ content: 'Game not found.', flags: MessageFlags.Ephemeral });
     return;
@@ -1087,7 +1089,7 @@ export async function handleGameJoin(
   }
 
   game.seats.push(userId);
-  save(game);
+  await save(game);
   try {
     await updateGameListPin(interaction.client, game.eventId);
   } catch {
@@ -1096,7 +1098,7 @@ export async function handleGameJoin(
 
   const nameMap = await resolveNames(interaction, [...game.seats, ...(game.waitlist ?? [])]);
   await interaction.update({
-    embeds: [buildGameEmbed(game, nameMap)],
+    embeds: [await buildGameEmbed(game, nameMap)],
     files: [buildBggAttachment()],
     components: [buildGameButtons(gameId, game.seats.length >= game.maxPlayers)],
   });
@@ -1107,7 +1109,7 @@ export async function handleGameLeave(
   gameId: string,
 ): Promise<void> {
   const { findGame, upsertGame: save } = await import('../utils/gameStorage');
-  const game = findGame(gameId);
+  const game = await findGame(gameId);
   if (!game) {
     await interaction.reply({ content: 'Game not found.', flags: MessageFlags.Ephemeral });
     return;
@@ -1120,7 +1122,7 @@ export async function handleGameLeave(
   }
 
   game.seats = game.seats.filter((id) => id !== userId);
-  save(game);
+  await save(game);
   try {
     await updateGameListPin(interaction.client, game.eventId);
   } catch {
@@ -1129,7 +1131,7 @@ export async function handleGameLeave(
 
   const nameMap = await resolveNames(interaction, [...game.seats, ...(game.waitlist ?? [])]);
   await interaction.update({
-    embeds: [buildGameEmbed(game, nameMap)],
+    embeds: [await buildGameEmbed(game, nameMap)],
     files: [buildBggAttachment()],
     components: [buildGameButtons(gameId, game.seats.length >= game.maxPlayers)],
   });
@@ -1142,7 +1144,7 @@ export async function handleWaitlistJoin(
   gameId: string,
 ): Promise<void> {
   const { findGame, upsertGame: save } = await import('../utils/gameStorage');
-  const game = findGame(gameId);
+  const game = await findGame(gameId);
   if (!game) {
     await interaction.reply({ content: 'Game not found.', flags: MessageFlags.Ephemeral });
     return;
@@ -1169,11 +1171,11 @@ export async function handleWaitlistJoin(
 
   const prevHadGroup2 = waitlist.length >= game.minPlayers;
   game.waitlist = [...waitlist, userId];
-  save(game);
+  await save(game);
 
   const nowHasGroup2 = game.waitlist.length >= game.minPlayers;
   if (nowHasGroup2 && !prevHadGroup2) {
-    updateRequestCopies(game.eventId, game.title, 2);
+    await updateRequestCopies(game.eventId, game.title, 2);
     try {
       await updateRequestPin(interaction.client, game.eventId);
     } catch {
@@ -1183,7 +1185,7 @@ export async function handleWaitlistJoin(
 
   const nameMap = await resolveNames(interaction, [...game.seats, ...game.waitlist]);
   await interaction.update({
-    embeds: [buildGameEmbed(game, nameMap)],
+    embeds: [await buildGameEmbed(game, nameMap)],
     files: [buildBggAttachment()],
     components: [buildGameButtons(gameId, game.seats.length >= game.maxPlayers)],
   });
@@ -1194,7 +1196,7 @@ export async function handleWaitlistLeave(
   gameId: string,
 ): Promise<void> {
   const { findGame, upsertGame: save } = await import('../utils/gameStorage');
-  const game = findGame(gameId);
+  const game = await findGame(gameId);
   if (!game) {
     await interaction.reply({ content: 'Game not found.', flags: MessageFlags.Ephemeral });
     return;
@@ -1210,11 +1212,11 @@ export async function handleWaitlistLeave(
 
   const prevHadGroup2 = waitlist.length >= game.minPlayers;
   game.waitlist = waitlist.filter((id) => id !== userId);
-  save(game);
+  await save(game);
 
   const nowHasGroup2 = game.waitlist.length >= game.minPlayers;
   if (prevHadGroup2 && !nowHasGroup2) {
-    updateRequestCopies(game.eventId, game.title, 1);
+    await updateRequestCopies(game.eventId, game.title, 1);
     try {
       await updateRequestPin(interaction.client, game.eventId);
     } catch {
@@ -1224,7 +1226,7 @@ export async function handleWaitlistLeave(
 
   const nameMap = await resolveNames(interaction, [...game.seats, ...game.waitlist]);
   await interaction.update({
-    embeds: [buildGameEmbed(game, nameMap)],
+    embeds: [await buildGameEmbed(game, nameMap)],
     files: [buildBggAttachment()],
     components: [buildGameButtons(gameId, game.seats.length >= game.maxPlayers)],
   });
@@ -1303,7 +1305,7 @@ async function postBGGGame(
   bggGame: BGGGame,
   expansions: BGGExpansion[],
 ): Promise<void> {
-  const duplicate = findDuplicateGame(gameNight.id, bggGame.name);
+  const duplicate = await findDuplicateGame(gameNight.id, bggGame.name);
   if (duplicate) {
     await interaction.editReply({ content: duplicateReply(duplicate), components: [] });
     return;
@@ -1339,19 +1341,19 @@ async function postBGGGame(
 
   const channel = (await interaction.client.channels.fetch(eventChannelId)) as TextChannel;
   const msg = await channel.send({
-    embeds: [buildGameEmbed(game, {})],
+    embeds: [await buildGameEmbed(game, {})],
     files: [buildBggAttachment()],
     components: [buildGameButtons(id, false)],
   });
 
   game.messageId = msg.id;
-  upsertGame(game);
+  await upsertGame(game);
 
   // Persist auto-detected BGG tags to GameInfo so future suggestions of this game get tags
   if (bggGame.tags.length > 0) {
-    const existingInfo = getGameInfo(bggGame.name);
+    const existingInfo = await getGameInfo(bggGame.name);
     if (!existingInfo?.tags?.length) {
-      upsertGameInfo({
+      await upsertGameInfo({
         gameName: bggGame.name,
         objectid: bggGame.id,
         minPlayers: existingInfo?.minPlayers ?? bggGame.minPlayers,
@@ -1364,7 +1366,7 @@ async function postBGGGame(
     }
   }
 
-  addRequest(gameNight.id, bggGame.name, interaction.user.id);
+  await addRequest(gameNight.id, bggGame.name, interaction.user.id);
   try {
     await updateRequestPin(interaction.client, gameNight.id);
   } catch {
@@ -1400,12 +1402,12 @@ export async function handleGameTagSelect(
 ): Promise<void> {
   const tags = interaction.values;
   const { findGame, upsertGame: save } = await import('../utils/gameStorage');
-  const game = findGame(gameId);
+  const game = await findGame(gameId);
   if (game) {
     game.tags = tags;
-    save(game);
-    const existingInfo = getGameInfo(game.title);
-    upsertGameInfo({
+    await save(game);
+    const existingInfo = await getGameInfo(game.title);
+    await upsertGameInfo({
       gameName: game.title,
       objectid: existingInfo?.objectid ?? (game.bggId || undefined),
       minPlayers: existingInfo?.minPlayers,
@@ -1419,7 +1421,7 @@ export async function handleGameTagSelect(
       const cardChannel = (await interaction.client.channels.fetch(game.channelId)) as TextChannel;
       const cardMsg = await cardChannel.messages.fetch(game.messageId);
       await cardMsg.edit({
-        embeds: [buildGameEmbed(game, {})],
+        embeds: [await buildGameEmbed(game, {})],
         files: [buildBggAttachment()],
         components: [buildGameButtons(gameId, game.seats.length >= game.maxPlayers)],
       });
@@ -1494,9 +1496,9 @@ export async function handleBringConfirm(interaction: ButtonInteraction): Promis
     return;
   }
   pendingBrings.delete(interaction.user.id);
-  addGame(interaction.guildId!, interaction.user.id, pending.gameName, pending.objectid);
+  await addGame(interaction.guildId!, interaction.user.id, pending.gameName, pending.objectid);
   // confirmBring checks library ownership — addGame above ensures it passes
-  const confirmed = confirmBring(interaction.guildId!, pending.eventId, pending.gameName, interaction.user.id);
+  const confirmed = await confirmBring(interaction.guildId!, pending.eventId, pending.gameName, interaction.user.id);
   if (confirmed === 'confirmed') {
     try {
       await updateRequestPin(interaction.client, pending.eventId);

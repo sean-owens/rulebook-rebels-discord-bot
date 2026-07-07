@@ -92,7 +92,7 @@ Assign these roles to the appropriate members. The bot's permission-gating is ba
 
 ## Data & Storage
 
-All data is stored as JSON files in the `data/` directory (gitignored). Each file is guild-scoped so the bot can safely serve multiple servers from one process.
+Data is stored as JSON files, one per record type below. Each file is guild-scoped so the bot can safely serve multiple servers from one process.
 
 | File | Contents |
 |---|---|
@@ -106,6 +106,12 @@ All data is stored as JSON files in the `data/` directory (gitignored). Each fil
 | `user_collections.json` | BGG collection data per guild |
 | `game_info.json` | Shared BGG game metadata cache (not guild-scoped) |
 | `deleted_guilds.json` | Guilds pending the 30-day data retention window |
+| `marketplace.json` | Marketplace listings and bids |
+| `marketplace_log.jsonl` | Append-only marketplace activity log |
+
+### Storage backend
+
+By default (local development) these files live on disk under `data/`. In production, set the `AWS_S3_BUCKET_NAME` environment variable (plus `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`, and optionally `AWS_ENDPOINT_URL` for an S3-compatible provider) and the bot reads/writes every file above to that bucket instead. This is required on hosts like Railway where the local filesystem is wiped on every deploy — without it, all bot data is lost each time the service redeploys. See `.env.example` for the full variable list. `src/utils/db.ts` is the single module that decides between local disk and S3; no other code needs to know which backend is active.
 
 ---
 

@@ -10,22 +10,29 @@ export interface BggAccount {
 
 type Store = Record<string, BggAccount[]>;
 
-export function getBggAccount(guildId: string, userId: string): BggAccount | undefined {
-  return readJson<Store>(FILE, {})[guildId]?.find((a) => a.userId === userId);
+export async function getBggAccount(
+  guildId: string,
+  userId: string,
+): Promise<BggAccount | undefined> {
+  return (await readJson<Store>(FILE, {}))[guildId]?.find((a) => a.userId === userId);
 }
 
-export function setBggAccount(guildId: string, userId: string, bggUsername: string): void {
-  const store = readJson<Store>(FILE, {});
+export async function setBggAccount(
+  guildId: string,
+  userId: string,
+  bggUsername: string,
+): Promise<void> {
+  const store = await readJson<Store>(FILE, {});
   const accounts = (store[guildId] ?? []).filter((a) => a.userId !== userId);
   accounts.push({ userId, bggUsername, linkedAt: new Date().toISOString() });
   store[guildId] = accounts;
-  writeJson(FILE, store);
+  await writeJson(FILE, store);
 }
 
-export function removeBggAccount(guildId: string, userId: string): boolean {
-  const store = readJson<Store>(FILE, {});
+export async function removeBggAccount(guildId: string, userId: string): Promise<boolean> {
+  const store = await readJson<Store>(FILE, {});
   const before = (store[guildId] ?? []).length;
   store[guildId] = (store[guildId] ?? []).filter((a) => a.userId !== userId);
-  writeJson(FILE, store);
+  await writeJson(FILE, store);
   return store[guildId].length < before;
 }

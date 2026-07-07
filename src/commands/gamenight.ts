@@ -113,7 +113,7 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
 
   const rawDate = interaction.options.getString('date', true);
   const guild = interaction.guild!;
-  const defaults = getGuildConfig(guild.id);
+  const defaults = await getGuildConfig(guild.id);
 
   const me = await guild.members.fetchMe();
   const rawTime = interaction.options.getString('time', true);
@@ -168,7 +168,7 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
   }
 
   // Find or create the configured event category
-  const eventCategoryName = getGuildConfig(guild.id).eventCategoryName;
+  const eventCategoryName = (await getGuildConfig(guild.id)).eventCategoryName;
   let categoryId: string | undefined;
   try {
     let category = guild.channels.cache.find(
@@ -284,7 +284,7 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
     console.warn('Could not post RSVP embed:', err);
   }
 
-  upsertGameNight(gn);
+  await upsertGameNight(gn);
 
   // Initialize pinned embeds in the event channel right away (even while empty)
   if (gn.eventChannelId) {
@@ -347,13 +347,13 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
 
   if (Object.keys(patch).length === 0) {
     await interaction.reply({
-      content: formatConfig(getGuildConfig(interaction.guildId!)),
+      content: formatConfig(await getGuildConfig(interaction.guildId!)),
       flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
-  const updated = updateGuildConfig(interaction.guildId!, patch);
+  const updated = await updateGuildConfig(interaction.guildId!, patch);
   await interaction.reply({
     content: formatConfig(updated).replace('**Event defaults:**', '**Event defaults updated:**'),
     flags: MessageFlags.Ephemeral,
@@ -361,7 +361,7 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
 }
 
 async function handleList(interaction: ChatInputCommandInteraction): Promise<void> {
-  const upcoming = loadGameNights().filter((g) => !g.cancelled && !g.archived);
+  const upcoming = (await loadGameNights()).filter((g) => !g.cancelled && !g.archived);
 
   if (upcoming.length === 0) {
     await interaction.reply({ content: 'No upcoming game nights scheduled.', flags: MessageFlags.Ephemeral });
@@ -394,7 +394,7 @@ async function handleList(interaction: ChatInputCommandInteraction): Promise<voi
 
 export async function handleCancel(interaction: ChatInputCommandInteraction): Promise<void> {
   const id = interaction.options.getString('id', true);
-  const gn = findGameNight(id);
+  const gn = await findGameNight(id);
 
   if (!gn) {
     await interaction.reply({ content: `No event found with ID \`${id}\`.`, flags: MessageFlags.Ephemeral });
@@ -427,7 +427,7 @@ export async function handleCancel(interaction: ChatInputCommandInteraction): Pr
   }
 
   gn.cancelled = true;
-  upsertGameNight(gn);
+  await upsertGameNight(gn);
   await cleanupCancelledNight(interaction.client, gn);
 
   await updateAnnouncementPin(interaction.client, interaction.guildId!).catch(() => null);
@@ -439,7 +439,7 @@ export async function handleArchiveOld(interaction: ChatInputCommandInteraction)
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const now = Date.now();
-  const toArchive = loadGameNights().filter(
+  const toArchive = (await loadGameNights()).filter(
     (g) =>
       !g.cancelled && !g.archived && g.eventChannelId && new Date(g.startTimeISO).getTime() < now,
   );

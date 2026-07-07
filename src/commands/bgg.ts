@@ -42,7 +42,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
 async function handleLink(interaction: ChatInputCommandInteraction): Promise<void> {
   const username = interaction.options.getString('username', true).trim();
-  const existing = getBggAccount(interaction.guildId!, interaction.user.id);
+  const existing = await getBggAccount(interaction.guildId!, interaction.user.id);
 
   if (existing && existing.bggUsername.toLowerCase() === username.toLowerCase()) {
     await interaction.reply({
@@ -81,7 +81,7 @@ async function handleLink(interaction: ChatInputCommandInteraction): Promise<voi
     return;
   }
 
-  setBggAccount(interaction.guildId!, interaction.user.id, bggUser.username);
+  await setBggAccount(interaction.guildId!, interaction.user.id, bggUser.username);
 
   const isRelink = !!existing;
   const description = isRelink
@@ -103,7 +103,7 @@ async function handleLink(interaction: ChatInputCommandInteraction): Promise<voi
 }
 
 async function handleUnlink(interaction: ChatInputCommandInteraction): Promise<void> {
-  const removed = removeBggAccount(interaction.guildId!, interaction.user.id);
+  const removed = await removeBggAccount(interaction.guildId!, interaction.user.id);
 
   if (!removed) {
     await interaction.reply({
@@ -120,7 +120,7 @@ async function handleUnlink(interaction: ChatInputCommandInteraction): Promise<v
 }
 
 async function handleProfile(interaction: ChatInputCommandInteraction): Promise<void> {
-  const account = getBggAccount(interaction.guildId!, interaction.user.id);
+  const account = await getBggAccount(interaction.guildId!, interaction.user.id);
 
   if (!account) {
     await interaction.reply({

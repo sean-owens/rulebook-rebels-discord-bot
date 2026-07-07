@@ -14,10 +14,10 @@ export function buildBggAttachment(): AttachmentBuilder {
   return new AttachmentBuilder('BGG/images/powered_by_BGG_01_SM.png');
 }
 
-export function buildGameEmbed(
+export async function buildGameEmbed(
   game: GameSuggestion,
   nameMap: Record<string, string>,
-): EmbedBuilder {
+): Promise<EmbedBuilder> {
   const getName = (id: string) => nameMap[id] ?? `<@${id}>`;
   const waitlist = game.waitlist ?? [];
 
@@ -35,7 +35,7 @@ export function buildGameEmbed(
       ? `~${game.minPlaytime} min`
       : `${game.minPlaytime}–${game.maxPlaytime} min`;
 
-  const roles = getGameRoles(game.guildId);
+  const roles = await getGameRoles(game.guildId);
 
   const complexityIcon = game.complexity ? (COMPLEXITY_ICON[game.complexity] ?? '') : '';
   const complexityRole = game.complexity
