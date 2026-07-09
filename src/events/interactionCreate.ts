@@ -82,6 +82,7 @@ import {
 } from '../commands/game';
 import { findGameNight, upsertGameNight } from '../utils/storage';
 import { buildGameNightEmbed, buildGameNightButtons } from '../utils/embeds';
+import { execute as executeGetARoom } from '../commands/getaroom';
 
 export async function handleInteraction(interaction: Interaction): Promise<void> {
   const label = interaction.isChatInputCommand()
@@ -105,6 +106,7 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
       else if (interaction.commandName === 'library') await executeLibrary(interaction);
       else if (interaction.commandName === 'bgg') await executeBgg(interaction);
       else if (interaction.commandName === 'marketplace') await executeMarketplace(interaction);
+      else if (interaction.commandName === 'getaroom') await executeGetARoom(interaction);
     } else if (interaction.isStringSelectMenu()) {
       const id = interaction.customId;
       if (id === 'game_event_select') await handleEventSelect(interaction);

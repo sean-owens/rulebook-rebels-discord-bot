@@ -26,6 +26,8 @@ export interface GuildConfig {
   lightBufferMinutes: number;
   mediumBufferMinutes: number;
   heavyBufferMinutes: number;
+  // /getaroom private channels (see src/commands/getaroom.ts).
+  privateRoomCategoryName: string;
 }
 
 const DEFAULT_CONFIG: GuildConfig = {
@@ -49,6 +51,7 @@ const DEFAULT_CONFIG: GuildConfig = {
   lightBufferMinutes: 20,
   mediumBufferMinutes: 30,
   heavyBufferMinutes: 40,
+  privateRoomCategoryName: 'Private Rooms',
 };
 
 type ConfigStore = Record<string, GuildConfig>;

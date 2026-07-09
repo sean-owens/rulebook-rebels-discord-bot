@@ -33,7 +33,7 @@ Because Parts 2 and 3 repeat the tests from the tier(s) below them, the same tes
 
 **What it does:** Displays an ephemeral embed listing all available commands. Shows a Host section to members with Manage Events permission. Shows an Admin section to members with Manage Guild permission.
 
-- [ ] 👑 Run `/help` as a regular member — confirm only user-facing command sections appear (`/event`, `/game`, `/library`, `/myroles`, `/bgg`, `/marketplace`) with **no Host or Admin section**
+- [ ] 👑 Run `/help` as a regular member — confirm only user-facing command sections appear (`/event`, `/game`, `/library`, `/myroles`, `/bgg`, `/marketplace`, `/getaroom`) with **no Host or Admin section**
 - [ ] Confirm `/game cancel` description says "Remove your own game suggestion"
 - [ ] Confirm `/library clear` description says "Remove all your own games at once"
 - [ ] Confirm the response is ephemeral
@@ -475,6 +475,35 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 - [ ] Confirm a regular member CAN use `post sell`, `post trade`, `price`, `conditions`, `browse`, `my`, `close` (own listings), `reopen` (own listings)
 - [ ] 👑 Try `/admin marketplace config` and `/admin marketplace purge` as a regular member — confirm "requires Manage Server permission"
+
+## 1.8 `/getaroom` — Private Rooms
+
+### 1.8a `/getaroom create`
+
+**What it does:** Creates a new private text channel visible only to whoever you mention, plus hosts and admins — hidden from everyone else. Posts a message pinging each invited person, and creates the channel under a separate category (default "Private Rooms", configurable via `/admin room config`, 3.9o) so it's never mixed in with event/archive channels.
+
+**Prerequisites:** none — any server member can run this, not just hosts/admins.
+
+- [ ] Run `/getaroom create people:@Alice @Bob` — confirm a new channel is created under the "Private Rooms" category
+- [ ] Confirm the channel is hidden from `@everyone` — a member who wasn't mentioned and has no Host/Admin role cannot see it
+- [ ] Confirm you (the creator), the mentioned people, and any Host/Admin role member can all see the channel
+- [ ] Confirm a message posts in the new channel `@`mentioning each invited person
+- [ ] Run with a `name` option — confirm the channel is named accordingly
+- [ ] Run without a `name` option — confirm a reasonable auto-generated name is used instead
+- [ ] Run with `people` containing no valid `@`mentions (e.g. plain text) — confirm a clear error and no channel is created
+- [ ] Mention yourself along with others — confirm you aren't invited twice/duplicated
+- [ ] Mention someone who has since left the server — confirm they're skipped with a note in the reply, and the room is still created for the remaining valid people
+- [ ] Mention only people who've all left the server — confirm a clear "couldn't find any" error and no channel is created
+- [ ] Create a second room in the same server — confirm it reuses the existing "Private Rooms" category rather than creating a duplicate
+
+### 1.8b `/getaroom close`
+
+**What it does:** Deletes a private room. Must be run inside the room's own channel. The room's creator or any host/admin can close it — nobody else.
+
+- [ ] Run inside a room you created — confirm the channel is deleted
+- [ ] Run inside a room someone else created, as a Host or Admin — confirm it works
+- [ ] Run inside a room someone else created, as a regular member with no elevated role — confirm "Only the room's creator or a host/admin can close this room" error, and the channel is **not** deleted
+- [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
 
 ---
 
@@ -990,6 +1019,35 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Remove another user's request — confirm it disappears from the request pin
 - [ ] Run with no requests — confirm "No games have been requested for this event"
 - [ ] Run from outside an event channel — confirm event picker appears; selecting an event shows all requests
+
+## 2.9 `/getaroom` — Private Rooms
+
+### 2.9a `/getaroom create`
+
+**What it does:** Creates a new private text channel visible only to whoever you mention, plus hosts and admins — hidden from everyone else. Posts a message pinging each invited person, and creates the channel under a separate category (default "Private Rooms", configurable via `/admin room config`, 3.9o) so it's never mixed in with event/archive channels.
+
+**Prerequisites:** none — any server member can run this, not just hosts/admins.
+
+- [ ] Run `/getaroom create people:@Alice @Bob` — confirm a new channel is created under the "Private Rooms" category
+- [ ] Confirm the channel is hidden from `@everyone` — a member who wasn't mentioned and has no Host/Admin role cannot see it
+- [ ] Confirm you (the creator), the mentioned people, and any Host/Admin role member can all see the channel
+- [ ] Confirm a message posts in the new channel `@`mentioning each invited person
+- [ ] Run with a `name` option — confirm the channel is named accordingly
+- [ ] Run without a `name` option — confirm a reasonable auto-generated name is used instead
+- [ ] Run with `people` containing no valid `@`mentions (e.g. plain text) — confirm a clear error and no channel is created
+- [ ] Mention yourself along with others — confirm you aren't invited twice/duplicated
+- [ ] Mention someone who has since left the server — confirm they're skipped with a note in the reply, and the room is still created for the remaining valid people
+- [ ] Mention only people who've all left the server — confirm a clear "couldn't find any" error and no channel is created
+- [ ] Create a second room in the same server — confirm it reuses the existing "Private Rooms" category rather than creating a duplicate
+
+### 2.9b `/getaroom close`
+
+**What it does:** Deletes a private room. Must be run inside the room's own channel. The room's creator or any host/admin can close it — nobody else.
+
+- [ ] Run inside a room you created — confirm the channel is deleted
+- [ ] Run inside a room someone else created, as a Host or Admin — confirm it works
+- [ ] Run inside a room someone else created, as a regular member with no elevated role — confirm "Only the room's creator or a host/admin can close this room" error, and the channel is **not** deleted
+- [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
 
 ---
 
@@ -1640,6 +1698,43 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Confirm purge count and filter label are reported accurately in the reply
 - [ ] After an admin purge, open `data/marketplace_log.jsonl` — confirm an `admin_purge` entry with count in `details`
 
+### 3.9o `/admin room config`
+
+**What it does:** Sets the Discord category name used for `/getaroom` private channels (default "Private Rooms").
+
+- [ ] Run `/admin room config` with no options — confirm it shows the current category name
+- [ ] Run `/admin room config category:Secret Rooms` — confirm it saves and the reply reflects the new name
+- [ ] Create a room after changing the category — confirm it's placed under the newly configured category, creating it if it doesn't already exist
+
+## 3.10 `/getaroom` — Private Rooms
+
+### 3.10a `/getaroom create`
+
+**What it does:** Creates a new private text channel visible only to whoever you mention, plus hosts and admins — hidden from everyone else. Posts a message pinging each invited person, and creates the channel under a separate category (default "Private Rooms", configurable via `/admin room config`, 3.9o) so it's never mixed in with event/archive channels.
+
+**Prerequisites:** none — any server member can run this, not just hosts/admins.
+
+- [ ] Run `/getaroom create people:@Alice @Bob` — confirm a new channel is created under the "Private Rooms" category
+- [ ] Confirm the channel is hidden from `@everyone` — a member who wasn't mentioned and has no Host/Admin role cannot see it
+- [ ] Confirm you (the creator), the mentioned people, and any Host/Admin role member can all see the channel
+- [ ] Confirm a message posts in the new channel `@`mentioning each invited person
+- [ ] Run with a `name` option — confirm the channel is named accordingly
+- [ ] Run without a `name` option — confirm a reasonable auto-generated name is used instead
+- [ ] Run with `people` containing no valid `@`mentions (e.g. plain text) — confirm a clear error and no channel is created
+- [ ] Mention yourself along with others — confirm you aren't invited twice/duplicated
+- [ ] Mention someone who has since left the server — confirm they're skipped with a note in the reply, and the room is still created for the remaining valid people
+- [ ] Mention only people who've all left the server — confirm a clear "couldn't find any" error and no channel is created
+- [ ] Create a second room in the same server — confirm it reuses the existing "Private Rooms" category rather than creating a duplicate
+
+### 3.10b `/getaroom close`
+
+**What it does:** Deletes a private room. Must be run inside the room's own channel. The room's creator or any host/admin can close it — nobody else.
+
+- [ ] Run inside a room you created — confirm the channel is deleted
+- [ ] Run inside a room someone else created, as a Host or Admin — confirm it works
+- [ ] Run inside a room someone else created, as a regular member with no elevated role — confirm "Only the room's creator or a host/admin can close this room" error, and the channel is **not** deleted
+- [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
+
 ---
 
 # Part 4 — System & Automated Behavior
@@ -1703,7 +1798,7 @@ These features are triggered by Discord events and scheduled timers rather than 
 - [ ] Re-add the bot to the same server within the 30-day window — confirm `bot.log` shows `[GuildCreate] Bot re-added to "<server>" — data restored (was pending deletion)`
 - [ ] Confirm the guild's entry is removed from `deleted_guilds.json` and prior data (library, config, tags, etc.) is intact after rejoining
 - [ ] Manually set a guild's `deletedAt` to more than 30 days ago and trigger the retention cleanup (restart the bot, or wait for the daily interval) — confirm `bot.log` shows `[GuildLifecycle] Retention window expired for "<server>" — purging data` followed by `[GuildLifecycle] Purged all data for guild <id>`
-- [ ] After purge, confirm the guild's entries are gone from `gamenights.json`, `library.json`, `games.json`, `config.json`, `bgg_accounts.json`, `gameroles.json`, and `user_collections.json`, and any `library_requests.json` entries pointing to that guild's (now-deleted) events are also removed
+- [ ] After purge, confirm the guild's entries are gone from `gamenights.json`, `library.json`, `games.json`, `privateRooms.json`, `config.json`, `bgg_accounts.json`, `gameroles.json`, and `user_collections.json`, and any `library_requests.json` entries pointing to that guild's (now-deleted) events are also removed
 - [ ] Confirm a guild that is NOT past the 30-day window is untouched by the cleanup job
 
 ## 4.6 Automatic Welcome (New Member Join)
