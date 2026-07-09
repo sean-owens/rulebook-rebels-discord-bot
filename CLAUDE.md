@@ -112,9 +112,9 @@ embed.setImage('attachment://powered_by_BGG_01_SM.png');
 
 ---
 
-## 5. Local Development Workflow
+## 5. Deployment Workflow (Railway)
 
-Every code change — no matter how small — must go through the full local cycle before being considered done:
+The bot runs on Railway — there is no local bot process anymore. Every code change, no matter how small, must go through this cycle before being considered done:
 
 ```
 npm run build      # compile TypeScript, surface any type errors
@@ -122,13 +122,22 @@ npx vitest run     # run the full test suite, all tests must pass
 npm run deploy     # re-register slash commands with Discord (required if command definitions changed)
 ```
 
-Then restart the bot and confirm the process started cleanly before considering the change done. Discord-side command validation is handled by the user.
-
 ### Rules
 - **Never skip the build.** A passing test suite on uncompiled code is not sufficient — `tsc` catches type errors that Vitest does not.
 - **Never skip the tests.** Even a one-line change can break an existing test. The suite must be fully green before moving on.
-- **Re-deploy when command definitions change.** Any change to a command's name, subcommands, options, or option descriptions requires `npm run deploy` to take effect in Discord. When in doubt, re-deploy.
-- **Always cycle the bot process on restart.** Before launching a new bot instance locally, check for any existing `ts-node src/index.ts` processes and kill them all first. Only then start a single fresh process. This prevents duplicate bot instances from competing over the same gateway connection.
-- **Do not commit or merge to Git unless explicitly instructed.** Work stays local until the user gives the go-ahead. This applies to all branches.
-- **Confirm the process is running after deploy.** After restarting the bot, verify the process started cleanly with no crash or startup error. Discord-side command validation is the user's responsibility.
-- **Always start the bot with logging.** Use `npx ts-node src/index.ts > bot.log 2>&1` (or equivalent) so stdout and stderr are captured. When diagnosing issues, read `bot.log` — errors from interaction handlers appear there. Never start the bot in a mode where output is silently discarded.
+- **Re-deploy commands when command definitions change.** Any change to a command's name, subcommands, options, or option descriptions requires `npm run deploy` to take effect in Discord. This is separate from a Railway deploy — Railway does not run it automatically. When in doubt, re-deploy.
+- **Do not commit or push to Git unless explicitly instructed.** Work stays local until the user gives the go-ahead. This matters more now, not less: pushing to `main` auto-deploys to Railway's development environment. Promoting to production is a separate, manual step in Railway, but a push is no longer a purely local, reversible action.
+- **Verify via Railway logs, not a local process.** There's no local process to restart and no `bot.log` to tail. After a deploy (dev or production), check Railway logs to confirm the bot started cleanly with no crash — this is the direct replacement for the old local log check. Discord-side command validation is the user's responsibility.
+
+### Verifying a deploy (how, concretely)
+
+The Railway CLI is installed and this repo is linked to the `rulebook-rebels-discord-bot` project, defaulting to the **development** environment.
+
+- `railway status` — check the linked service is Online and see the current deployment ID.
+- `railway logs --lines 50` — snapshot of recent logs from development (add `-e production` to check the production environment instead).
+- `railway logs --filter "@level:error"` — just errors, useful right after a deploy.
+- `railway logs --since 10m` — logs from a specific window, e.g. right after triggering a deploy.
+
+A Railway MCP server and a `use-railway` skill are also installed (via `railway setup agent`) — prefer those over raw CLI parsing once available in a session, since they give structured results instead of text output to parse. Both require a Claude Code restart to register after being installed or updated.
+
+If `railway status`/`railway logs` ever report "No linked project found," re-link with `railway link -p 920c1a12-cf1c-427c-89f3-3bf81ba08339 -s 2397cef3-4f08-48bb-891c-be5e2abba9ee -e <environment-id>` (development: `6385d7ae-6560-4aa6-9f73-2324760b87b4`, production: `5217f7a9-e487-4b6f-ad4d-9084e0b29681`).
