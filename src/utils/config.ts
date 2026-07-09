@@ -26,7 +26,7 @@ export interface GuildConfig {
   lightBufferMinutes: number;
   mediumBufferMinutes: number;
   heavyBufferMinutes: number;
-  // /getaroom private channels (see src/commands/getaroom.ts).
+  // /room private channels (see src/commands/room.ts).
   privateRoomCategoryName: string;
 }
 

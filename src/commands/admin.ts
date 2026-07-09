@@ -24,7 +24,7 @@ import {
   handleAdminConfig as handleMarketplaceConfig,
   handleAdminPurge as handleMarketplacePurge,
 } from './marketplace';
-import { handleRoomConfig } from './getaroom';
+import { handleRoomConfig } from './room';
 
 export const data = new SlashCommandBuilder()
   .setName('admin')
@@ -307,11 +307,11 @@ export const data = new SlashCommandBuilder()
   .addSubcommandGroup((group) =>
     group
       .setName('room')
-      .setDescription('/getaroom private channel administration')
+      .setDescription('/room private channel administration')
       .addSubcommand((sub) =>
         sub
           .setName('config')
-          .setDescription('Set the Discord category used for /getaroom private channels')
+          .setDescription('Set the Discord category used for /room private channels')
           .addStringOption((opt) =>
             opt
               .setName('category')

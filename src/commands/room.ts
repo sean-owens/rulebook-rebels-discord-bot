@@ -1,5 +1,6 @@
 import {
   ChatInputCommandInteraction,
+  Client,
   SlashCommandBuilder,
   ChannelType,
   TextChannel,
@@ -9,7 +10,12 @@ import {
 } from 'discord.js';
 import { randomUUID } from 'crypto';
 import { getGuildConfig, updateGuildConfig } from '../utils/config';
-import { upsertRoom, findRoomByChannel, removeRoom, PrivateRoom } from '../utils/roomStorage';
+import { parseDateTime } from './gamenight';
+import { upsertRoom, findRoomByChannel, removeRoom, loadRooms, PrivateRoom } from '../utils/roomStorage';
+
+// Rooms expire at the end of the given day rather than a specific clock time —
+// the /room create command only asks for a date, not a time.
+const EXPIRY_TIME_OF_DAY = '11:59pm';
 
 function slugify(str: string): string {
   const slug = str
@@ -42,7 +48,7 @@ async function findPrivilegedRoleIds(guild: Guild): Promise<string[]> {
 }
 
 export const data = new SlashCommandBuilder()
-  .setName('getaroom')
+  .setName('room')
   .setDescription('Create a private channel with just you and the people you invite')
   .addSubcommand((sub) =>
     sub
@@ -52,6 +58,12 @@ export const data = new SlashCommandBuilder()
         opt
           .setName('people')
           .setDescription('Mention everyone to invite (e.g. @Alice @Bob)')
+          .setRequired(true),
+      )
+      .addStringOption((opt) =>
+        opt
+          .setName('date')
+          .setDescription('Expiration date (e.g. "August 22") — the room auto-closes at the end of that day')
           .setRequired(true),
       )
       .addStringOption((opt) =>
@@ -72,6 +84,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
 async function handleCreate(interaction: ChatInputCommandInteraction): Promise<void> {
   const peopleText = interaction.options.getString('people', true);
+  const rawDate = interaction.options.getString('date', true);
   const roomName = interaction.options.getString('name');
   const guild = interaction.guild!;
 
@@ -79,6 +92,24 @@ async function handleCreate(interaction: ChatInputCommandInteraction): Promise<v
   if (userIds.length === 0) {
     await interaction.reply({
       content: 'Mention at least one other person to invite (e.g. `people:@Alice @Bob`).',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  let expiresAt: Date;
+  try {
+    expiresAt = parseDateTime(rawDate, EXPIRY_TIME_OF_DAY);
+  } catch {
+    await interaction.reply({
+      content: `Could not parse "${rawDate}" as a date. Try something like "August 22" or "aug 22".`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  if (expiresAt.getTime() <= Date.now()) {
+    await interaction.reply({
+      content: 'That date has already passed — pick a date in the future for the room to expire on.',
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -145,10 +176,18 @@ async function handleCreate(interaction: ChatInputCommandInteraction): Promise<v
     return;
   }
 
+  const expiresDateStr = expiresAt.toLocaleDateString('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  });
+
   const mentions = validMembers.map((m) => `<@${m.id}>`).join(' ');
   await channel.send(
     `🔒 **Private room** — ${mentions}\n` +
-      `You've been added to a private room by <@${interaction.user.id}>. Only the people mentioned here, plus hosts and admins, can see this channel.`,
+      `You've been added to a private room by <@${interaction.user.id}>. Only the people mentioned here, plus hosts and admins, can see this channel.\n` +
+      `This room closes automatically at the end of **${expiresDateStr}** — use \`/room close\` in here if you're done sooner.`,
   );
 
   const room: PrivateRoom = {
@@ -159,6 +198,7 @@ async function handleCreate(interaction: ChatInputCommandInteraction): Promise<v
     createdBy: interaction.user.id,
     invitedUserIds: validMembers.map((m) => m.id),
     createdAt: new Date().toISOString(),
+    expiresAt: expiresAt.toISOString(),
   };
   await upsertRoom(room);
 
@@ -166,14 +206,14 @@ async function handleCreate(interaction: ChatInputCommandInteraction): Promise<v
     skippedCount > 0
       ? ` (${skippedCount} mentioned ${skippedCount !== 1 ? 'people' : 'person'} couldn't be found and ${skippedCount !== 1 ? 'were' : 'was'} skipped)`
       : '';
-  await interaction.editReply(`Private room created: ${channel}${skippedNote}`);
+  await interaction.editReply(`Private room created: ${channel} — expires ${expiresDateStr}${skippedNote}`);
 }
 
 async function handleClose(interaction: ChatInputCommandInteraction): Promise<void> {
   const room = await findRoomByChannel(interaction.channelId);
   if (!room) {
     await interaction.reply({
-      content: 'This command must be run inside a private room channel created by `/getaroom create`.',
+      content: 'This command must be run inside a private room channel created by `/room create`.',
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -192,12 +232,25 @@ async function handleClose(interaction: ChatInputCommandInteraction): Promise<vo
   }
 
   await interaction.reply({ content: 'Closing this room…', flags: MessageFlags.Ephemeral });
+  await closeRoom(interaction.client, room, 'Private room closed');
+}
+
+async function closeRoom(client: Client, room: PrivateRoom, reason: string): Promise<void> {
   await removeRoom(room.id);
   try {
-    const channel = await interaction.client.channels.fetch(interaction.channelId);
-    await channel?.delete('Private room closed');
+    const channel = await client.channels.fetch(room.channelId);
+    await channel?.delete(reason);
   } catch (err) {
-    console.warn(`Could not delete private room channel ${interaction.channelId}:`, err);
+    console.warn(`Could not delete private room channel ${room.channelId}:`, err);
+  }
+}
+
+export async function checkExpiredRooms(client: Client): Promise<void> {
+  const now = Date.now();
+  const expired = (await loadRooms()).filter((room) => new Date(room.expiresAt).getTime() <= now);
+  for (const room of expired) {
+    console.log(`Auto-closing expired private room ${room.id} (expired ${room.expiresAt})`);
+    await closeRoom(client, room, 'Private room expired');
   }
 }
 

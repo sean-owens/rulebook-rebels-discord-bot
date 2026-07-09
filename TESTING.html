@@ -528,7 +528,7 @@ Because Parts 2 and 3 repeat the tests from the tier(s) below them, the same tes
 
 **What it does:** Displays an ephemeral embed listing all available commands. Shows a Host section to members with Manage Events permission. Shows an Admin section to members with Manage Guild permission.
 
-- [ ] 👑 Run `/help` as a regular member — confirm only user-facing command sections appear (`/event`, `/game`, `/library`, `/myroles`, `/bgg`, `/marketplace`, `/getaroom`) with **no Host or Admin section**
+- [ ] 👑 Run `/help` as a regular member — confirm only user-facing command sections appear (`/event`, `/game`, `/library`, `/myroles`, `/bgg`, `/marketplace`, `/room`) with **no Host or Admin section**
 - [ ] Confirm `/game cancel` description says "Remove your own game suggestion"
 - [ ] Confirm `/library clear` description says "Remove all your own games at once"
 - [ ] Confirm the response is ephemeral
@@ -566,7 +566,14 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.3a `/game suggest`
 
-**What it does:** Suggests a game for the event. Checks the group library first (exact match → partial match → BGG search). Prompts to add tags if not already tagged.
+**What it does:** Suggests a game for the event (or, from inside a private room, for that room — see below). Checks the group library first (exact match → partial match → BGG search). Prompts to add tags if not already tagged.
+
+#### From a private room
+- [ ] Run `/game suggest title:Wingspan` from inside a `/room`-created private room channel (1.8a) — confirm it posts the game card directly in the room, with no event picker
+- [ ] Suggest a library game whose owner is a member of the room but not attending any event — confirm it's allowed (attendance is checked against room membership, not event RSVPs)
+- [ ] Suggest a library game whose owner is **not** a member of the room — confirm "None of the owners are attending" error, same wording as the event case
+- [ ] Confirm Join/Leave buttons on a room-suggested game card work the same as in an event channel
+- [ ] Confirm suggesting in a room does **not** create a request-pin or lineup-pin entry — "bring to a future event" tracking doesn't apply to an ad-hoc room
 
 #### From a library game (exact match)
 - [ ] Add a game to your library first (`/library add game:Wingspan`)
@@ -971,15 +978,18 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Confirm a regular member CAN use `post sell`, `post trade`, `price`, `conditions`, `browse`, `my`, `close` (own listings), `reopen` (own listings)
 - [ ] 👑 Try `/admin marketplace config` and `/admin marketplace purge` as a regular member — confirm "requires Manage Server permission"
 
-## 1.8 `/getaroom` — Private Rooms
+## 1.8 `/room` — Private Rooms
 
-### 1.8a `/getaroom create`
+### 1.8a `/room create`
 
-**What it does:** Creates a new private text channel visible only to whoever you mention, plus hosts and admins — hidden from everyone else. Posts a message pinging each invited person, and creates the channel under a separate category (default "Private Rooms", configurable via `/admin room config`, 3.9o) so it's never mixed in with event/archive channels.
+**What it does:** Creates a new private text channel visible only to whoever you mention, plus hosts and admins — hidden from everyone else. Posts a message pinging each invited person, and creates the channel under a separate category (default "Private Rooms", configurable via `/admin room config`, 3.9o) so it's never mixed in with event/archive channels. The required `date` is when the room auto-closes — see 4.8.
 
 **Prerequisites:** none — any server member can run this, not just hosts/admins.
 
-- [ ] Run `/getaroom create people:@Alice @Bob` — confirm a new channel is created under the "Private Rooms" category
+- [ ] Run `/room create people:@Alice @Bob date:August 22` — confirm a new channel is created under the "Private Rooms" category, and the ping message + confirmation both state it expires August 22
+- [ ] Attempt to create a room without `date` — confirm Discord rejects it as a missing required option
+- [ ] Run with an unparseable `date` (e.g. "whenever") — confirm a clear parse error and no channel is created
+- [ ] Run with a `date` already in the past — confirm "That date has already passed" error and no channel is created
 - [ ] Confirm the channel is hidden from `@everyone` — a member who wasn't mentioned and has no Host/Admin role cannot see it
 - [ ] Confirm you (the creator), the mentioned people, and any Host/Admin role member can all see the channel
 - [ ] Confirm a message posts in the new channel `@`mentioning each invited person
@@ -991,7 +1001,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Mention only people who've all left the server — confirm a clear "couldn't find any" error and no channel is created
 - [ ] Create a second room in the same server — confirm it reuses the existing "Private Rooms" category rather than creating a duplicate
 
-### 1.8b `/getaroom close`
+### 1.8b `/room close`
 
 **What it does:** Deletes a private room. Must be run inside the room's own channel. The room's creator or any host/admin can close it — nobody else.
 
@@ -1048,7 +1058,14 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.3a `/game suggest`
 
-**What it does:** Suggests a game for the event. Checks the group library first (exact match → partial match → BGG search). Prompts to add tags if not already tagged.
+**What it does:** Suggests a game for the event (or, from inside a private room, for that room — see below). Checks the group library first (exact match → partial match → BGG search). Prompts to add tags if not already tagged.
+
+#### From a private room
+- [ ] Run `/game suggest title:Wingspan` from inside a `/room`-created private room channel (1.8a) — confirm it posts the game card directly in the room, with no event picker
+- [ ] Suggest a library game whose owner is a member of the room but not attending any event — confirm it's allowed (attendance is checked against room membership, not event RSVPs)
+- [ ] Suggest a library game whose owner is **not** a member of the room — confirm "None of the owners are attending" error, same wording as the event case
+- [ ] Confirm Join/Leave buttons on a room-suggested game card work the same as in an event channel
+- [ ] Confirm suggesting in a room does **not** create a request-pin or lineup-pin entry — "bring to a future event" tracking doesn't apply to an ad-hoc room
 
 #### From a library game (exact match)
 - [ ] Add a game to your library first (`/library add game:Wingspan`)
@@ -1515,15 +1532,18 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run with no requests — confirm "No games have been requested for this event"
 - [ ] Run from outside an event channel — confirm event picker appears; selecting an event shows all requests
 
-## 2.9 `/getaroom` — Private Rooms
+## 2.9 `/room` — Private Rooms
 
-### 2.9a `/getaroom create`
+### 2.9a `/room create`
 
-**What it does:** Creates a new private text channel visible only to whoever you mention, plus hosts and admins — hidden from everyone else. Posts a message pinging each invited person, and creates the channel under a separate category (default "Private Rooms", configurable via `/admin room config`, 3.9o) so it's never mixed in with event/archive channels.
+**What it does:** Creates a new private text channel visible only to whoever you mention, plus hosts and admins — hidden from everyone else. Posts a message pinging each invited person, and creates the channel under a separate category (default "Private Rooms", configurable via `/admin room config`, 3.9o) so it's never mixed in with event/archive channels. The required `date` is when the room auto-closes — see 4.8.
 
 **Prerequisites:** none — any server member can run this, not just hosts/admins.
 
-- [ ] Run `/getaroom create people:@Alice @Bob` — confirm a new channel is created under the "Private Rooms" category
+- [ ] Run `/room create people:@Alice @Bob date:August 22` — confirm a new channel is created under the "Private Rooms" category, and the ping message + confirmation both state it expires August 22
+- [ ] Attempt to create a room without `date` — confirm Discord rejects it as a missing required option
+- [ ] Run with an unparseable `date` (e.g. "whenever") — confirm a clear parse error and no channel is created
+- [ ] Run with a `date` already in the past — confirm "That date has already passed" error and no channel is created
 - [ ] Confirm the channel is hidden from `@everyone` — a member who wasn't mentioned and has no Host/Admin role cannot see it
 - [ ] Confirm you (the creator), the mentioned people, and any Host/Admin role member can all see the channel
 - [ ] Confirm a message posts in the new channel `@`mentioning each invited person
@@ -1535,7 +1555,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Mention only people who've all left the server — confirm a clear "couldn't find any" error and no channel is created
 - [ ] Create a second room in the same server — confirm it reuses the existing "Private Rooms" category rather than creating a duplicate
 
-### 2.9b `/getaroom close`
+### 2.9b `/room close`
 
 **What it does:** Deletes a private room. Must be run inside the room's own channel. The room's creator or any host/admin can close it — nobody else.
 
@@ -1593,7 +1613,14 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.3a `/game suggest`
 
-**What it does:** Suggests a game for the event. Checks the group library first (exact match → partial match → BGG search). Prompts to add tags if not already tagged.
+**What it does:** Suggests a game for the event (or, from inside a private room, for that room — see below). Checks the group library first (exact match → partial match → BGG search). Prompts to add tags if not already tagged.
+
+#### From a private room
+- [ ] Run `/game suggest title:Wingspan` from inside a `/room`-created private room channel (1.8a) — confirm it posts the game card directly in the room, with no event picker
+- [ ] Suggest a library game whose owner is a member of the room but not attending any event — confirm it's allowed (attendance is checked against room membership, not event RSVPs)
+- [ ] Suggest a library game whose owner is **not** a member of the room — confirm "None of the owners are attending" error, same wording as the event case
+- [ ] Confirm Join/Leave buttons on a room-suggested game card work the same as in an event channel
+- [ ] Confirm suggesting in a room does **not** create a request-pin or lineup-pin entry — "bring to a future event" tracking doesn't apply to an ad-hoc room
 
 #### From a library game (exact match)
 - [ ] Add a game to your library first (`/library add game:Wingspan`)
@@ -2195,21 +2222,24 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.9o `/admin room config`
 
-**What it does:** Sets the Discord category name used for `/getaroom` private channels (default "Private Rooms").
+**What it does:** Sets the Discord category name used for `/room` private channels (default "Private Rooms").
 
 - [ ] Run `/admin room config` with no options — confirm it shows the current category name
 - [ ] Run `/admin room config category:Secret Rooms` — confirm it saves and the reply reflects the new name
 - [ ] Create a room after changing the category — confirm it's placed under the newly configured category, creating it if it doesn't already exist
 
-## 3.10 `/getaroom` — Private Rooms
+## 3.10 `/room` — Private Rooms
 
-### 3.10a `/getaroom create`
+### 3.10a `/room create`
 
-**What it does:** Creates a new private text channel visible only to whoever you mention, plus hosts and admins — hidden from everyone else. Posts a message pinging each invited person, and creates the channel under a separate category (default "Private Rooms", configurable via `/admin room config`, 3.9o) so it's never mixed in with event/archive channels.
+**What it does:** Creates a new private text channel visible only to whoever you mention, plus hosts and admins — hidden from everyone else. Posts a message pinging each invited person, and creates the channel under a separate category (default "Private Rooms", configurable via `/admin room config`, 3.9o) so it's never mixed in with event/archive channels. The required `date` is when the room auto-closes — see 4.8.
 
 **Prerequisites:** none — any server member can run this, not just hosts/admins.
 
-- [ ] Run `/getaroom create people:@Alice @Bob` — confirm a new channel is created under the "Private Rooms" category
+- [ ] Run `/room create people:@Alice @Bob date:August 22` — confirm a new channel is created under the "Private Rooms" category, and the ping message + confirmation both state it expires August 22
+- [ ] Attempt to create a room without `date` — confirm Discord rejects it as a missing required option
+- [ ] Run with an unparseable `date` (e.g. "whenever") — confirm a clear parse error and no channel is created
+- [ ] Run with a `date` already in the past — confirm "That date has already passed" error and no channel is created
 - [ ] Confirm the channel is hidden from `@everyone` — a member who wasn't mentioned and has no Host/Admin role cannot see it
 - [ ] Confirm you (the creator), the mentioned people, and any Host/Admin role member can all see the channel
 - [ ] Confirm a message posts in the new channel `@`mentioning each invited person
@@ -2221,7 +2251,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Mention only people who've all left the server — confirm a clear "couldn't find any" error and no channel is created
 - [ ] Create a second room in the same server — confirm it reuses the existing "Private Rooms" category rather than creating a duplicate
 
-### 3.10b `/getaroom close`
+### 3.10b `/room close`
 
 **What it does:** Deletes a private room. Must be run inside the room's own channel. The room's creator or any host/admin can close it — nobody else.
 
@@ -2322,6 +2352,17 @@ These features are triggered by Discord events and scheduled timers rather than 
 - [ ] Confirm an event is only locked/scheduled once — running the hourly check again after locking doesn't re-post the schedule or re-lock
 - [ ] Confirm a cancelled or already-archived event is never locked/scheduled, even past its threshold
 - [ ] Set `lock_hours_before_event` back to `0` — confirm no further events get locked, and existing unlocked events remain fully open
+
+## 4.8 Private Room Expiration
+
+**What it does:** Every private room (`/room create`, 1.8a) has a required expiration date. On the same hourly check as archiving and the lineup scheduler (plus once on startup), the bot closes any room whose expiration date has passed — deleting the channel and its stored record — exactly as if `/room close` had been run.
+
+**Prerequisites:** a private room whose `date` has already passed — either wait for a room to actually expire, or manually edit its `expiresAt` in `data/privateRooms.json` to a past timestamp and wait for the next hourly check (or restart the bot).
+
+- [ ] With a room's expiration date in the past, confirm the channel is deleted on the next hourly check (or bot startup) without anyone running `/room close`
+- [ ] Confirm the room's entry is removed from `data/privateRooms.json` once expired
+- [ ] Confirm a room whose expiration date hasn't passed yet is left untouched by the same check
+- [ ] Confirm `/room close`, run manually before the expiration date, still works exactly as before (expiration doesn't interfere with early manual closing)
 
 ---
 

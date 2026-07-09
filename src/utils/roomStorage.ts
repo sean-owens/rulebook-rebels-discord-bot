@@ -10,6 +10,7 @@ export interface PrivateRoom {
   createdBy: string;
   invitedUserIds: string[];
   createdAt: string;
+  expiresAt: string;
 }
 
 export async function loadRooms(): Promise<PrivateRoom[]> {

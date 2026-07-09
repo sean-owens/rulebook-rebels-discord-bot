@@ -3,8 +3,8 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { PermissionFlagsBits } from 'discord.js';
-import { execute, handleRoomConfig } from '../src/commands/getaroom';
-import { loadRooms } from '../src/utils/roomStorage';
+import { execute, handleRoomConfig, checkExpiredRooms } from '../src/commands/room';
+import { loadRooms, upsertRoom, PrivateRoom } from '../src/utils/roomStorage';
 
 function makeRolesCollection(roles: Array<{ id: string; permissions: { has: (p: bigint) => boolean } }>): any {
   return {
@@ -53,12 +53,24 @@ function makeGuild(opts: { existingCategory?: boolean; unresolvableIds?: string[
   };
 }
 
+// Always a real future date relative to whenever the suite actually runs.
+const FUTURE_DATE_STR = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString('en-US', {
+  month: 'long',
+  day: 'numeric',
+  year: 'numeric',
+});
+
 function makeInteraction(
-  options: { people?: string | null; name?: string | null; sub: string },
+  options: { people?: string | null; name?: string | null; date?: string | null; sub: string },
   guild: ReturnType<typeof makeGuild>,
   userId = 'creator-1',
   channelId = 'general',
 ) {
+  const values: Record<string, string | null | undefined> = {
+    people: options.people,
+    name: options.name,
+    date: options.sub === 'create' ? (options.date ?? FUTURE_DATE_STR) : options.date,
+  };
   return {
     guild,
     guildId: guild.id,
@@ -68,7 +80,7 @@ function makeInteraction(
     memberPermissions: { has: () => false },
     options: {
       getSubcommand: () => options.sub,
-      getString: (name: string) => (name === 'people' ? options.people ?? null : name === 'name' ? options.name ?? null : null),
+      getString: (name: string) => values[name] ?? null,
     },
     reply: vi.fn(async () => {}),
     deferReply: vi.fn(async () => {}),
@@ -76,12 +88,12 @@ function makeInteraction(
   } as any;
 }
 
-describe('/getaroom create', () => {
+describe('/room create', () => {
   let tmpDir: string;
   let cwdSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-getaroom-test-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-room-test-'));
     cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
   });
 
@@ -215,14 +227,126 @@ describe('/getaroom create', () => {
 
     expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining("Couldn't find any"));
   });
+
+  it('stores expiresAt as the end of the given date, and no channel is created for an unparseable date', async () => {
+    const guild = makeGuild();
+    const badInteraction = makeInteraction({ sub: 'create', people: '<@111>', date: 'not a date' }, guild);
+
+    await execute(badInteraction);
+
+    expect(badInteraction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('Could not parse') }),
+    );
+    expect(badInteraction.deferReply).not.toHaveBeenCalled();
+    expect(await loadRooms()).toHaveLength(0);
+  });
+
+  it('rejects a date that has already passed', async () => {
+    const guild = makeGuild();
+    const interaction = makeInteraction({ sub: 'create', people: '<@111>', date: 'January 1, 2000' }, guild);
+
+    await execute(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('already passed') }),
+    );
+    expect(await loadRooms()).toHaveLength(0);
+  });
+
+  it('stores an expiresAt matching the requested expiration date', async () => {
+    const guild = makeGuild();
+    const interaction = makeInteraction({ sub: 'create', people: '<@111>', date: FUTURE_DATE_STR }, guild);
+
+    await execute(interaction);
+
+    const rooms = await loadRooms();
+    const expires = new Date(rooms[0].expiresAt);
+    const expected = new Date(FUTURE_DATE_STR);
+    expect(expires.getFullYear()).toBe(expected.getFullYear());
+    expect(expires.getMonth()).toBe(expected.getMonth());
+    expect(expires.getDate()).toBe(expected.getDate());
+  });
 });
 
-describe('/getaroom close', () => {
+describe('checkExpiredRooms', () => {
   let tmpDir: string;
   let cwdSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-getaroom-close-test-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-room-expiry-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeRoom(overrides: Partial<PrivateRoom> = {}): PrivateRoom {
+    return {
+      id: overrides.id ?? 'room1',
+      guildId: 'guild-1',
+      channelId: overrides.channelId ?? 'chan1',
+      name: 'Test Room',
+      createdBy: 'u1',
+      invitedUserIds: ['u2'],
+      createdAt: new Date().toISOString(),
+      expiresAt: overrides.expiresAt ?? new Date().toISOString(),
+    };
+  }
+
+  function makeClient(deleteMock = vi.fn(async () => {})) {
+    const channel = { delete: deleteMock };
+    return { channels: { fetch: vi.fn(async () => channel) } };
+  }
+
+  it('closes a room whose expiration date has passed', async () => {
+    await upsertRoom(makeRoom({ id: 'expired', expiresAt: new Date(Date.now() - 1000).toISOString() }));
+    const client = makeClient();
+
+    await checkExpiredRooms(client as any);
+
+    expect(await loadRooms()).toHaveLength(0);
+  });
+
+  it('leaves a room that has not expired yet untouched', async () => {
+    await upsertRoom(makeRoom({ id: 'active', expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString() }));
+    const client = makeClient();
+
+    await checkExpiredRooms(client as any);
+
+    expect(await loadRooms()).toHaveLength(1);
+  });
+
+  it('deletes the underlying Discord channel for an expired room', async () => {
+    await upsertRoom(makeRoom({ id: 'expired', channelId: 'chan-expired', expiresAt: new Date(Date.now() - 1000).toISOString() }));
+    const deleteMock = vi.fn(async () => {});
+    const client = makeClient(deleteMock);
+
+    await checkExpiredRooms(client as any);
+
+    expect(deleteMock).toHaveBeenCalled();
+  });
+
+  it('handles multiple rooms, only closing the expired ones', async () => {
+    await upsertRoom(makeRoom({ id: 'expired1', channelId: 'c1', expiresAt: new Date(Date.now() - 1000).toISOString() }));
+    await upsertRoom(makeRoom({ id: 'active1', channelId: 'c2', expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString() }));
+    await upsertRoom(makeRoom({ id: 'expired2', channelId: 'c3', expiresAt: new Date(Date.now() - 1000).toISOString() }));
+    const client = makeClient();
+
+    await checkExpiredRooms(client as any);
+
+    const remaining = await loadRooms();
+    expect(remaining.map((r) => r.id)).toEqual(['active1']);
+  });
+});
+
+describe('/room close', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-room-close-test-'));
     cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
   });
 
@@ -293,7 +417,7 @@ describe('handleRoomConfig', () => {
   let cwdSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-getaroom-config-test-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-room-config-test-'));
     cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
   });
 

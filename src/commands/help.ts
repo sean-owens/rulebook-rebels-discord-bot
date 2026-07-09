@@ -77,7 +77,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         ].join('\n'),
       },
       {
-        name: '🔒  /getaroom',
+        name: '🔒  /room',
         value: [
           '`create` — Make a private channel with just you and whoever you mention — hidden from everyone else except hosts and admins',
           '`close` — Close and delete a private room (run inside it) — the creator or any host/admin can do this',
@@ -117,7 +117,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
                 '`/admin welcome greet` — Manually send the welcome message to a member',
                 '`/admin marketplace config` — Set the marketplace forum channel and negotiation mode',
                 '`/admin marketplace purge` — Delete old/closed marketplace listings',
-                '`/admin room config` — Set the Discord category used for /getaroom private channels',
+                '`/admin room config` — Set the Discord category used for /room private channels',
               ].join('\n'),
             },
           ]
