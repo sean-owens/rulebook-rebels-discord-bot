@@ -74,7 +74,7 @@ export const data = new SlashCommandBuilder()
             opt
               .setName('event_category')
               .setDescription(
-                'Discord category name for new event channels (default: "Monthly Events")',
+                'Discord category name for new event channels (default: "Game Nights")',
               )
               .setRequired(false),
           )

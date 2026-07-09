@@ -22,6 +22,12 @@ export const data = new SlashCommandBuilder()
           .setDescription('Schedule a new game night')
           .addStringOption((opt) =>
             opt
+              .setName('title')
+              .setDescription('Short event name (e.g. "Board Game Bash") — used in the channel name and posts')
+              .setRequired(true),
+          )
+          .addStringOption((opt) =>
+            opt
               .setName('date')
               .setDescription('Date (e.g. "August 22" or "aug 22")')
               .setRequired(true),

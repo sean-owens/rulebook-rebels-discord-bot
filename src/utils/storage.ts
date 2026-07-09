@@ -4,6 +4,9 @@ const FILE = 'gamenights.json';
 
 export interface GameNight {
   id: string;
+  // Optional because events created before this field existed won't have it —
+  // display code should fall back to something like "Game Night".
+  title?: string;
   date: string;
   time: string;
   location: string;

@@ -111,6 +111,7 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
+  const title = interaction.options.getString('title', true).trim();
   const rawDate = interaction.options.getString('date', true);
   const guild = interaction.guild!;
   const defaults = await getGuildConfig(guild.id);
@@ -154,7 +155,7 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
   try {
     const scheduledEndTime = endTime;
     const scheduledEvent = await guild.scheduledEvents.create({
-      name: `Monthly Game Event — ${date}`,
+      name: `${title} — ${date}`,
       scheduledStartTime: startTime,
       scheduledEndTime: scheduledEndTime,
       entityType: GuildScheduledEventEntityType.External,
@@ -190,10 +191,10 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
   try {
     const shortDate = startTime.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
     const eventChannel = (await guild.channels.create({
-      name: `monthly-${slugify(shortDate)}`,
+      name: `${slugify(shortDate)}-${slugify(title)}`.slice(0, 100),
       type: ChannelType.GuildText,
       parent: categoryId,
-      topic: `Monthly Gaming Event — ${date} | ${time} | ${location}`,
+      topic: `${title} — ${date} | ${time} | ${location}`,
     })) as TextChannel;
     eventChannelId = eventChannel.id;
 
@@ -214,8 +215,8 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
       ? `<#${defaults.announcementsChannelId}>`
       : 'the announcements channel';
     const welcomeMsg = defaults.openEventChannels
-      ? `Welcome to the **${date}** Monthly Gaming Event! Everyone is welcome — RSVP in ${announcementsRef} so we know you're coming.`
-      : `Welcome to the **${date}** Monthly Gaming Event! RSVP in ${announcementsRef} to join this channel.`;
+      ? `Welcome to **${title}** (${date})! Everyone is welcome — RSVP in ${announcementsRef} so we know you're coming.`
+      : `Welcome to **${title}** (${date})! RSVP in ${announcementsRef} to join this channel.`;
     await eventChannel.send(welcomeMsg);
   } catch (err) {
     console.error('Could not create or lock event channel:', err);
@@ -225,6 +226,7 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
 
   const gn: GameNight = {
     id,
+    title,
     date,
     time,
     location,
@@ -256,7 +258,7 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
     if (targetChannel?.type === ChannelType.GuildForum) {
       // Forum channel: each event becomes a thread post members can comment on
       const forumChannel = targetChannel as ForumChannel;
-      const threadName = `Monthly Gaming Event · ${date} · ${time}`.slice(0, 100);
+      const threadName = `${title} · ${date} · ${time}`.slice(0, 100);
       const thread = await forumChannel.threads.create({
         name: threadName,
         message: {

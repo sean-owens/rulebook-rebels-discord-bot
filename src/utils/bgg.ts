@@ -112,6 +112,12 @@ async function fetchBGGVideos(bggId: string): Promise<BGGVideoEntry[]> {
     }));
 }
 
+// Discord select menus cap out at 25 options; we paginate the suggest-flow
+// dropdown at 24 results per page (leaving room for the "enter manually"
+// option), so keeping a couple of pages' worth covers "not in the first 10"
+// without hanging on to an unbounded list for a very generic query.
+const MAX_SEARCH_RESULTS = 50;
+
 export async function searchBGG(query: string): Promise<BGGSearchResult[]> {
   const url = `https://boardgamegeek.com/xmlapi2/search?query=${encodeURIComponent(query)}&type=boardgame`;
   const xml = await fetchXML(url);
@@ -120,7 +126,7 @@ export async function searchBGG(query: string): Promise<BGGSearchResult[]> {
   const raw = parsed?.items?.item ?? [];
   const items: any[] = Array.isArray(raw) ? raw : [raw];
 
-  return items.slice(0, 10).map((item) => {
+  const results = items.map((item) => {
     const names: any[] = Array.isArray(item.name) ? item.name : [item.name];
     const primary = names.find((n) => n['@_type'] === 'primary');
     return {
@@ -129,6 +135,11 @@ export async function searchBGG(query: string): Promise<BGGSearchResult[]> {
       yearPublished: item.yearpublished?.['@_value'] ? Number(item.yearpublished['@_value']) : null,
     };
   });
+
+  // Newest first; unknown publish years sort last rather than first.
+  results.sort((a, b) => (b.yearPublished ?? -Infinity) - (a.yearPublished ?? -Infinity));
+
+  return results.slice(0, MAX_SEARCH_RESULTS);
 }
 
 export interface BGGUser {

@@ -9,7 +9,7 @@ export function buildGameNightEmbed(gn: GameNight, nameMap: Record<string, strin
   const noNames = gn.rsvps.no.map(getName);
 
   const embed = new EmbedBuilder()
-    .setTitle(`Monthly Game Event — ${gn.date}`)
+    .setTitle(`${gn.title ?? 'Game Night'} — ${gn.date}`)
     .setColor(gn.cancelled ? 0x808080 : 0x5865f2)
     .addFields(
       { name: 'Date', value: gn.date, inline: true },
