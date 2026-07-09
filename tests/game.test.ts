@@ -290,3 +290,137 @@ describe('/game suggest — BGG results pagination', () => {
     );
   });
 });
+
+describe('lineup lock enforcement', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-game-lock-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  async function seedLockedGame(locked: boolean) {
+    const { upsertGame } = await import('../src/utils/gameStorage');
+    await upsertGameNight(makeGameNight({ id: 'gn-lock', suggestionsLocked: locked }));
+    const game = {
+      id: 'game-lock-1',
+      eventId: 'gn-lock',
+      channelId: 'event-channel-1',
+      messageId: 'msg-1',
+      guildId: 'g1',
+      bggId: '1',
+      title: 'Locked Game',
+      bggLink: '',
+      minPlayers: 1,
+      maxPlayers: 4,
+      suggestedPlayers: null,
+      minPlaytime: 30,
+      maxPlaytime: 60,
+      suggestedStartTime: null,
+      expansions: [],
+      seats: ['seated-1'],
+      waitlist: [],
+      createdAt: new Date().toISOString(),
+      createdBy: 'u1',
+    };
+    await upsertGame(game as any);
+    return game;
+  }
+
+  function makeGameButtonInteraction(userId: string) {
+    return {
+      user: { id: userId },
+      client: {},
+      reply: vi.fn(async () => {}),
+      update: vi.fn(async () => {}),
+    } as any;
+  }
+
+  it('/game suggest is blocked once the event is locked', async () => {
+    await upsertGameNight(makeGameNight({ id: 'gn-lock', eventChannelId: 'event-channel-1', suggestionsLocked: true }));
+    const interaction = makeSuggestInteraction('Wingspan', 'event-channel-1');
+
+    await execute(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('locked') }),
+    );
+  });
+
+  it('Join is blocked once the event is locked', async () => {
+    const { handleGameJoin } = await import('../src/commands/game');
+    await seedLockedGame(true);
+    const interaction = makeGameButtonInteraction('new-player');
+
+    await handleGameJoin(interaction, 'game-lock-1');
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('locked') }),
+    );
+    expect(interaction.update).not.toHaveBeenCalled();
+  });
+
+  it('Leave is blocked once the event is locked', async () => {
+    const { handleGameLeave } = await import('../src/commands/game');
+    await seedLockedGame(true);
+    const interaction = makeGameButtonInteraction('seated-1');
+
+    await handleGameLeave(interaction, 'game-lock-1');
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('locked') }),
+    );
+    expect(interaction.update).not.toHaveBeenCalled();
+  });
+
+  it('Join Waitlist is blocked once the event is locked', async () => {
+    const { handleWaitlistJoin } = await import('../src/commands/game');
+    await seedLockedGame(true);
+    const interaction = makeGameButtonInteraction('new-player');
+
+    await handleWaitlistJoin(interaction, 'game-lock-1');
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('locked') }),
+    );
+    expect(interaction.update).not.toHaveBeenCalled();
+  });
+
+  it('Leave Waitlist is blocked once the event is locked', async () => {
+    const { handleWaitlistLeave, handleWaitlistJoin } = await import('../src/commands/game');
+    const game = await seedLockedGame(false);
+    // Join the waitlist while unlocked, then lock, then try to leave it.
+    game.seats = ['seated-1', 'seated-2', 'seated-3', 'seated-4']; // fill seats so waitlist join is valid
+    const { upsertGame } = await import('../src/utils/gameStorage');
+    await upsertGame(game as any);
+    await handleWaitlistJoin(makeGameButtonInteraction('waiter-1'), 'game-lock-1');
+
+    const { upsertGameNight } = await import('../src/utils/storage');
+    await upsertGameNight(makeGameNight({ id: 'gn-lock', suggestionsLocked: true }));
+
+    const interaction = makeGameButtonInteraction('waiter-1');
+    await handleWaitlistLeave(interaction, 'game-lock-1');
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('locked') }),
+    );
+    expect(interaction.update).not.toHaveBeenCalled();
+  });
+
+  it('Join still works normally when the event is not locked', async () => {
+    const { handleGameJoin } = await import('../src/commands/game');
+    await seedLockedGame(false);
+    const interaction = makeGameButtonInteraction('new-player');
+
+    await handleGameJoin(interaction, 'game-lock-1');
+
+    expect(interaction.reply).not.toHaveBeenCalled();
+    expect(interaction.update).toHaveBeenCalled();
+  });
+});

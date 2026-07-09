@@ -34,6 +34,9 @@ export interface GameNight {
   requestPinMessageId?: string;
   gameListPinMessageId?: string;
   openChannel?: boolean;
+  // Lineup lock + scheduler (see src/utils/scheduler.ts).
+  suggestionsLocked?: boolean;
+  scheduledAt?: string;
 }
 
 export async function loadGameNights(): Promise<GameNight[]> {

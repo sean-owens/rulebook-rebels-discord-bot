@@ -31,6 +31,9 @@ export interface GameSuggestion {
   waitlist: string[];
   createdAt: string;
   createdBy: string;
+  // Set once the scheduler (see src/utils/scheduler.ts) assigns this game a slot.
+  scheduledRound?: number;
+  scheduledTable?: number;
 }
 
 export async function loadGames(): Promise<GameSuggestion[]> {

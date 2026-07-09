@@ -18,6 +18,14 @@ export interface GuildConfig {
   marketplaceChannelId: string;
   marketplaceNegotiationMode: 'public' | 'private';
   marketplaceTagIds: Record<string, string>;
+  // Lineup lock + scheduler (see src/utils/scheduler.ts). 0 = disabled — this is
+  // a new behavior that adds a restriction to /game suggest, so it's opt-in
+  // rather than on by default for existing servers.
+  lockHoursBeforeEvent: number;
+  scheduleTableCount: number;
+  lightBufferMinutes: number;
+  mediumBufferMinutes: number;
+  heavyBufferMinutes: number;
 }
 
 const DEFAULT_CONFIG: GuildConfig = {
@@ -36,6 +44,11 @@ const DEFAULT_CONFIG: GuildConfig = {
   marketplaceChannelId: '',
   marketplaceNegotiationMode: 'public',
   marketplaceTagIds: {},
+  lockHoursBeforeEvent: 0,
+  scheduleTableCount: 1,
+  lightBufferMinutes: 20,
+  mediumBufferMinutes: 30,
+  heavyBufferMinutes: 40,
 };
 
 type ConfigStore = Record<string, GuildConfig>;

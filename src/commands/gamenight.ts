@@ -306,6 +306,175 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
   );
 }
 
+export async function handleEdit(interaction: ChatInputCommandInteraction): Promise<void> {
+  if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageEvents)) {
+    await interaction.reply({ content: 'Only hosts can edit events.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const id = interaction.options.getString('id', true);
+  const gn = await findGameNight(id);
+
+  if (!gn) {
+    await interaction.reply({ content: `No event found with ID \`${id}\`.`, flags: MessageFlags.Ephemeral });
+    return;
+  }
+  if (gn.cancelled) {
+    await interaction.reply({
+      content: 'That event is already cancelled and cannot be edited.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  if (gn.archived) {
+    await interaction.reply({
+      content: 'That event has already concluded and cannot be edited.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const newTitle = interaction.options.getString('title');
+  const newRawDate = interaction.options.getString('date');
+  const newRawTime = interaction.options.getString('time');
+  const newRawEndTime = interaction.options.getString('end_time');
+  const newLocation = interaction.options.getString('location');
+  const newLink = interaction.options.getString('link');
+  const newDescription = interaction.options.getString('description');
+
+  if (
+    newTitle === null &&
+    newRawDate === null &&
+    newRawTime === null &&
+    newRawEndTime === null &&
+    newLocation === null &&
+    newLink === null &&
+    newDescription === null
+  ) {
+    await interaction.reply({
+      content: 'Provide at least one field to update.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const currentStart = new Date(gn.startTimeISO);
+  const currentEnd = gn.endTimeISO ? new Date(gn.endTimeISO) : new Date(currentStart.getTime() + 4 * 60 * 60 * 1000);
+  const currentDateStr = currentStart.toLocaleDateString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  const currentTimeStr = currentStart.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+
+  let startTime = currentStart;
+  if (newRawDate || newRawTime) {
+    try {
+      startTime = parseDateTime(newRawDate ?? currentDateStr, newRawTime ?? currentTimeStr);
+    } catch {
+      await interaction.reply({
+        content: `Could not parse "${newRawDate ?? currentDateStr} ${newRawTime ?? currentTimeStr}". Try something like "August 22" and "7:00 PM".`,
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+  }
+
+  let endTime = currentEnd;
+  if (newRawEndTime) {
+    try {
+      endTime = parseDateTime(newRawDate ?? currentDateStr, newRawEndTime);
+    } catch {
+      await interaction.reply({
+        content: `Could not parse end time "${newRawEndTime}". Try something like "10:00 PM".`,
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+  } else if (newRawDate || newRawTime) {
+    // Date/start time shifted but no new end time given — preserve the original duration.
+    endTime = new Date(currentEnd.getTime() + (startTime.getTime() - currentStart.getTime()));
+  }
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const title = newTitle?.trim() ?? gn.title ?? 'Game Night';
+  const date = formatDate(startTime);
+  const time = `${formatTime(startTime)} – ${formatTime(endTime)}`;
+  const location = newLocation ?? gn.location;
+  const link = newLink ?? gn.link;
+  const description = newDescription ?? gn.description;
+
+  const timingChanged = startTime.getTime() !== currentStart.getTime() || endTime.getTime() !== currentEnd.getTime();
+  const displayChanged =
+    timingChanged || title !== (gn.title ?? 'Game Night') || location !== gn.location || newLink !== null || newDescription !== null;
+
+  gn.title = title;
+  gn.date = date;
+  gn.time = time;
+  gn.location = location;
+  gn.link = link;
+  gn.description = description;
+  gn.startTimeISO = startTime.toISOString();
+  gn.endTimeISO = endTime.toISOString();
+
+  // Sync the Discord scheduled event so native RSVP ("Interested") stays consistent.
+  if (gn.discordEventId) {
+    try {
+      const guild = interaction.guild!;
+      const event = await guild.scheduledEvents.fetch(gn.discordEventId);
+      await event.edit({
+        name: `${title} — ${date}`,
+        scheduledStartTime: startTime,
+        scheduledEndTime: endTime,
+        entityMetadata: { location },
+        description: description || undefined,
+      });
+    } catch (err) {
+      console.warn(`Could not sync Discord scheduled event for game night ${id}:`, err);
+    }
+  }
+
+  // Rename/retopic the event channel if anything shown there changed.
+  if (gn.eventChannelId && displayChanged) {
+    try {
+      const eventChannel = (await interaction.client.channels.fetch(gn.eventChannelId)) as TextChannel;
+      if (eventChannel) {
+        const shortDate = startTime.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+        await eventChannel.setName(`${slugify(shortDate)}-${slugify(title)}`.slice(0, 100));
+        await eventChannel.setTopic(`${title} — ${date} | ${time} | ${location}`);
+      }
+    } catch (err) {
+      console.warn(`Could not rename/retopic event channel for game night ${id}:`, err);
+    }
+  }
+
+  // Re-render the RSVP post so it reflects the new details.
+  if (gn.messageId && gn.channelId && displayChanged) {
+    try {
+      const postChannel = await interaction.client.channels.fetch(gn.channelId);
+      if (postChannel?.type === ChannelType.GuildForum) {
+        const thread = await interaction.client.channels.fetch(gn.messageId);
+        if (thread?.isThread()) {
+          const starter = await thread.fetchStarterMessage();
+          await starter?.edit({ embeds: [buildGameNightEmbed(gn, {})] });
+          await thread.setName(`${title} · ${date} · ${time}`.slice(0, 100));
+        }
+      } else {
+        const msg = await (postChannel as TextChannel).messages.fetch(gn.messageId);
+        await msg.edit({ embeds: [buildGameNightEmbed(gn, {})] });
+      }
+    } catch (err) {
+      console.warn(`Could not update RSVP post for game night ${id}:`, err);
+    }
+  }
+
+  await upsertGameNight(gn);
+  await updateAnnouncementPin(interaction.client, gn.guildId).catch(() => null);
+
+  await interaction.editReply(`Event \`${id}\` updated.`);
+}
+
 export async function handleConfig(interaction: ChatInputCommandInteraction): Promise<void> {
   const patch: Partial<GuildConfig> = {};
   const location = interaction.options.getString('location');
@@ -317,6 +486,11 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
   const eventCategory = interaction.options.getString('event_category');
   const archiveCategory = interaction.options.getString('archive_category');
   const archiveRetentionDays = interaction.options.getInteger('archive_retention_days');
+  const lockHoursBeforeEvent = interaction.options.getInteger('lock_hours_before_event');
+  const tableCount = interaction.options.getInteger('table_count');
+  const lightBufferMinutes = interaction.options.getInteger('light_buffer_minutes');
+  const mediumBufferMinutes = interaction.options.getInteger('medium_buffer_minutes');
+  const heavyBufferMinutes = interaction.options.getInteger('heavy_buffer_minutes');
 
   if (location !== null) patch.defaultLocation = location;
   if (time !== null) patch.defaultTime = time;
@@ -330,6 +504,11 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
     // Enforce minimum of 7 days (the lock delay) when non-zero
     patch.archivedChannelRetentionDays = archiveRetentionDays > 0 && archiveRetentionDays < 7 ? 7 : archiveRetentionDays;
   }
+  if (lockHoursBeforeEvent !== null) patch.lockHoursBeforeEvent = lockHoursBeforeEvent;
+  if (tableCount !== null) patch.scheduleTableCount = tableCount;
+  if (lightBufferMinutes !== null) patch.lightBufferMinutes = lightBufferMinutes;
+  if (mediumBufferMinutes !== null) patch.mediumBufferMinutes = mediumBufferMinutes;
+  if (heavyBufferMinutes !== null) patch.heavyBufferMinutes = heavyBufferMinutes;
 
   function formatConfig(c: GuildConfig): string {
     const retentionDays = c.archivedChannelRetentionDays ?? 0;
@@ -344,6 +523,9 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
       `> Event category: ${c.eventCategoryName}`,
       `> Archive category: ${c.archiveCategoryName}`,
       `> Archived channel retention: ${retentionDays === 0 ? 'Never auto-delete' : `${retentionDays} days`}`,
+      `> Lineup lock: ${c.lockHoursBeforeEvent === 0 ? 'Disabled' : `${c.lockHoursBeforeEvent}h before event`}`,
+      `> Scheduler tables: ${c.scheduleTableCount}`,
+      `> Scheduling buffers: Light +${c.lightBufferMinutes}m, Medium +${c.mediumBufferMinutes}m, Heavy +${c.heavyBufferMinutes}m`,
     ].join('\n');
   }
 
