@@ -126,14 +126,15 @@ npm run deploy     # re-register slash commands with Discord (required if comman
 - **Never skip the build.** A passing test suite on uncompiled code is not sufficient — `tsc` catches type errors that Vitest does not.
 - **Never skip the tests.** Even a one-line change can break an existing test. The suite must be fully green before moving on.
 - **Re-deploy commands when command definitions change.** Any change to a command's name, subcommands, options, or option descriptions requires `npm run deploy` to take effect in Discord. This is separate from a Railway deploy — Railway does not run it automatically. When in doubt, re-deploy.
-- **Do not commit or push to Git unless explicitly instructed.** Work stays local until the user gives the go-ahead. This matters more now, not less: pushing to `main` auto-deploys to Railway's development environment. Promoting to production is a separate, manual step in Railway, but a push is no longer a purely local, reversible action.
+- **Do not commit or push to Git unless explicitly instructed.** Work stays local until the user gives the go-ahead. This matters more now, not less: pushing/merging to `main` auto-deploys to Railway's development environment, and pushing/merging to `production` auto-deploys to Railway's **production** environment (see §6) — neither is a purely local, reversible action anymore.
 - **Verify via Railway logs, not a local process.** There's no local process to restart and no `bot.log` to tail. After a deploy (dev or production), check Railway logs to confirm the bot started cleanly with no crash — this is the direct replacement for the old local log check. Discord-side command validation is the user's responsibility.
+- **Never mutate Railway environment/service config via the CLI.** Commands like `railway service source connect`/`disconnect` are **not** scoped per-environment the way their `--environment` flag implies — they edit the *service's* shared source config, and reconnecting a source triggers an immediate deploy. Changing this once already caused an unintended production deploy (see `[[project_railway_deploy]]` memory for the full incident). Read-only commands (`railway status`, `railway logs`, `railway environment config`) are safe; anything that *changes* environment/service settings should be done by the user in the Railway dashboard, where per-environment scoping actually works correctly.
 
 ### Verifying a deploy (how, concretely)
 
 The Railway CLI is installed and this repo is linked to the `rulebook-rebels-discord-bot` project, defaulting to the **development** environment.
 
-- `railway status` — check the linked service is Online and see the current deployment ID.
+- `railway status` — check the linked service is Online and see the current deployment ID. Add `-e <environment-id>` to check a specific environment.
 - `railway logs --lines 50` — snapshot of recent logs from development (add `-e production` to check the production environment instead).
 - `railway logs --filter "@level:error"` — just errors, useful right after a deploy.
 - `railway logs --since 10m` — logs from a specific window, e.g. right after triggering a deploy.
@@ -141,3 +142,20 @@ The Railway CLI is installed and this repo is linked to the `rulebook-rebels-dis
 A Railway MCP server and a `use-railway` skill are also installed (via `railway setup agent`) — prefer those over raw CLI parsing once available in a session, since they give structured results instead of text output to parse. Both require a Claude Code restart to register after being installed or updated.
 
 If `railway status`/`railway logs` ever report "No linked project found," re-link with `railway link -p 920c1a12-cf1c-427c-89f3-3bf81ba08339 -s 2397cef3-4f08-48bb-891c-be5e2abba9ee -e <environment-id>` (development: `6385d7ae-6560-4aa6-9f73-2324760b87b4`, production: `5217f7a9-e487-4b6f-ad4d-9084e0b29681`).
+
+---
+
+## 6. Git Branching Workflow
+
+- **`main`** — integration branch. Railway's **development** environment auto-deploys on every push/merge here.
+- **`production`** — release branch. Railway's **production** environment auto-deploys on every push/merge here. Only gets updated by deliberately merging `main` into it (or a hotfix branch) when the code on `main` is actually ready to ship to real users.
+- **Everything else is a short-lived feature branch**, branched from `main`, merged back into `main` via PR. Never commit directly to `main` or `production`.
+
+### CI
+`.github/workflows/ci.yml` runs `npm run build` + `npx vitest run` on every push and PR targeting `main` or `production`. This is **not** enforced as a merge gate — this repo is private on a plan where GitHub's branch protection / rulesets require GitHub Pro (confirmed by testing both the classic protection API and the newer rulesets API — both return `403 Upgrade to GitHub Pro`). Until/unless that changes, "no direct pushes, PR + green CI before merging" is a **convention**, not a server-enforced rule — follow it deliberately, and don't skip the build/test cycle just because nothing will technically stop you.
+
+### Promoting to production
+1. Confirm `main` is in the state you want to ship (built, tested, and ideally already running fine on the dev environment for a bit).
+2. Open a PR merging `main` into `production` (or cherry-pick a hotfix if `main` has unrelated in-flight work you don't want to ship yet).
+3. Merging that PR **is** the production deploy — Railway picks it up automatically. There is no separate manual "promote" click anymore now that production tracks its own branch.
+4. Verify with `railway status -e 5217f7a9-e487-4b6f-ad4d-9084e0b29681` and `railway logs -e 5217f7a9-e487-4b6f-ad4d-9084e0b29681 --deployment --lines 30` immediately after.
