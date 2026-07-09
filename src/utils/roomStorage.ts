@@ -10,7 +10,10 @@ export interface PrivateRoom {
   createdBy: string;
   invitedUserIds: string[];
   createdAt: string;
-  expiresAt: string;
+  // Absent when `persistent` is true — a persistent room has no expiration.
+  expiresAt?: string;
+  // When true, the room never auto-closes and must be closed via `/room close`.
+  persistent?: boolean;
 }
 
 export async function loadRooms(): Promise<PrivateRoom[]> {

@@ -487,12 +487,13 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.8a `/room create`
 
-**What it does:** Creates a new private text channel visible only to whoever you mention, plus hosts and admins — hidden from everyone else. Posts a message pinging each invited person, and creates the channel under a separate category (default "Private Rooms", configurable via `/admin room config`, 3.9o) so it's never mixed in with event/archive channels. The required `date` is when the room auto-closes — see 4.8.
+**What it does:** Creates a new private text channel visible only to whoever you mention, plus hosts and admins — hidden from everyone else. Posts a message pinging each invited person, and creates the channel under a separate category (default "Private Rooms", configurable via `/admin room config`, 3.9o) so it's never mixed in with event/archive channels. Requires a `date` (when the room auto-closes — see 4.8), unless `persist:true` is set, which creates a room with no expiration at all — see 1.8c to toggle this later.
 
 **Prerequisites:** none — any server member can run this, not just hosts/admins.
 
 - [ ] Run `/room create people:@Alice @Bob date:August 22` — confirm a new channel is created under the "Private Rooms" category, and the ping message + confirmation both state it expires August 22
-- [ ] Attempt to create a room without `date` — confirm Discord rejects it as a missing required option
+- [ ] Run `/room create people:@Alice persist:true` with no `date` — confirm the room is created with no expiration, and the ping message + confirmation both say it persists until closed
+- [ ] Attempt to create a room with neither `date` nor `persist:true` — confirm a clear "Provide a `date`..." error and no channel is created
 - [ ] Run with an unparseable `date` (e.g. "whenever") — confirm a clear parse error and no channel is created
 - [ ] Run with a `date` already in the past — confirm "That date has already passed" error and no channel is created
 - [ ] Confirm the channel is hidden from `@everyone` — a member who wasn't mentioned and has no Host/Admin role cannot see it
@@ -513,6 +514,17 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run inside a room you created — confirm the channel is deleted
 - [ ] Run inside a room someone else created, as a Host or Admin — confirm it works
 - [ ] Run inside a room someone else created, as a regular member with no elevated role — confirm "Only the room's creator or a host/admin can close this room" error, and the channel is **not** deleted
+- [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
+
+### 1.8c `/room persist`
+
+**What it does:** Turns a private room's auto-expiration on (`enabled:true`) or off (`enabled:false`, requires a new `date`). Must be run inside the room's own channel. The room's creator or any host/admin can toggle it — nobody else. See 4.8 for how auto-expiration works.
+
+- [ ] Run `/room persist enabled:true` inside a room that has a `date` — confirm the reply says the room will no longer auto-expire, and it survives past its original expiration date
+- [ ] Run `/room persist enabled:false` inside a persistent room, with a `date` — confirm the reply confirms the new expiration, and the room auto-closes on that date (4.8)
+- [ ] Run `/room persist enabled:false` inside a persistent room, with **no** `date` — confirm a clear "Provide a `date`..." error and the room remains persistent
+- [ ] Run as a Host or Admin on a room you didn't create — confirm it works
+- [ ] Run as a regular member with no elevated role on a room you didn't create — confirm "Only the room's creator or a host/admin can change this room's expiration" error, and nothing changes
 - [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
 
 ---
@@ -1041,12 +1053,13 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.9a `/room create`
 
-**What it does:** Creates a new private text channel visible only to whoever you mention, plus hosts and admins — hidden from everyone else. Posts a message pinging each invited person, and creates the channel under a separate category (default "Private Rooms", configurable via `/admin room config`, 3.9o) so it's never mixed in with event/archive channels. The required `date` is when the room auto-closes — see 4.8.
+**What it does:** Creates a new private text channel visible only to whoever you mention, plus hosts and admins — hidden from everyone else. Posts a message pinging each invited person, and creates the channel under a separate category (default "Private Rooms", configurable via `/admin room config`, 3.9o) so it's never mixed in with event/archive channels. Requires a `date` (when the room auto-closes — see 4.8), unless `persist:true` is set, which creates a room with no expiration at all — see 2.9c to toggle this later.
 
 **Prerequisites:** none — any server member can run this, not just hosts/admins.
 
 - [ ] Run `/room create people:@Alice @Bob date:August 22` — confirm a new channel is created under the "Private Rooms" category, and the ping message + confirmation both state it expires August 22
-- [ ] Attempt to create a room without `date` — confirm Discord rejects it as a missing required option
+- [ ] Run `/room create people:@Alice persist:true` with no `date` — confirm the room is created with no expiration, and the ping message + confirmation both say it persists until closed
+- [ ] Attempt to create a room with neither `date` nor `persist:true` — confirm a clear "Provide a `date`..." error and no channel is created
 - [ ] Run with an unparseable `date` (e.g. "whenever") — confirm a clear parse error and no channel is created
 - [ ] Run with a `date` already in the past — confirm "That date has already passed" error and no channel is created
 - [ ] Confirm the channel is hidden from `@everyone` — a member who wasn't mentioned and has no Host/Admin role cannot see it
@@ -1067,6 +1080,17 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run inside a room you created — confirm the channel is deleted
 - [ ] Run inside a room someone else created, as a Host or Admin — confirm it works
 - [ ] Run inside a room someone else created, as a regular member with no elevated role — confirm "Only the room's creator or a host/admin can close this room" error, and the channel is **not** deleted
+- [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
+
+### 2.9c `/room persist`
+
+**What it does:** Turns a private room's auto-expiration on (`enabled:true`) or off (`enabled:false`, requires a new `date`). Must be run inside the room's own channel. The room's creator or any host/admin can toggle it — nobody else. See 4.8 for how auto-expiration works.
+
+- [ ] Run `/room persist enabled:true` inside a room that has a `date` — confirm the reply says the room will no longer auto-expire, and it survives past its original expiration date
+- [ ] Run `/room persist enabled:false` inside a persistent room, with a `date` — confirm the reply confirms the new expiration, and the room auto-closes on that date (4.8)
+- [ ] Run `/room persist enabled:false` inside a persistent room, with **no** `date` — confirm a clear "Provide a `date`..." error and the room remains persistent
+- [ ] Run as a Host or Admin on a room you didn't create — confirm it works
+- [ ] Run as a regular member with no elevated role on a room you didn't create — confirm "Only the room's creator or a host/admin can change this room's expiration" error, and nothing changes
 - [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
 
 ---
@@ -1737,12 +1761,13 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.10a `/room create`
 
-**What it does:** Creates a new private text channel visible only to whoever you mention, plus hosts and admins — hidden from everyone else. Posts a message pinging each invited person, and creates the channel under a separate category (default "Private Rooms", configurable via `/admin room config`, 3.9o) so it's never mixed in with event/archive channels. The required `date` is when the room auto-closes — see 4.8.
+**What it does:** Creates a new private text channel visible only to whoever you mention, plus hosts and admins — hidden from everyone else. Posts a message pinging each invited person, and creates the channel under a separate category (default "Private Rooms", configurable via `/admin room config`, 3.9o) so it's never mixed in with event/archive channels. Requires a `date` (when the room auto-closes — see 4.8), unless `persist:true` is set, which creates a room with no expiration at all — see 3.10c to toggle this later.
 
 **Prerequisites:** none — any server member can run this, not just hosts/admins.
 
 - [ ] Run `/room create people:@Alice @Bob date:August 22` — confirm a new channel is created under the "Private Rooms" category, and the ping message + confirmation both state it expires August 22
-- [ ] Attempt to create a room without `date` — confirm Discord rejects it as a missing required option
+- [ ] Run `/room create people:@Alice persist:true` with no `date` — confirm the room is created with no expiration, and the ping message + confirmation both say it persists until closed
+- [ ] Attempt to create a room with neither `date` nor `persist:true` — confirm a clear "Provide a `date`..." error and no channel is created
 - [ ] Run with an unparseable `date` (e.g. "whenever") — confirm a clear parse error and no channel is created
 - [ ] Run with a `date` already in the past — confirm "That date has already passed" error and no channel is created
 - [ ] Confirm the channel is hidden from `@everyone` — a member who wasn't mentioned and has no Host/Admin role cannot see it
@@ -1763,6 +1788,17 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run inside a room you created — confirm the channel is deleted
 - [ ] Run inside a room someone else created, as a Host or Admin — confirm it works
 - [ ] Run inside a room someone else created, as a regular member with no elevated role — confirm "Only the room's creator or a host/admin can close this room" error, and the channel is **not** deleted
+- [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
+
+### 3.10c `/room persist`
+
+**What it does:** Turns a private room's auto-expiration on (`enabled:true`) or off (`enabled:false`, requires a new `date`). Must be run inside the room's own channel. The room's creator or any host/admin can toggle it — nobody else. See 4.8 for how auto-expiration works.
+
+- [ ] Run `/room persist enabled:true` inside a room that has a `date` — confirm the reply says the room will no longer auto-expire, and it survives past its original expiration date
+- [ ] Run `/room persist enabled:false` inside a persistent room, with a `date` — confirm the reply confirms the new expiration, and the room auto-closes on that date (4.8)
+- [ ] Run `/room persist enabled:false` inside a persistent room, with **no** `date` — confirm a clear "Provide a `date`..." error and the room remains persistent
+- [ ] Run as a Host or Admin on a room you didn't create — confirm it works
+- [ ] Run as a regular member with no elevated role on a room you didn't create — confirm "Only the room's creator or a host/admin can change this room's expiration" error, and nothing changes
 - [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
 
 ---
@@ -1860,7 +1896,7 @@ These features are triggered by Discord events and scheduled timers rather than 
 
 ## 4.8 Private Room Expiration
 
-**What it does:** Every private room (`/room create`, 1.8a) has a required expiration date. On the same hourly check as archiving and the lineup scheduler (plus once on startup), the bot closes any room whose expiration date has passed — deleting the channel and its stored record — exactly as if `/room close` had been run.
+**What it does:** Every private room (`/room create`, 1.8a) has an expiration date, unless it was created with `persist:true` or later switched to persistent via `/room persist enabled:true` (1.8c). On the same hourly check as archiving and the lineup scheduler (plus once on startup), the bot closes any non-persistent room whose expiration date has passed — deleting the channel and its stored record — exactly as if `/room close` had been run. Persistent rooms are skipped by this check entirely, regardless of any stored `expiresAt`.
 
 **Prerequisites:** a private room whose `date` has already passed — either wait for a room to actually expire, or manually edit its `expiresAt` in `data/privateRooms.json` to a past timestamp and wait for the next hourly check (or restart the bot).
 
@@ -1868,6 +1904,7 @@ These features are triggered by Discord events and scheduled timers rather than 
 - [ ] Confirm the room's entry is removed from `data/privateRooms.json` once expired
 - [ ] Confirm a room whose expiration date hasn't passed yet is left untouched by the same check
 - [ ] Confirm `/room close`, run manually before the expiration date, still works exactly as before (expiration doesn't interfere with early manual closing)
+- [ ] Confirm a persistent room (created with `persist:true`, or switched via `/room persist enabled:true`) is left untouched by the hourly check even after its original/former expiration date would have passed
 
 ---
 

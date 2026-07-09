@@ -61,15 +61,29 @@ const FUTURE_DATE_STR = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocale
 });
 
 function makeInteraction(
-  options: { people?: string | null; name?: string | null; date?: string | null; sub: string },
+  options: {
+    people?: string | null;
+    name?: string | null;
+    date?: string | null;
+    persist?: boolean | null;
+    enabled?: boolean | null;
+    sub: string;
+  },
   guild: ReturnType<typeof makeGuild>,
   userId = 'creator-1',
   channelId = 'general',
 ) {
+  // Only auto-fill a future date for /room create when the test didn't explicitly
+  // pass a `date` (even null) and isn't testing the persist:true no-date path.
+  const shouldDefaultDate = options.sub === 'create' && options.persist !== true && options.date === undefined;
   const values: Record<string, string | null | undefined> = {
     people: options.people,
     name: options.name,
-    date: options.sub === 'create' ? (options.date ?? FUTURE_DATE_STR) : options.date,
+    date: shouldDefaultDate ? FUTURE_DATE_STR : options.date,
+  };
+  const booleans: Record<string, boolean | null | undefined> = {
+    persist: options.persist,
+    enabled: options.enabled,
   };
   return {
     guild,
@@ -81,6 +95,7 @@ function makeInteraction(
     options: {
       getSubcommand: () => options.sub,
       getString: (name: string) => values[name] ?? null,
+      getBoolean: (name: string) => booleans[name] ?? null,
     },
     reply: vi.fn(async () => {}),
     deferReply: vi.fn(async () => {}),
@@ -266,6 +281,32 @@ describe('/room create', () => {
     expect(expires.getMonth()).toBe(expected.getMonth());
     expect(expires.getDate()).toBe(expected.getDate());
   });
+
+  it('creates a persistent room with no expiration when persist:true, without requiring a date', async () => {
+    const guild = makeGuild();
+    const interaction = makeInteraction({ sub: 'create', people: '<@111>', persist: true }, guild);
+
+    await execute(interaction);
+
+    const rooms = await loadRooms();
+    expect(rooms).toHaveLength(1);
+    expect(rooms[0].persistent).toBe(true);
+    expect(rooms[0].expiresAt).toBeUndefined();
+    expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining('persists until closed'));
+  });
+
+  it('requires a date when persist is not set to true', async () => {
+    const guild = makeGuild();
+    const interaction = makeInteraction({ sub: 'create', people: '<@111>', date: null }, guild);
+
+    await execute(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('Provide a `date`') }),
+    );
+    expect(interaction.deferReply).not.toHaveBeenCalled();
+    expect(await loadRooms()).toHaveLength(0);
+  });
 });
 
 describe('checkExpiredRooms', () => {
@@ -292,6 +333,7 @@ describe('checkExpiredRooms', () => {
       invitedUserIds: ['u2'],
       createdAt: new Date().toISOString(),
       expiresAt: overrides.expiresAt ?? new Date().toISOString(),
+      persistent: overrides.persistent,
     };
   }
 
@@ -338,6 +380,17 @@ describe('checkExpiredRooms', () => {
 
     const remaining = await loadRooms();
     expect(remaining.map((r) => r.id)).toEqual(['active1']);
+  });
+
+  it('never closes a persistent room, even if its stored expiresAt is in the past', async () => {
+    await upsertRoom(
+      makeRoom({ id: 'persisted', persistent: true, expiresAt: new Date(Date.now() - 1000).toISOString() }),
+    );
+    const client = makeClient();
+
+    await checkExpiredRooms(client as any);
+
+    expect(await loadRooms()).toHaveLength(1);
   });
 });
 
@@ -407,6 +460,133 @@ describe('/room close', () => {
     await execute(closeInteraction);
 
     expect(closeInteraction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('must be run inside a private room channel') }),
+    );
+  });
+});
+
+describe('/room persist', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-room-persist-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  async function createRoom(guild: ReturnType<typeof makeGuild>, creatorId = 'creator-1') {
+    const createInteraction = makeInteraction({ sub: 'create', people: '<@111>' }, guild, creatorId);
+    await execute(createInteraction);
+  }
+
+  it('lets the creator turn on persistence, clearing the expiration', async () => {
+    const guild = makeGuild();
+    await createRoom(guild, 'creator-1');
+    const interaction = makeInteraction(
+      { sub: 'persist', enabled: true },
+      guild,
+      'creator-1',
+      'room-channel-1',
+    );
+
+    await execute(interaction);
+
+    const rooms = await loadRooms();
+    expect(rooms[0].persistent).toBe(true);
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('no longer auto-expire') }),
+    );
+  });
+
+  it('requires a date when turning persistence back off', async () => {
+    const guild = makeGuild();
+    const createInteraction = makeInteraction({ sub: 'create', people: '<@111>', persist: true }, guild, 'creator-1');
+    await execute(createInteraction);
+    const interaction = makeInteraction(
+      { sub: 'persist', enabled: false },
+      guild,
+      'creator-1',
+      'room-channel-1',
+    );
+
+    await execute(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('Provide a `date`') }),
+    );
+    const rooms = await loadRooms();
+    expect(rooms[0].persistent).toBe(true);
+  });
+
+  it('turns persistence off and sets a new expiration when given a valid date', async () => {
+    const guild = makeGuild();
+    const createInteraction = makeInteraction({ sub: 'create', people: '<@111>', persist: true }, guild, 'creator-1');
+    await execute(createInteraction);
+    const interaction = makeInteraction(
+      { sub: 'persist', enabled: false, date: FUTURE_DATE_STR },
+      guild,
+      'creator-1',
+      'room-channel-1',
+    );
+
+    await execute(interaction);
+
+    const rooms = await loadRooms();
+    expect(rooms[0].persistent).toBe(false);
+    expect(rooms[0].expiresAt).toBeDefined();
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('will now expire') }),
+    );
+  });
+
+  it('lets a host toggle persistence on a room they did not create', async () => {
+    const guild = makeGuild();
+    await createRoom(guild, 'creator-1');
+    const interaction = makeInteraction(
+      { sub: 'persist', enabled: true },
+      guild,
+      'some-host',
+      'room-channel-1',
+    );
+    interaction.memberPermissions = { has: (p: bigint) => p === PermissionFlagsBits.ManageEvents };
+
+    await execute(interaction);
+
+    const rooms = await loadRooms();
+    expect(rooms[0].persistent).toBe(true);
+  });
+
+  it('blocks an unprivileged non-creator from toggling persistence', async () => {
+    const guild = makeGuild();
+    await createRoom(guild, 'creator-1');
+    const interaction = makeInteraction(
+      { sub: 'persist', enabled: true },
+      guild,
+      'random-user',
+      'room-channel-1',
+    );
+
+    await execute(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining("creator or a host/admin") }),
+    );
+    const rooms = await loadRooms();
+    expect(rooms[0].persistent).toBeFalsy();
+  });
+
+  it('replies with a clear error when run outside a private room channel', async () => {
+    const guild = makeGuild();
+    const interaction = makeInteraction({ sub: 'persist', enabled: true }, guild, 'creator-1', 'general-channel');
+
+    await execute(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
       expect.objectContaining({ content: expect.stringContaining('must be run inside a private room channel') }),
     );
   });
