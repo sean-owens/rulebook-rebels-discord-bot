@@ -153,17 +153,19 @@ async function handleCreate(interaction: ChatInputCommandInteraction): Promise<v
       parent: category.id,
     })) as TextChannel;
 
-    await channel.permissionOverwrites.create(guild.roles.everyone, { ViewChannel: false });
-    // ManageChannels deliberately left off: Discord rejects granting a permission via
-    // overwrite that the actor (the bot) doesn't already hold at the role level, and the
-    // bot's base role already has ManageChannels guild-wide (see discord link.md) -- an
-    // explicit overwrite for it isn't needed and 403s if the bot's role ever lacks it.
-    // /host event create's channel setup follows the same pattern.
+    // Bot's own overwrite must be created before denying @everyone below -- if @everyone
+    // is denied first and the bot has no explicit allow overwrite of its own yet, its
+    // effective permissions in this brand-new channel can transiently drop with it,
+    // which then fails the "you can't grant a permission you don't currently hold" check
+    // on this very call. /host event create's channel setup follows this same order.
+    // ManageChannels is deliberately left off: the bot's base role already has it
+    // guild-wide, and granting it here isn't otherwise necessary.
     await channel.permissionOverwrites.create(me, {
       ViewChannel: true,
       SendMessages: true,
       ManageMessages: true,
     });
+    await channel.permissionOverwrites.create(guild.roles.everyone, { ViewChannel: false });
     await channel.permissionOverwrites.create(interaction.user, {
       ViewChannel: true,
       SendMessages: true,
