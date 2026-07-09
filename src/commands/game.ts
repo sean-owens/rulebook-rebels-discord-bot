@@ -39,6 +39,7 @@ import {
 import { buildGameEmbed, buildGameButtons, buildBggAttachment } from '../utils/gameEmbeds';
 import { loadGameNights, findGameNight, GameNight } from '../utils/storage';
 import { isLineupLocked, LOCK_MESSAGE } from '../utils/scheduler';
+import { findRoomByChannel, PrivateRoom } from '../utils/roomStorage';
 import {
   findGamesByName,
   findGameNamesByPartial,
@@ -132,6 +133,43 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   else if (sub === 'cancel') await handleGameCancel(interaction);
 }
 
+// Private rooms have no RSVPs/lineup pin/request tracking of their own, but the rest of the
+// suggest flow (attendance check, duplicate check, posting, join/leave) only ever reads
+// .id/.eventChannelId/.rsvps/.cancelled/.archived/.suggestionsLocked off a GameNight — so a
+// room is adapted into a GameNight-shaped object rather than threading a second type through
+// every step of suggest/BGG-select/expansion-select/tag-picker. The "room:" id prefix lets
+// addRequest/pin calls (which don't apply to a room) be skipped explicitly instead of relying
+// on them silently no-op-ing against a lookup that will never match.
+const ROOM_GAME_NIGHT_PREFIX = 'room:';
+
+function roomToGameNightAdapter(room: PrivateRoom): GameNight {
+  return {
+    id: `${ROOM_GAME_NIGHT_PREFIX}${room.id}`,
+    title: room.name,
+    date: '',
+    time: '',
+    location: '',
+    link: '',
+    description: '',
+    messageId: '',
+    channelId: room.channelId,
+    guildId: room.guildId,
+    discordEventId: null,
+    eventChannelId: room.channelId,
+    startTimeISO: room.createdAt,
+    endTimeISO: null,
+    rsvps: { yes: [room.createdBy, ...room.invitedUserIds], maybe: [], no: [] },
+    createdBy: room.createdBy,
+    cancelled: false,
+    archived: false,
+    createdAt: room.createdAt,
+  };
+}
+
+function isRoomGameNight(gn: Pick<GameNight, 'id'>): boolean {
+  return gn.id.startsWith(ROOM_GAME_NIGHT_PREFIX);
+}
+
 async function findGameNightForInteraction(
   userId: string,
   channelId: string | null,
@@ -140,6 +178,8 @@ async function findGameNightForInteraction(
   if (channelId) {
     const byChannel = active.find((gn) => gn.eventChannelId === channelId);
     if (byChannel) return byChannel;
+    const room = await findRoomByChannel(channelId);
+    if (room) return roomToGameNightAdapter(room);
   }
   const storedId = pendingEventContext.get(userId);
   if (storedId) return active.find((gn) => gn.id === storedId);
@@ -316,6 +356,15 @@ async function handleSuggest(interaction: ChatInputCommandInteraction): Promise<
   const title = interaction.options.getString('title', true);
   const withExpansions = interaction.options.getBoolean('with_expansions') ?? false;
 
+  // Suggesting from inside a private room always uses that room directly — there's no picker
+  // (you can't suggest into a room from outside it), and attendance checks against the room's
+  // members instead of an event's RSVPs.
+  const room = await findRoomByChannel(interaction.channelId!);
+  if (room) {
+    await resolveSuggestFlow(interaction, roomToGameNightAdapter(room), title, withExpansions);
+    return;
+  }
+
   const now = new Date();
   const upcoming = (await loadGameNights())
     .filter(
@@ -368,7 +417,18 @@ async function handleSuggest(interaction: ChatInputCommandInteraction): Promise<
   }
 
   const gameNight = channelMatch ?? upcoming[0];
+  await resolveSuggestFlow(interaction, gameNight, title, withExpansions);
+}
 
+// Shared by both the event-channel/event-picker path and the private-room path above — resolves
+// a library match, partial match, or falls through to a BGG search, once we already know which
+// GameNight (real or room-adapted) the suggestion is going into.
+async function resolveSuggestFlow(
+  interaction: ChatInputCommandInteraction,
+  gameNight: GameNight,
+  title: string,
+  withExpansions: boolean,
+): Promise<void> {
   if (isLineupLocked(gameNight)) {
     await interaction.reply({ content: LOCK_MESSAGE, flags: MessageFlags.Ephemeral });
     return;
@@ -868,16 +928,20 @@ async function postLibraryGame(
   game.messageId = msg.id;
   await upsertGame(game);
 
-  await addRequest(gameNight.id, gameName, interaction.user.id);
-  try {
-    await updateRequestPin(interaction.client, gameNight.id);
-  } catch {
-    /* channel may not be accessible */
-  }
-  try {
-    await updateGameListPin(interaction.client, gameNight.id);
-  } catch {
-    /* channel may not be accessible */
+  // "Bring to event"/lineup-pin tracking doesn't apply to a private room — it's an ad-hoc
+  // space happening now, not a future event to request games for.
+  if (!isRoomGameNight(gameNight)) {
+    await addRequest(gameNight.id, gameName, interaction.user.id);
+    try {
+      await updateRequestPin(interaction.client, gameNight.id);
+    } catch {
+      /* channel may not be accessible */
+    }
+    try {
+      await updateGameListPin(interaction.client, gameNight.id);
+    } catch {
+      /* channel may not be accessible */
+    }
   }
   pendingEventContext.delete(interaction.user.id);
 
@@ -1131,16 +1195,18 @@ export async function handleManualGameSubmit(interaction: ModalSubmitInteraction
   game.messageId = msg.id;
   await upsertGame(game);
 
-  await addRequest(gameNight.id, title, interaction.user.id);
-  try {
-    await updateRequestPin(interaction.client, gameNight.id);
-  } catch {
-    /* channel may not be accessible */
-  }
-  try {
-    await updateGameListPin(interaction.client, gameNight.id);
-  } catch {
-    /* channel may not be accessible */
+  if (!isRoomGameNight(gameNight)) {
+    await addRequest(gameNight.id, title, interaction.user.id);
+    try {
+      await updateRequestPin(interaction.client, gameNight.id);
+    } catch {
+      /* channel may not be accessible */
+    }
+    try {
+      await updateGameListPin(interaction.client, gameNight.id);
+    } catch {
+      /* channel may not be accessible */
+    }
   }
   pendingEventContext.delete(interaction.user.id);
 
@@ -1472,16 +1538,18 @@ async function postBGGGame(
     }
   }
 
-  await addRequest(gameNight.id, bggGame.name, interaction.user.id);
-  try {
-    await updateRequestPin(interaction.client, gameNight.id);
-  } catch {
-    /* channel may not be accessible */
-  }
-  try {
-    await updateGameListPin(interaction.client, gameNight.id);
-  } catch {
-    /* channel may not be accessible */
+  if (!isRoomGameNight(gameNight)) {
+    await addRequest(gameNight.id, bggGame.name, interaction.user.id);
+    try {
+      await updateRequestPin(interaction.client, gameNight.id);
+    } catch {
+      /* channel may not be accessible */
+    }
+    try {
+      await updateGameListPin(interaction.client, gameNight.id);
+    } catch {
+      /* channel may not be accessible */
+    }
   }
   pendingEventContext.delete(interaction.user.id);
 

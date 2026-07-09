@@ -9,6 +9,7 @@ import { data as libraryCommand } from './commands/library';
 import { data as helpCommand } from './commands/help';
 import { data as bggCommand } from './commands/bgg';
 import { data as marketplaceCommand } from './commands/marketplace';
+import { data as roomCommand } from './commands/room';
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.DISCORD_CLIENT_ID;
@@ -29,6 +30,7 @@ const commands = [
   helpCommand.toJSON(),
   bggCommand.toJSON(),
   marketplaceCommand.toJSON(),
+  roomCommand.toJSON(),
 ];
 const rest = new REST().setToken(token);
 

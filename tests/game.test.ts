@@ -30,8 +30,11 @@ vi.mock('../src/utils/config', () => ({
 import { execute, handleEventSelect, handleBGGSearchPage } from '../src/commands/game';
 import { upsertGameNight, GameNight } from '../src/utils/storage';
 import { searchBGG } from '../src/utils/bgg';
+import { updateRequestPin, updateGameListPin } from '../src/utils/requestPin';
 
 const mockSearchBGG = vi.mocked(searchBGG);
+const mockUpdateRequestPin = vi.mocked(updateRequestPin);
+const mockUpdateGameListPin = vi.mocked(updateGameListPin);
 
 function makeGameNight(overrides: Partial<GameNight> = {}): GameNight {
   const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
@@ -64,6 +67,7 @@ function makeSuggestInteraction(
   guildId = 'g1',
   userId = 'u1',
 ) {
+  const postedChannel = { send: vi.fn(async () => ({ id: 'card-msg-1' })) };
   return {
     options: {
       getString: (name: string) => (name === 'title' ? title : null),
@@ -80,6 +84,8 @@ function makeSuggestInteraction(
     isChatInputCommand: () => true,
     replied: false,
     deferred: false,
+    client: { channels: { fetch: vi.fn(async () => postedChannel) } },
+    _postedChannel: postedChannel,
   } as any;
 }
 
@@ -422,5 +428,100 @@ describe('lineup lock enforcement', () => {
 
     expect(interaction.reply).not.toHaveBeenCalled();
     expect(interaction.update).toHaveBeenCalled();
+  });
+});
+
+describe('/game suggest — inside a private room', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-game-room-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+    mockUpdateRequestPin.mockClear();
+    mockUpdateGameListPin.mockClear();
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  async function seedRoom(overrides: Partial<Record<string, unknown>> = {}) {
+    const { upsertRoom } = await import('../src/utils/roomStorage');
+    const room = {
+      id: 'room1',
+      guildId: 'g1',
+      channelId: 'room-channel-1',
+      name: 'Test Room',
+      createdBy: 'creator-1',
+      invitedUserIds: ['invitee-1'],
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      ...overrides,
+    };
+    await upsertRoom(room as any);
+    return room;
+  }
+
+  it('posts directly in the room with no event picker, even with upcoming events present', async () => {
+    await upsertGameNight(makeGameNight({ id: 'gn1', eventChannelId: 'event-channel-1' }));
+    await seedRoom();
+
+    const interaction = makeSuggestInteraction('Some Custom Game', 'room-channel-1', 'g1', 'creator-1');
+    await execute(interaction);
+
+    const replyCall = interaction.reply.mock.calls[0]?.[0];
+    if (replyCall) {
+      expect(replyCall.content ?? '').not.toContain('Which event would you like to suggest');
+    }
+  });
+
+  it('allows suggesting a library game owned by a room member', async () => {
+    const { addGame } = await import('../src/utils/libraryStorage');
+    await seedRoom();
+    await addGame('g1', 'invitee-1', 'Wingspan');
+
+    const interaction = makeSuggestInteraction('Wingspan', 'room-channel-1', 'g1', 'creator-1');
+    await execute(interaction);
+
+    expect(interaction._postedChannel.send).toHaveBeenCalled();
+  });
+
+  it('rejects a library game whose owner is not a room member, same as the event case', async () => {
+    const { addGame } = await import('../src/utils/libraryStorage');
+    await seedRoom();
+    await addGame('g1', 'outsider-1', 'Wingspan');
+
+    const interaction = makeSuggestInteraction('Wingspan', 'room-channel-1', 'g1', 'creator-1');
+    await execute(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('None of the owners') }),
+    );
+    expect(interaction._postedChannel.send).not.toHaveBeenCalled();
+  });
+
+  it('allows the room creator to suggest a game they own themselves', async () => {
+    const { addGame } = await import('../src/utils/libraryStorage');
+    await seedRoom();
+    await addGame('g1', 'creator-1', 'Wingspan');
+
+    const interaction = makeSuggestInteraction('Wingspan', 'room-channel-1', 'g1', 'creator-1');
+    await execute(interaction);
+
+    expect(interaction._postedChannel.send).toHaveBeenCalled();
+  });
+
+  it('does not create a request-pin or lineup-pin entry for a room-suggested game', async () => {
+    const { addGame } = await import('../src/utils/libraryStorage');
+    await seedRoom();
+    await addGame('g1', 'invitee-1', 'Wingspan');
+
+    const interaction = makeSuggestInteraction('Wingspan', 'room-channel-1', 'g1', 'creator-1');
+    await execute(interaction);
+
+    expect(mockUpdateRequestPin).not.toHaveBeenCalled();
+    expect(mockUpdateGameListPin).not.toHaveBeenCalled();
   });
 });

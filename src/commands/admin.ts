@@ -24,6 +24,7 @@ import {
   handleAdminConfig as handleMarketplaceConfig,
   handleAdminPurge as handleMarketplacePurge,
 } from './marketplace';
+import { handleRoomConfig } from './room';
 
 export const data = new SlashCommandBuilder()
   .setName('admin')
@@ -301,6 +302,23 @@ export const data = new SlashCommandBuilder()
               ),
           ),
       ),
+  )
+  // ── room group ────────────────────────────────────────────────────────────────
+  .addSubcommandGroup((group) =>
+    group
+      .setName('room')
+      .setDescription('/room private channel administration')
+      .addSubcommand((sub) =>
+        sub
+          .setName('config')
+          .setDescription('Set the Discord category used for /room private channels')
+          .addStringOption((opt) =>
+            opt
+              .setName('category')
+              .setDescription('Discord category name for private rooms (default: "Private Rooms")')
+              .setRequired(false),
+          ),
+      ),
   );
 
 export async function handleAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
@@ -344,5 +362,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   } else if (group === 'marketplace') {
     if (sub === 'config') await handleMarketplaceConfig(interaction);
     else if (sub === 'purge') await handleMarketplacePurge(interaction);
+  } else if (group === 'room') {
+    if (sub === 'config') await handleRoomConfig(interaction);
   }
 }
