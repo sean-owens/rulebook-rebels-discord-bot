@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { readJson, writeJson } from '../src/utils/db';
+import { readJson, writeJson, clearReadCache } from '../src/utils/db';
 import { getGuildConfig, updateGuildConfig } from '../src/utils/config';
 
 describe('db', () => {
@@ -68,6 +68,87 @@ describe('db', () => {
     await writeJson('b.json', { label: 'B' });
     expect(await readJson('a.json', null)).toEqual({ label: 'A' });
     expect(await readJson('b.json', null)).toEqual({ label: 'B' });
+  });
+
+  describe('read cache', () => {
+    afterEach(() => {
+      clearReadCache();
+    });
+
+    it('does not hit disk again on a second read of the same file', async () => {
+      await writeJson('cached.json', { v: 1 });
+      clearReadCache(); // force the first read below to actually hit disk once
+      await readJson('cached.json', null);
+
+      const readSpy = vi.spyOn(fs, 'readFileSync');
+      const result = await readJson('cached.json', null);
+
+      expect(result).toEqual({ v: 1 });
+      expect(readSpy).not.toHaveBeenCalled();
+      readSpy.mockRestore();
+    });
+
+    it('serves the new value from cache after a write, without re-reading disk', async () => {
+      await writeJson('written.json', { v: 1 });
+      await readJson('written.json', null); // populate cache
+
+      const readSpy = vi.spyOn(fs, 'readFileSync');
+      await writeJson('written.json', { v: 2 });
+      const result = await readJson('written.json', null);
+
+      expect(result).toEqual({ v: 2 });
+      expect(readSpy).not.toHaveBeenCalled();
+      readSpy.mockRestore();
+    });
+
+    it('caches a "file not found" result and keeps returning the fallback', async () => {
+      const first = await readJson('never-created.json', { fallback: true });
+      const readSpy = vi.spyOn(fs, 'existsSync');
+      const second = await readJson('never-created.json', { fallback: true });
+
+      expect(first).toEqual({ fallback: true });
+      expect(second).toEqual({ fallback: true });
+      expect(readSpy).not.toHaveBeenCalled();
+      readSpy.mockRestore();
+    });
+
+    it('picks the file up once written after being cached as not-found', async () => {
+      await readJson('later.json', null); // caches as not-found
+      await writeJson('later.json', { arrived: true });
+      expect(await readJson('later.json', null)).toEqual({ arrived: true });
+    });
+
+    it('clearReadCache forces a fresh read from disk', async () => {
+      await writeJson('reset.json', { v: 1 });
+      await readJson('reset.json', null); // populate cache
+
+      // Mutate the file directly on disk, bypassing writeJson (so the cache
+      // wouldn't naturally know about it) — simulates cache going stale.
+      fs.writeFileSync(path.join(tmpDir, 'data', 'reset.json'), JSON.stringify({ v: 2 }));
+
+      clearReadCache();
+      expect(await readJson('reset.json', null)).toEqual({ v: 2 });
+    });
+
+    it('does not cross-contaminate between different data directories', async () => {
+      await writeJson('isolated.json', { from: 'dirA' });
+
+      const otherDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-test-other-'));
+      try {
+        cwdSpy.mockReturnValue(otherDir);
+        expect(await readJson('isolated.json', { from: 'fallback' })).toEqual({
+          from: 'fallback',
+        });
+        await writeJson('isolated.json', { from: 'dirB' });
+        expect(await readJson('isolated.json', null)).toEqual({ from: 'dirB' });
+      } finally {
+        cwdSpy.mockReturnValue(tmpDir);
+        fs.rmSync(otherDir, { recursive: true, force: true });
+      }
+
+      // Back on the original tmpDir.
+      expect(await readJson('isolated.json', null)).toEqual({ from: 'dirA' });
+    });
   });
 });
 

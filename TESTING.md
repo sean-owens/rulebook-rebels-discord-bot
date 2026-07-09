@@ -90,11 +90,15 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 #### From BGG search
 - [ ] Run `/game suggest title:Ticket to Ride` — confirm BGG results dropdown appears
+- [ ] Confirm results are sorted newest publish year first
 - [ ] Select a result — confirm game card is posted with BGG-sourced data
 - [ ] If the BGG game has no tags — confirm tag picker appears
 - [ ] Select tags, click Save — confirm tags appear on the game card and prompt to confirm bringing the game
 - [ ] Click Skip on tag picker — confirm bring prompt appears
-- [ ] Search a very generic term with many BGG matches — confirm the dropdown is capped at Discord's 25-option select menu limit rather than erroring
+- [ ] Search a generic term with more than 24 BGG matches — confirm **← Previous** / **Page X of Y** / **Next →** buttons appear below the dropdown, with Previous disabled on page 1
+- [ ] Click **Next →** — confirm the dropdown updates to the next page of results (newest-first order continues across pages) and **Previous** becomes enabled
+- [ ] Navigate to the last page — confirm **Next →** is disabled
+- [ ] Search a term with 24 or fewer matches — confirm no pagination buttons appear (dropdown only)
 
 #### With expansions
 - [ ] Run `/game suggest title:Wingspan with_expansions:True`
@@ -539,11 +543,15 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 #### From BGG search
 - [ ] Run `/game suggest title:Ticket to Ride` — confirm BGG results dropdown appears
+- [ ] Confirm results are sorted newest publish year first
 - [ ] Select a result — confirm game card is posted with BGG-sourced data
 - [ ] If the BGG game has no tags — confirm tag picker appears
 - [ ] Select tags, click Save — confirm tags appear on the game card and prompt to confirm bringing the game
 - [ ] Click Skip on tag picker — confirm bring prompt appears
-- [ ] Search a very generic term with many BGG matches — confirm the dropdown is capped at Discord's 25-option select menu limit rather than erroring
+- [ ] Search a generic term with more than 24 BGG matches — confirm **← Previous** / **Page X of Y** / **Next →** buttons appear below the dropdown, with Previous disabled on page 1
+- [ ] Click **Next →** — confirm the dropdown updates to the next page of results (newest-first order continues across pages) and **Previous** becomes enabled
+- [ ] Navigate to the last page — confirm **Next →** is disabled
+- [ ] Search a term with 24 or fewer matches — confirm no pagination buttons appear (dropdown only)
 
 #### With expansions
 - [ ] Run `/game suggest title:Wingspan with_expansions:True`
@@ -924,10 +932,12 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 **What it does:** Creates a Discord scheduled event, a text channel, and posts an RSVP embed in the configured announcements channel.
 
-- [ ] Create an event with required fields only: `/host event create date:August 22 time:7pm` — confirm:
-  - Discord scheduled event is created
-  - A channel named `monthly-august-22` appears under "Monthly Events"
-  - RSVP embed is posted in the announcements channel
+- [ ] Create an event with required fields only: `/host event create title:Board Game Bash date:August 22 time:7pm` — confirm:
+  - Discord scheduled event is created, named `Board Game Bash — <full date>`
+  - A channel named `august-22-board-game-bash` appears under "Game Nights"
+  - Channel topic and welcome message both reference "Board Game Bash"
+  - RSVP embed is posted in the announcements channel, titled `Board Game Bash — <full date>`
+- [ ] Attempt to create an event without `title` — confirm Discord rejects it as a missing required option
 - [ ] Create an event with all fields (end_time, location, link, description) — confirm all appear in the embed
 - [ ] Confirm date formats work: `aug 22`, `August 22`, `august 22, 2026`
 - [ ] Confirm time formats work: `7pm`, `7:00 PM`, `19:00`
@@ -1033,11 +1043,15 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 #### From BGG search
 - [ ] Run `/game suggest title:Ticket to Ride` — confirm BGG results dropdown appears
+- [ ] Confirm results are sorted newest publish year first
 - [ ] Select a result — confirm game card is posted with BGG-sourced data
 - [ ] If the BGG game has no tags — confirm tag picker appears
 - [ ] Select tags, click Save — confirm tags appear on the game card and prompt to confirm bringing the game
 - [ ] Click Skip on tag picker — confirm bring prompt appears
-- [ ] Search a very generic term with many BGG matches — confirm the dropdown is capped at Discord's 25-option select menu limit rather than erroring
+- [ ] Search a generic term with more than 24 BGG matches — confirm **← Previous** / **Page X of Y** / **Next →** buttons appear below the dropdown, with Previous disabled on page 1
+- [ ] Click **Next →** — confirm the dropdown updates to the next page of results (newest-first order continues across pages) and **Previous** becomes enabled
+- [ ] Navigate to the last page — confirm **Next →** is disabled
+- [ ] Search a term with 24 or fewer matches — confirm no pagination buttons appear (dropdown only)
 
 #### With expansions
 - [ ] Run `/game suggest title:Wingspan with_expansions:True`
@@ -1411,10 +1425,12 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 **What it does:** Creates a Discord scheduled event, a text channel, and posts an RSVP embed in the configured announcements channel.
 
-- [ ] Create an event with required fields only: `/host event create date:August 22 time:7pm` — confirm:
-  - Discord scheduled event is created
-  - A channel named `monthly-august-22` appears under "Monthly Events"
-  - RSVP embed is posted in the announcements channel
+- [ ] Create an event with required fields only: `/host event create title:Board Game Bash date:August 22 time:7pm` — confirm:
+  - Discord scheduled event is created, named `Board Game Bash — <full date>`
+  - A channel named `august-22-board-game-bash` appears under "Game Nights"
+  - Channel topic and welcome message both reference "Board Game Bash"
+  - RSVP embed is posted in the announcements channel, titled `Board Game Bash — <full date>`
+- [ ] Attempt to create an event without `title` — confirm Discord rejects it as a missing required option
 - [ ] Create an event with all fields (end_time, location, link, description) — confirm all appear in the embed
 - [ ] Confirm date formats work: `aug 22`, `August 22`, `august 22, 2026`
 - [ ] Confirm time formats work: `7pm`, `7:00 PM`, `19:00`

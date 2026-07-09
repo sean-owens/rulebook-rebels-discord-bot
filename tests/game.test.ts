@@ -27,8 +27,11 @@ vi.mock('../src/utils/config', () => ({
   getGuildConfig: vi.fn(() => ({})),
 }));
 
-import { execute, handleEventSelect } from '../src/commands/game';
+import { execute, handleEventSelect, handleBGGSearchPage } from '../src/commands/game';
 import { upsertGameNight, GameNight } from '../src/utils/storage';
+import { searchBGG } from '../src/utils/bgg';
+
+const mockSearchBGG = vi.mocked(searchBGG);
 
 function makeGameNight(overrides: Partial<GameNight> = {}): GameNight {
   const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
@@ -177,6 +180,113 @@ describe('/game suggest — event resolution outside an event channel', () => {
     // Should not report the event as unavailable — confirms it resolved gn1 correctly.
     expect(selectInteraction.update).not.toHaveBeenCalledWith(
       expect.objectContaining({ content: expect.stringContaining('no longer available') }),
+    );
+  });
+});
+
+describe('/game suggest — BGG results pagination', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  function makeBGGResults(n: number) {
+    return Array.from({ length: n }, (_, i) => ({
+      id: String(i),
+      name: `Game ${i}`,
+      yearPublished: 2000 + i,
+    }));
+  }
+
+  function makeButtonInteraction(userId: string) {
+    return {
+      user: { id: userId },
+      update: vi.fn(async () => {}),
+    } as any;
+  }
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-game-bgg-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+    mockSearchBGG.mockReset();
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('shows no pagination buttons when results fit on one page', async () => {
+    await upsertGameNight(makeGameNight());
+    mockSearchBGG.mockResolvedValue(makeBGGResults(5));
+
+    const interaction = makeSuggestInteraction('Some Custom Game', 'event-channel-1');
+    await execute(interaction);
+
+    const reply = interaction.editReply.mock.calls[0][0];
+    expect(reply.components).toHaveLength(1); // select menu row only
+    expect(reply.components[0].components[0].options).toHaveLength(6); // 5 results + manual entry
+  });
+
+  it('shows Previous (disabled) and Next (enabled) buttons on page 1 when results span multiple pages', async () => {
+    await upsertGameNight(makeGameNight());
+    mockSearchBGG.mockResolvedValue(makeBGGResults(30));
+
+    const interaction = makeSuggestInteraction('Some Custom Game', 'event-channel-1', 'g1', 'u7');
+    await execute(interaction);
+
+    const reply = interaction.editReply.mock.calls[0][0];
+    expect(reply.components).toHaveLength(2); // select menu row + pagination row
+    const [select] = reply.components[0].components;
+    expect(select.options).toHaveLength(25); // 24 results + manual entry on page 1
+
+    const [prevBtn, pageBtn, nextBtn] = reply.components[1].components;
+    expect(prevBtn.data.disabled).toBe(true);
+    expect(pageBtn.data.label).toBe('Page 1 of 2');
+    expect(nextBtn.data.disabled).toBe(false);
+  });
+
+  it('clicking Next shows page 2 with the remaining results', async () => {
+    await upsertGameNight(makeGameNight());
+    mockSearchBGG.mockResolvedValue(makeBGGResults(30));
+
+    const interaction = makeSuggestInteraction('Some Custom Game', 'event-channel-1', 'g1', 'u8');
+    await execute(interaction);
+
+    const nextInteraction = makeButtonInteraction('u8');
+    await handleBGGSearchPage(nextInteraction, 'next');
+
+    const reply = nextInteraction.update.mock.calls[0][0];
+    const [select] = reply.components[0].components;
+    expect(select.options).toHaveLength(7); // remaining 6 results + manual entry
+    expect(select.options[0].data.label).toBe('Game 24'); // first item of page 2
+
+    const [prevBtn, pageBtn, nextBtn] = reply.components[1].components;
+    expect(prevBtn.data.disabled).toBe(false);
+    expect(pageBtn.data.label).toBe('Page 2 of 2');
+    expect(nextBtn.data.disabled).toBe(true);
+  });
+
+  it('clicking Previous from page 2 returns to page 1', async () => {
+    await upsertGameNight(makeGameNight());
+    mockSearchBGG.mockResolvedValue(makeBGGResults(30));
+
+    const interaction = makeSuggestInteraction('Some Custom Game', 'event-channel-1', 'g1', 'u9');
+    await execute(interaction);
+    await handleBGGSearchPage(makeButtonInteraction('u9'), 'next');
+
+    const prevInteraction = makeButtonInteraction('u9');
+    await handleBGGSearchPage(prevInteraction, 'prev');
+
+    const reply = prevInteraction.update.mock.calls[0][0];
+    const [select] = reply.components[0].components;
+    expect(select.options[0].data.label).toBe('Game 0');
+  });
+
+  it('replies gracefully when paging without a prior search (expired/missing session)', async () => {
+    const interaction = makeButtonInteraction('u-no-session');
+    await handleBGGSearchPage(interaction, 'next');
+
+    expect(interaction.update).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('expired') }),
     );
   });
 });

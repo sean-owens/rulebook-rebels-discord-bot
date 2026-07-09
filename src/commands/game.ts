@@ -152,7 +152,99 @@ interface BGGSearchReply {
   components: ActionRowBuilder<StringSelectMenuBuilder | ButtonBuilder>[];
 }
 
+// Discord select menus cap at 25 options; reserve one for "enter manually".
+const BGG_RESULTS_PER_PAGE = 24;
+
+interface BGGPageSession {
+  results: BGGSearchResult[];
+  withExpansions: boolean;
+  fromLibraryDismiss: boolean;
+  title: string;
+  pageIndex: number;
+}
+const bggPageSessions = new Map<string, BGGPageSession>();
+
+function renderBGGPage(userId: string): BGGSearchReply {
+  const session = bggPageSessions.get(userId);
+  if (!session) {
+    return { content: 'This search has expired. Please run `/game suggest` again.', components: [] };
+  }
+
+  const { results, withExpansions, fromLibraryDismiss, title, pageIndex } = session;
+  const totalPages = Math.max(1, Math.ceil(results.length / BGG_RESULTS_PER_PAGE));
+  const pageResults = results.slice(
+    pageIndex * BGG_RESULTS_PER_PAGE,
+    (pageIndex + 1) * BGG_RESULTS_PER_PAGE,
+  );
+
+  const options = pageResults.map((r) =>
+    new StringSelectMenuOptionBuilder()
+      .setLabel(r.name.slice(0, 100))
+      .setValue(r.id)
+      .setDescription(r.yearPublished ? `Published ${r.yearPublished}` : 'Year unknown'),
+  );
+  options.push(
+    new StringSelectMenuOptionBuilder()
+      .setLabel('None of these — enter details manually')
+      .setValue(MANUAL_VALUE)
+      .setDescription('Fill in player count, duration, and a link yourself'),
+  );
+
+  const select = new StringSelectMenuBuilder()
+    .setCustomId(withExpansions ? 'game_select_exp' : 'game_select')
+    .setPlaceholder('Choose the correct game...')
+    .addOptions(options);
+
+  const components: ActionRowBuilder<StringSelectMenuBuilder | ButtonBuilder>[] = [
+    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select),
+  ];
+  if (totalPages > 1) {
+    components.push(
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId('game_bgg_prev')
+          .setLabel('← Previous')
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(pageIndex === 0),
+        new ButtonBuilder()
+          .setCustomId('game_bgg_page')
+          .setLabel(`Page ${pageIndex + 1} of ${totalPages}`)
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(true),
+        new ButtonBuilder()
+          .setCustomId('game_bgg_next')
+          .setLabel('Next →')
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(pageIndex === totalPages - 1),
+      ),
+    );
+  }
+
+  const prefix = fromLibraryDismiss ? '' : `**"${title}"** wasn't found in the group library. `;
+  return {
+    content: `${prefix}Found **${results.length}** BGG result(s), newest first — pick the one you mean:`,
+    components,
+  };
+}
+
+export async function handleBGGSearchPage(
+  interaction: ButtonInteraction,
+  direction: 'prev' | 'next',
+): Promise<void> {
+  const session = bggPageSessions.get(interaction.user.id);
+  if (!session) {
+    await interaction.update({
+      content: 'This search has expired. Please run `/game suggest` again.',
+      components: [],
+    });
+    return;
+  }
+  session.pageIndex += direction === 'next' ? 1 : -1;
+  await interaction.update(renderBGGPage(interaction.user.id));
+}
+
 async function buildBGGSearchReply(
+  userId: string,
   title: string,
   withExpansions: boolean,
   fromLibraryDismiss = false,
@@ -207,29 +299,14 @@ async function buildBGGSearchReply(
     return { content, components: [manualEntryButton(title)] };
   }
 
-  const options = results.map((r) =>
-    new StringSelectMenuOptionBuilder()
-      .setLabel(r.name.slice(0, 100))
-      .setValue(r.id)
-      .setDescription(r.yearPublished ? `Published ${r.yearPublished}` : 'Year unknown'),
-  );
-  options.push(
-    new StringSelectMenuOptionBuilder()
-      .setLabel('None of these — enter details manually')
-      .setValue(MANUAL_VALUE)
-      .setDescription('Fill in player count, duration, and a link yourself'),
-  );
-
-  const select = new StringSelectMenuBuilder()
-    .setCustomId(withExpansions ? 'game_select_exp' : 'game_select')
-    .setPlaceholder('Choose the correct game...')
-    .addOptions(options);
-
-  const prefix = fromLibraryDismiss ? '' : `**"${title}"** wasn't found in the group library. `;
-  return {
-    content: `${prefix}Found **${results.length}** BGG result(s) — pick the one you mean:`,
-    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
-  };
+  bggPageSessions.set(userId, {
+    results,
+    withExpansions,
+    fromLibraryDismiss,
+    title,
+    pageIndex: 0,
+  });
+  return renderBGGPage(userId);
 }
 
 // ── Suggest ───────────────────────────────────────────────────────────────────
@@ -343,7 +420,7 @@ async function handleSuggest(interaction: ChatInputCommandInteraction): Promise<
   }
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  await interaction.editReply(await buildBGGSearchReply(title, withExpansions));
+  await interaction.editReply(await buildBGGSearchReply(interaction.user.id, title, withExpansions));
 }
 
 // ── Event picker: continues suggest flow after user picks which event ─────────
@@ -415,7 +492,7 @@ export async function handleEventSelect(interaction: StringSelectMenuInteraction
   }
 
   await interaction.deferUpdate();
-  await interaction.editReply(await buildBGGSearchReply(title, withExpansions));
+  await interaction.editReply(await buildBGGSearchReply(interaction.user.id, title, withExpansions));
 }
 
 function buildTagPickerComponents(gameId: string) {
@@ -832,7 +909,7 @@ export async function handleLibrarySuggestSelect(
     const title = pending?.title ?? '';
     const withExpansions = pending?.withExpansions ?? false;
     await interaction.deferUpdate();
-    await interaction.editReply(await buildBGGSearchReply(title, withExpansions, true));
+    await interaction.editReply(await buildBGGSearchReply(interaction.user.id, title, withExpansions, true));
     return;
   }
 

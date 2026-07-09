@@ -72,6 +72,7 @@ import {
   handleGameLeave,
   handleBringConfirm,
   handleBringCancel,
+  handleBGGSearchPage,
   handleLibrarySuggestSelect,
   handleWaitlistJoin,
   handleWaitlistLeave,
@@ -195,6 +196,10 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handleBringConfirm(interaction);
       } else if (id === 'game_bring_cancel') {
         await handleBringCancel(interaction);
+      } else if (id === 'game_bgg_prev') {
+        await handleBGGSearchPage(interaction, 'prev');
+      } else if (id === 'game_bgg_next') {
+        await handleBGGSearchPage(interaction, 'next');
       } else if (id.startsWith('game_manual_')) {
         await handleManualBtn(interaction);
       } else if (id.startsWith('rsvp_')) {

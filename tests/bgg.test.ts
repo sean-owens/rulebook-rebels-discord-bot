@@ -62,7 +62,7 @@ describe('BGG_TO_TAG', () => {
 // ── searchBGG ─────────────────────────────────────────────────────────────────
 
 describe('searchBGG', () => {
-  it('returns parsed results from the BGG search API', async () => {
+  it('returns parsed results from the BGG search API, newest publish year first', async () => {
     mockFetch(`<?xml version="1.0" encoding="utf-8"?>
 <items total="2">
   <item type="boardgame" id="167791">
@@ -77,22 +77,41 @@ describe('searchBGG', () => {
 
     const results = await searchBGG('Terraforming Mars');
     expect(results).toHaveLength(2);
-    expect(results[0]).toEqual({ id: '167791', name: 'Terraforming Mars', yearPublished: 2016 });
-    expect(results[1]).toEqual({ id: '99999', name: 'Another Game', yearPublished: 2020 });
+    expect(results[0]).toEqual({ id: '99999', name: 'Another Game', yearPublished: 2020 });
+    expect(results[1]).toEqual({ id: '167791', name: 'Terraforming Mars', yearPublished: 2016 });
   });
 
-  it('returns at most 10 results', async () => {
+  it('sorts results with an unknown publish year to the end', async () => {
+    mockFetch(`<items total="2">
+  <item type="boardgame" id="1">
+    <name type="primary" value="No Year Game"/>
+  </item>
+  <item type="boardgame" id="2">
+    <name type="primary" value="Old Game"/>
+    <yearpublished value="1995"/>
+  </item>
+</items>`);
+
+    const results = await searchBGG('game');
+    expect(results.map((r) => r.id)).toEqual(['2', '1']);
+  });
+
+  it('returns at most 50 results', async () => {
     const items = Array.from(
-      { length: 15 },
+      { length: 75 },
       (_, i) => `
   <item type="boardgame" id="${i}">
     <name type="primary" value="Game ${i}"/>
+    <yearpublished value="${2000 + i}"/>
   </item>`,
     ).join('');
-    mockFetch(`<items total="15">${items}</items>`);
+    mockFetch(`<items total="75">${items}</items>`);
 
     const results = await searchBGG('game');
-    expect(results).toHaveLength(10);
+    expect(results).toHaveLength(50);
+    // Still the newest 50, not just the first 50 in document order.
+    expect(results[0].yearPublished).toBe(2074);
+    expect(results[49].yearPublished).toBe(2025);
   });
 
   it('handles a single result (non-array XML) correctly', async () => {

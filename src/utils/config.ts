@@ -30,7 +30,7 @@ const DEFAULT_CONFIG: GuildConfig = {
   rulesChannelId: '',
   facebookGroupUrl: '',
   openEventChannels: false,
-  eventCategoryName: 'Monthly Events',
+  eventCategoryName: 'Game Nights',
   archiveCategoryName: 'Archive',
   archivedChannelRetentionDays: 0,
   marketplaceChannelId: '',

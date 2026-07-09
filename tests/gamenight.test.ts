@@ -1,7 +1,19 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { parseDateTime } from '../src/commands/gamenight';
 
 const YEAR = new Date().getFullYear();
+
+vi.mock('../src/utils/requestPin', () => ({
+  updateGameListPin: vi.fn(async () => {}),
+  updateRequestPin: vi.fn(async () => {}),
+}));
+
+vi.mock('../src/utils/pins', () => ({
+  updateAnnouncementPin: vi.fn(async () => {}),
+}));
 
 describe('parseDateTime', () => {
   // ── Time parsing ───────────────────────────────────────────────────────────
@@ -97,5 +109,116 @@ describe('parseDateTime', () => {
 
   it('throws when the time string is not parseable', () => {
     expect(() => parseDateTime('August 22', 'noon')).toThrow();
+  });
+});
+
+// ── handleCreate — title threaded through naming ────────────────────────────
+
+describe('handleCreate', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-gamenight-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeGuild() {
+    const eventChannel = {
+      id: 'event-channel-1',
+      permissionOverwrites: { create: vi.fn(async () => {}) },
+      send: vi.fn(async () => {}),
+    };
+    const announcementChannel = {
+      type: 0, // ChannelType.GuildText
+      send: vi.fn(async () => ({ id: 'announcement-msg-1' })),
+    };
+    const channelsCreate = vi.fn(async (opts: { type: number; name: string }) => {
+      // First call is the category (type GuildCategory=4), second is the event text channel.
+      return opts.type === 4 ? { id: 'category-1' } : eventChannel;
+    });
+
+    return {
+      id: 'guild-1',
+      client: {},
+      roles: { everyone: { id: 'everyone-role' } },
+      members: { fetchMe: vi.fn(async () => ({ id: 'bot-member' })) },
+      scheduledEvents: { create: vi.fn(async (opts: { name: string }) => ({ id: 'sched-1', ...opts })) },
+      channels: {
+        cache: { find: vi.fn(() => undefined) },
+        create: channelsCreate,
+        fetch: vi.fn(async () => announcementChannel),
+      },
+      _eventChannel: eventChannel,
+      _announcementChannel: announcementChannel,
+    };
+  }
+
+  function makeCreateInteraction(title: string, guild: ReturnType<typeof makeGuild>) {
+    const options: Record<string, string | null> = {
+      title,
+      date: 'August 22',
+      time: '7pm',
+      end_time: null,
+      location: null,
+      link: null,
+      description: null,
+    };
+    return {
+      guild,
+      guildId: guild.id,
+      client: {},
+      channelId: 'command-channel-1',
+      user: { id: 'host-1' },
+      memberPermissions: { has: () => true },
+      options: {
+        getString: (name: string) => options[name] ?? null,
+      },
+      deferReply: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
+    } as any;
+  }
+
+  it('uses the title across the scheduled event, channel name/topic, and welcome message', async () => {
+    const { handleCreate } = await import('../src/commands/gamenight');
+    const guild = makeGuild();
+    const interaction = makeCreateInteraction('Board Game Bash', guild);
+
+    await handleCreate(interaction);
+
+    expect(guild.scheduledEvents.create).toHaveBeenCalledWith(
+      expect.objectContaining({ name: expect.stringMatching(/^Board Game Bash — .*August 22/) }),
+    );
+    expect(guild.channels.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'august-22-board-game-bash',
+        topic: expect.stringMatching(/^Board Game Bash — .*August 22/),
+      }),
+    );
+    expect(guild._eventChannel.send).toHaveBeenCalledWith(
+      expect.stringContaining('Board Game Bash'),
+    );
+  });
+
+  it('stores the title on the GameNight record and uses it in the RSVP embed', async () => {
+    const { handleCreate } = await import('../src/commands/gamenight');
+    const { loadGameNights } = await import('../src/utils/storage');
+    const guild = makeGuild();
+    const interaction = makeCreateInteraction('Trivia Night', guild);
+
+    await handleCreate(interaction);
+
+    const nights = await loadGameNights();
+    expect(nights).toHaveLength(1);
+    expect(nights[0].title).toBe('Trivia Night');
+
+    const sendCall = guild._announcementChannel.send.mock.calls[0][0];
+    const embedTitle = sendCall.embeds[0].data.title;
+    expect(embedTitle).toMatch(/^Trivia Night — .*August 22/);
   });
 });
