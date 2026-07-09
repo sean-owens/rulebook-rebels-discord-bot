@@ -1,4 +1,4 @@
-DEV: https://discord.com/oauth2/authorize?client_id=1524058711222652958&permissions=26038496304&integration_type=0&scope=bot+applications.commands
+DEV: https://discord.com/oauth2/authorize?client_id=1524058711222652958&permissions=26038496304&integration_type=0&scope=applications.commands+bot
 
 PROD: https://discord.com/oauth2/authorize?client_id=1518299080932200458&permissions=26038496304&integration_type=0&scope=applications.commands+bot
 

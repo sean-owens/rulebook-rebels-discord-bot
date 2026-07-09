@@ -8,9 +8,10 @@ The guide is organized by **permission tier** so a single tester can be handed o
 - **Part 2 — Host Tests**: requires the Host role (or Manage Events permission). Fully repeats Part 1 plus Host-only commands, since Hosts must retain full member-level access.
 - **Part 3 — Admin Tests**: requires the Admin role (or Manage Guild permission). Fully repeats Parts 1 and 2 plus Admin-only commands, since Admins must retain full member- and Host-level access.
 - **Part 4 — System & Automated Behavior**: features triggered by Discord events/timers rather than a slash command permission check (bot join/leave, scheduled event completion, new member join). Requires server ownership or Admin-level Discord permissions to exercise (adding/removing the bot, editing scheduled events), even though it isn't part of the slash-command tier model.
-- **Part 5 — General Edge Cases**: role-agnostic sanity checks. Run once, regardless of which tier you're testing.
+- **Part 5 — Multi-Person Tests**: test cases that cannot be completed by a single tester alone, even with several test accounts, because they involve genuine back-and-forth between two distinct Discord identities (marketplace DM negotiation) or a real join event (new member welcome). These are pulled out of Parts 1–4 so they're not scattered through solo-testable checklists — a short pointer note is left where each one used to live.
+- **Part 6 — General Edge Cases**: role-agnostic sanity checks. Run once, regardless of which tier you're testing.
 
-Because Parts 2 and 3 repeat the tests from the tier(s) below them, the same test case appears more than once in this document — that's intentional, not a copy/paste error. It lets a tester assigned to a single tier work from one self-contained part.
+Because Parts 2 and 3 repeat the tests from the tier(s) below them, the same test case appears more than once in this document — that's intentional, not a copy/paste error. It lets a tester assigned to a single tier work from one self-contained part. Where a test case was moved to Part 5 instead, the original spot has a one-line pointer rather than the checklist itself.
 
 ---
 
@@ -18,6 +19,11 @@ Because Parts 2 and 3 repeat the tests from the tier(s) below them, the same tes
 
 - At least one game tag must exist for `/myroles` to be testable — run `/admin tags sync` first.
 - Three test accounts are recommended: one with no elevated role, one with the Host role, and one with the Admin role.
+- At least one upcoming, non-cancelled event should exist before testing `/event`, `/game`, or the event-scoped `/library` commands (`request`, `unrequest`, `bring`) — create one first with `/host event create` (2.8a).
+- A marketplace forum channel should be configured via `/admin marketplace config` (3.9m) before testing `/marketplace post sell`/`post trade` end-to-end — listings are still created without one (that's its own test case), but you won't see the resulting forum post.
+- A BGG account should be linked via `/bgg link` before testing `/library import bgg`.
+- **For Part 5:** you'll need a second, distinct Discord account you can act as concurrently with your primary tester account — reusing one of the three test accounts above is fine. Discord does not allow an account to DM itself, so marketplace negotiation genuinely cannot be exercised with only one identity. For the "new member joins" case, you don't need a never-before-seen account — kicking an existing test account from the server and re-inviting it fires the same join event the welcome flow listens for.
+- 👑 marks a check that will behave differently — usually silently pass when it should fail — if run from the Discord **server owner's** account. This bot enforces its Host/Admin tiers entirely through Discord's native `Manage Events`/`Manage Server` permission bits (no custom role lookup), and Discord grants the server owner every permission implicitly and permanently, regardless of what role (if any) they're assigned. An owner account can never be used to validate a "this should be denied to non-hosts/non-admins" case — use a genuinely separate, non-owner account for anything marked 👑.
 
 ---
 
@@ -27,11 +33,11 @@ Because Parts 2 and 3 repeat the tests from the tier(s) below them, the same tes
 
 **What it does:** Displays an ephemeral embed listing all available commands. Shows a Host section to members with Manage Events permission. Shows an Admin section to members with Manage Guild permission.
 
-- [ ] Run `/help` as a regular member — confirm only user-facing command sections appear (`/event`, `/game`, `/library`, `/myroles`, `/bgg`, `/marketplace`) with **no Host or Admin section**
+- [ ] 👑 Run `/help` as a regular member — confirm only user-facing command sections appear (`/event`, `/game`, `/library`, `/myroles`, `/bgg`, `/marketplace`) with **no Host or Admin section**
 - [ ] Confirm `/game cancel` description says "Remove your own game suggestion"
 - [ ] Confirm `/library clear` description says "Remove all your own games at once"
 - [ ] Confirm the response is ephemeral
-- [ ] Confirm `/host` and `/admin` commands are **not visible** in the Discord slash command picker
+- [ ] 👑 Confirm `/host` and `/admin` commands are **not visible** in the Discord slash command picker
 
 ## 1.2 `/event` — Event Viewing
 
@@ -46,6 +52,8 @@ Because Parts 2 and 3 repeat the tests from the tier(s) below them, the same tes
 ### 1.2b RSVP Buttons
 
 **What it does:** Members click Going / Maybe / Can't Go on the RSVP embed to update their RSVP status. In RSVP-only mode, Going/Maybe grants access to the event channel.
+
+**Prerequisites:** an event must already exist with its RSVP embed posted (created via `/host event create`, 2.8a) — see the global Prerequisites section above.
 
 - [ ] Click **Going** — confirm:
   - RSVP count updates in the embed
@@ -86,6 +94,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] If the BGG game has no tags — confirm tag picker appears
 - [ ] Select tags, click Save — confirm tags appear on the game card and prompt to confirm bringing the game
 - [ ] Click Skip on tag picker — confirm bring prompt appears
+- [ ] Search a very generic term with many BGG matches — confirm the dropdown is capped at Discord's 25-option select menu limit rather than erroring
 
 #### With expansions
 - [ ] Run `/game suggest title:Wingspan with_expansions:True`
@@ -174,6 +183,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] `/library add game:arkham` — confirm a "which did you mean?" select menu appears
 - [ ] Select a game from the dropdown — confirm the BGG confirm prompt appears
 - [ ] Confirm **Yes** — confirm game is added with BGG details
+- [ ] Search a very generic term with many BGG matches — confirm the dropdown is capped at Discord's 25-option select menu limit rather than erroring
 
 #### No matches anywhere — custom game
 - [ ] `/library add game:My Custom Game` with nothing matching anywhere — confirm game is added immediately and the "add details" modal appears
@@ -241,6 +251,8 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 **What it does:** Requests a specific game be brought to an event.
 
+**Prerequisites:** an active event must exist, and the game being requested must already be in the library, owned by someone who has RSVP'd (see 1.4a/2.4a/3.4a to add a game first).
+
 #### Basic request (no expansions in library)
 - [ ] `/library request game:Catan` from a non-event channel — confirm request targets the soonest upcoming event
 - [ ] `/library request game:Catan` from inside a specific event channel — confirm request targets that event
@@ -260,7 +272,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Select a request and remove it — confirm it disappears from the request pin
 - [ ] Run `/library unrequest` with no personal requests — confirm "You haven't requested any games for this event"
 - [ ] Run from outside an event channel — confirm event picker appears; selecting an event shows your requests for that event only
-- [ ] Confirm regular users cannot see or remove other users' requests via this command
+- [ ] 👑 Confirm regular users cannot see or remove other users' requests via this command (test account must have neither the Host role nor Manage Events permission — see note below)
 
 ### 1.4j `/library bring`
 
@@ -287,6 +299,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 - [ ] Run `/library import csv` with a valid CSV — confirm games are added
 - [ ] Run with malformed CSV — confirm appropriate error message
+- [ ] Run with a CSV containing duplicate rows for the same game — confirm no duplicate library entries are created
 
 ### 1.4l `/library search`
 
@@ -358,6 +371,8 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 **What it does:** Creates a for-sale listing, optionally enriched with BGG game details and current BGG marketplace price data.
 
+**Prerequisites:** most cases below assume a marketplace forum channel is already configured via `/admin marketplace config` (3.9m) — the "no channel configured" case further down is intentionally tested without it.
+
 - [ ] Run `/marketplace post sell item:Wingspan bids_allowed:true condition:Very Good` — confirm BGG price screen appears (ephemeral) with current marketplace prices and "Powered by BGG" logo
 - [ ] Select a price option (use suggested, enter custom, or open to offers) — confirm forum post created with item name, price, condition, and "I'm Interested" button
 - [ ] Run with `bids_allowed:false` — confirm the listing embed shows "*(firm)*" next to the price
@@ -372,6 +387,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Start typing an item name that has no BGG match, then select the "📝 not on BGG / custom item" autocomplete option — confirm no BGG price screen appears and you're instead prompted to add a reference link (**Add Link** / **Skip** buttons)
 - [ ] Click **Add Link**, submit a URL in the modal — confirm the listing embed shows a "Reference link" entry pointing to that URL
 - [ ] Click **Skip** — confirm the listing posts with no reference link and no BGG thumbnail
+- [ ] Click **Add Link** and submit a non-URL string (e.g. plain text) — confirm graceful validation rather than a broken link field
 
 ### 1.7b `/marketplace post trade`
 
@@ -419,61 +435,26 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 **What it does:** Buyer clicks button, modal opens, bid is submitted, seller is notified.
 
-**Fixed-price sell listing:**
-- [ ] Click "I'm Interested" on a firm-price listing — confirm modal opens with a message field only (no bid amount field)
-- [ ] Submit the modal — confirm seller gets a DM notification with Accept/Deny/Counter buttons
-- [ ] Confirm the DM buttons disappear and a result stamp appears after the seller acts
-
-**Negotiable sell listing:**
-- [ ] Click "I'm Interested" on a negotiable listing — confirm modal shows asking price as reference and a bid amount field
-- [ ] Enter a bid amount and submit — confirm bid posted in forum thread (public mode) or private thread (private mode)
-- [ ] Confirm seller gets DM with bid amount and Accept/Deny/Counter buttons
-- [ ] Confirm listing status updates to 🟡 Pending in the forum post
-- [ ] Click "I'm Interested" again as the same user — confirm error: "You already have an open bid"
-- [ ] Click "I'm Interested" as the seller — confirm error: "You can't bid on your own listing"
-
-**Trade listing:**
-- [ ] Click "I'm Interested" on a trade listing — confirm modal shows "what I'll offer in exchange" field instead of price field
-- [ ] Submit with offer text — confirm offer appears in the forum thread notification
+**Requires a second account — moved to Part 5.1a.** This flow needs a distinct buyer and seller identity (you can't bid on your own listing, and Discord won't let an account DM itself), so it can't be exercised by one tester alone — see Part 5.1a below.
 
 ### 1.7h Negotiation — Accept / Deny / Counter
 
 **What it does:** Seller responds to bids with Accept, Deny, or Counter buttons sent via DM (or thread fallback if DMs are disabled).
 
-**Accept:**
-- [ ] Seller clicks Accept on a bid in their DM — confirm the DM message updates to "✅ Accepted — deal done!" with buttons removed
-- [ ] Confirm listing status becomes 🔴 Sold in forum post
-- [ ] Confirm buyer gets DM: "Your bid was accepted"
-- [ ] If other open bids exist, confirm those buyers get DM: "sold to someone else"
-- [ ] Confirm a "Deal done!" conclusion post appears in the forum thread before it archives
-- [ ] Confirm forum thread is archived
-
-**Deny:**
-- [ ] Seller clicks Deny — confirm DM message updates to "❌ Declined — bid denied." with buttons removed
-- [ ] Confirm buyer is notified
-- [ ] If no other open bids, confirm listing reverts to 🟢 Active
-- [ ] If other bids still open, confirm listing stays 🟡 Pending
-
-**Counter:**
-- [ ] Seller clicks Counter — confirm modal opens for counter amount and message
-- [ ] Confirm DM message updates to "💬 Counter offer sent — waiting for response." with buttons removed
-- [ ] Buyer receives DM with counter details and Accept/Decline buttons
-- [ ] Buyer accepts counter — confirm buyer's DM updates to "✅ Accepted" with buttons removed; listing becomes Sold; seller notified
-- [ ] Buyer declines counter — confirm DM updates to "↩️ Withdrawn" with buttons removed
+**Requires a second account — moved to Part 5.1b.** Accept/Deny/Counter is a live exchange between a seller's DM and a buyer's DM, so it needs two people/accounts watching for prompts around the same time — see Part 5.1b below.
 
 ### 1.7i Negotiation modes
 
 **What it does:** Controls whether bid negotiation is visible publicly in the forum thread or in a private thread.
 
-- [ ] With negotiation_mode=public: click "I'm Interested" — confirm bid notification posted in the public forum thread (visible to all); Accept/Deny/Counter buttons go to seller via DM
-- [ ] With negotiation_mode=private: click "I'm Interested" — confirm a private thread is created with buyer, seller, and bot; bid notification posted there; buttons go to seller via DM
+**Requires a second account — moved to Part 5.1c.** Verifying what each mode shows means comparing what the buyer's action produces against what the seller sees, which needs both identities — see Part 5.1c below.
 
 ### 1.7j `/marketplace close` and `/marketplace reopen`
 
 **What it does:** Seller closes a listing; either party can reopen it if the deal falls through.
 
 - [ ] Run `/marketplace close <id>` as the seller — confirm listing status becomes ⚫ Closed and forum post updates
-- [ ] Run `/marketplace close <id>` as a different user (non-admin) — confirm "You can only close your own listings"
+- [ ] 👑 Run `/marketplace close <id>` as a different user (non-admin) — confirm "You can only close your own listings"
 - [ ] Run `/marketplace reopen <id>` as the seller — confirm listing status returns to Active (or Pending if bids exist)
 - [ ] Run `/marketplace reopen <id>` as a different user — confirm error
 
@@ -489,7 +470,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 ### 1.7l Permission boundaries (Regular Member)
 
 - [ ] Confirm a regular member CAN use `post sell`, `post trade`, `price`, `conditions`, `browse`, `my`, `close` (own listings), `reopen` (own listings)
-- [ ] Try `/admin marketplace config` and `/admin marketplace purge` as a regular member — confirm "requires Manage Server permission"
+- [ ] 👑 Try `/admin marketplace config` and `/admin marketplace purge` as a regular member — confirm "requires Manage Server permission"
 
 ---
 
@@ -501,7 +482,7 @@ Hosts retain full Regular Member access, so this part fully repeats Part 1's che
 
 **What it does:** Displays an ephemeral embed listing all available commands, tier-filtered to the invoking user's permissions.
 
-- [ ] Run `/help` as a host — confirm the **🎙️ /host** section appears in addition to user commands, but **no Admin section**
+- [ ] 👑 Run `/help` as a host — confirm the **🎙️ /host** section appears in addition to user commands, but **no Admin section**
 - [ ] Confirm `/game cancel` description says "Remove your own game suggestion"
 - [ ] Confirm `/library clear` description says "Remove all your own games at once"
 - [ ] Confirm the response is ephemeral
@@ -520,6 +501,8 @@ Hosts retain full Regular Member access, so this part fully repeats Part 1's che
 ### 2.2b RSVP Buttons
 
 **What it does:** Members click Going / Maybe / Can't Go on the RSVP embed to update their RSVP status. In RSVP-only mode, Going/Maybe grants access to the event channel.
+
+**Prerequisites:** an event must already exist with its RSVP embed posted (created via `/host event create`, 2.8a) — see the global Prerequisites section above.
 
 - [ ] Click **Going** — confirm:
   - RSVP count updates in the embed
@@ -560,6 +543,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] If the BGG game has no tags — confirm tag picker appears
 - [ ] Select tags, click Save — confirm tags appear on the game card and prompt to confirm bringing the game
 - [ ] Click Skip on tag picker — confirm bring prompt appears
+- [ ] Search a very generic term with many BGG matches — confirm the dropdown is capped at Discord's 25-option select menu limit rather than erroring
 
 #### With expansions
 - [ ] Run `/game suggest title:Wingspan with_expansions:True`
@@ -648,6 +632,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] `/library add game:arkham` — confirm a "which did you mean?" select menu appears
 - [ ] Select a game from the dropdown — confirm the BGG confirm prompt appears
 - [ ] Confirm **Yes** — confirm game is added with BGG details
+- [ ] Search a very generic term with many BGG matches — confirm the dropdown is capped at Discord's 25-option select menu limit rather than erroring
 
 #### No matches anywhere — custom game
 - [ ] `/library add game:My Custom Game` with nothing matching anywhere — confirm game is added immediately and the "add details" modal appears
@@ -715,6 +700,8 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 **What it does:** Requests a specific game be brought to an event.
 
+**Prerequisites:** an active event must exist, and the game being requested must already be in the library, owned by someone who has RSVP'd (see 1.4a/2.4a/3.4a to add a game first).
+
 #### Basic request (no expansions in library)
 - [ ] `/library request game:Catan` from a non-event channel — confirm request targets the soonest upcoming event
 - [ ] `/library request game:Catan` from inside a specific event channel — confirm request targets that event
@@ -734,7 +721,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Select a request and remove it — confirm it disappears from the request pin
 - [ ] Run `/library unrequest` with no personal requests — confirm "You haven't requested any games for this event"
 - [ ] Run from outside an event channel — confirm event picker appears; selecting an event shows your requests for that event only
-- [ ] Confirm this command still only shows your own requests, even as a Host (full request visibility is via `/host library unrequest`)
+- [ ] 👑 Confirm this command still only shows your own requests, even as a Host — **note:** the code gates full visibility on the `Manage Events` permission itself, so a real Host-role account may *also* see every request here rather than just its own. If you observe that, it's a product behavior question (should `/library unrequest` stay self-only even for Hosts?) rather than a test-setup mistake — flag it rather than assuming the test is wrong.
 
 ### 2.4j `/library bring`
 
@@ -761,6 +748,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 - [ ] Run `/library import csv` with a valid CSV — confirm games are added
 - [ ] Run with malformed CSV — confirm appropriate error message
+- [ ] Run with a CSV containing duplicate rows for the same game — confirm no duplicate library entries are created
 
 ### 2.4l `/library search`
 
@@ -827,6 +815,8 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 **What it does:** Creates a for-sale listing, optionally enriched with BGG game details and current BGG marketplace price data.
 
+**Prerequisites:** most cases below assume a marketplace forum channel is already configured via `/admin marketplace config` (3.9m) — the "no channel configured" case further down is intentionally tested without it.
+
 - [ ] Run `/marketplace post sell item:Wingspan bids_allowed:true condition:Very Good` — confirm BGG price screen appears (ephemeral) with current marketplace prices and "Powered by BGG" logo
 - [ ] Select a price option (use suggested, enter custom, or open to offers) — confirm forum post created with item name, price, condition, and "I'm Interested" button
 - [ ] Run with `bids_allowed:false` — confirm the listing embed shows "*(firm)*" next to the price
@@ -841,6 +831,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Start typing an item name that has no BGG match, then select the "📝 not on BGG / custom item" autocomplete option — confirm no BGG price screen appears and you're instead prompted to add a reference link (**Add Link** / **Skip** buttons)
 - [ ] Click **Add Link**, submit a URL in the modal — confirm the listing embed shows a "Reference link" entry pointing to that URL
 - [ ] Click **Skip** — confirm the listing posts with no reference link and no BGG thumbnail
+- [ ] Click **Add Link** and submit a non-URL string (e.g. plain text) — confirm graceful validation rather than a broken link field
 
 ### 2.7b `/marketplace post trade`
 
@@ -888,61 +879,26 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 **What it does:** Buyer clicks button, modal opens, bid is submitted, seller is notified.
 
-**Fixed-price sell listing:**
-- [ ] Click "I'm Interested" on a firm-price listing — confirm modal opens with a message field only (no bid amount field)
-- [ ] Submit the modal — confirm seller gets a DM notification with Accept/Deny/Counter buttons
-- [ ] Confirm the DM buttons disappear and a result stamp appears after the seller acts
-
-**Negotiable sell listing:**
-- [ ] Click "I'm Interested" on a negotiable listing — confirm modal shows asking price as reference and a bid amount field
-- [ ] Enter a bid amount and submit — confirm bid posted in forum thread (public mode) or private thread (private mode)
-- [ ] Confirm seller gets DM with bid amount and Accept/Deny/Counter buttons
-- [ ] Confirm listing status updates to 🟡 Pending in the forum post
-- [ ] Click "I'm Interested" again as the same user — confirm error: "You already have an open bid"
-- [ ] Click "I'm Interested" as the seller — confirm error: "You can't bid on your own listing"
-
-**Trade listing:**
-- [ ] Click "I'm Interested" on a trade listing — confirm modal shows "what I'll offer in exchange" field instead of price field
-- [ ] Submit with offer text — confirm offer appears in the forum thread notification
+**Requires a second account — moved to Part 5.1a.** This flow needs a distinct buyer and seller identity (you can't bid on your own listing, and Discord won't let an account DM itself), so it can't be exercised by one tester alone — see Part 5.1a below.
 
 ### 2.7h Negotiation — Accept / Deny / Counter
 
 **What it does:** Seller responds to bids with Accept, Deny, or Counter buttons sent via DM (or thread fallback if DMs are disabled).
 
-**Accept:**
-- [ ] Seller clicks Accept on a bid in their DM — confirm the DM message updates to "✅ Accepted — deal done!" with buttons removed
-- [ ] Confirm listing status becomes 🔴 Sold in forum post
-- [ ] Confirm buyer gets DM: "Your bid was accepted"
-- [ ] If other open bids exist, confirm those buyers get DM: "sold to someone else"
-- [ ] Confirm a "Deal done!" conclusion post appears in the forum thread before it archives
-- [ ] Confirm forum thread is archived
-
-**Deny:**
-- [ ] Seller clicks Deny — confirm DM message updates to "❌ Declined — bid denied." with buttons removed
-- [ ] Confirm buyer is notified
-- [ ] If no other open bids, confirm listing reverts to 🟢 Active
-- [ ] If other bids still open, confirm listing stays 🟡 Pending
-
-**Counter:**
-- [ ] Seller clicks Counter — confirm modal opens for counter amount and message
-- [ ] Confirm DM message updates to "💬 Counter offer sent — waiting for response." with buttons removed
-- [ ] Buyer receives DM with counter details and Accept/Decline buttons
-- [ ] Buyer accepts counter — confirm buyer's DM updates to "✅ Accepted" with buttons removed; listing becomes Sold; seller notified
-- [ ] Buyer declines counter — confirm DM updates to "↩️ Withdrawn" with buttons removed
+**Requires a second account — moved to Part 5.1b.** Accept/Deny/Counter is a live exchange between a seller's DM and a buyer's DM, so it needs two people/accounts watching for prompts around the same time — see Part 5.1b below.
 
 ### 2.7i Negotiation modes
 
 **What it does:** Controls whether bid negotiation is visible publicly in the forum thread or in a private thread.
 
-- [ ] With negotiation_mode=public: click "I'm Interested" — confirm bid notification posted in the public forum thread (visible to all); Accept/Deny/Counter buttons go to seller via DM
-- [ ] With negotiation_mode=private: click "I'm Interested" — confirm a private thread is created with buyer, seller, and bot; bid notification posted there; buttons go to seller via DM
+**Requires a second account — moved to Part 5.1c.** Verifying what each mode shows means comparing what the buyer's action produces against what the seller sees, which needs both identities — see Part 5.1c below.
 
 ### 2.7j `/marketplace close` and `/marketplace reopen`
 
 **What it does:** Seller closes a listing; either party can reopen it if the deal falls through.
 
 - [ ] Run `/marketplace close <id>` as the seller — confirm listing status becomes ⚫ Closed and forum post updates
-- [ ] Run `/marketplace close <id>` as a different user (non-admin) — confirm "You can only close your own listings"
+- [ ] 👑 Run `/marketplace close <id>` as a different user (non-admin) — confirm "You can only close your own listings"
 - [ ] Run `/marketplace reopen <id>` as the seller — confirm listing status returns to Active (or Pending if bids exist)
 - [ ] Run `/marketplace reopen <id>` as a different user — confirm error
 
@@ -958,7 +914,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 ### 2.7l Permission boundaries (Host)
 
 - [ ] Confirm a Host CAN use `post sell`, `post trade`, `price`, `conditions`, `browse`, `my`, `close` (own listings), `reopen` (own listings) — same as a regular member
-- [ ] Try `/admin marketplace config` and `/admin marketplace purge` as a Host — confirm "requires Manage Server permission" (Host role alone does not grant this)
+- [ ] 👑 Try `/admin marketplace config` and `/admin marketplace purge` as a Host — confirm "requires Manage Server permission" (Host role alone does not grant this)
 
 ## 2.8 `/host` — Host Commands
 
@@ -975,6 +931,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Create an event with all fields (end_time, location, link, description) — confirm all appear in the embed
 - [ ] Confirm date formats work: `aug 22`, `August 22`, `august 22, 2026`
 - [ ] Confirm time formats work: `7pm`, `7:00 PM`, `19:00`
+- [ ] Attempt to create an event with a date/time already in the past — confirm the bot handles it gracefully (rejects with a clear error, or accepts per design) rather than silently creating a broken past event
 
 ### 2.8b `/host event cancel`
 
@@ -1039,6 +996,8 @@ Admins retain full Regular Member and Host access, so this part fully repeats Pa
 
 **What it does:** Members click Going / Maybe / Can't Go on the RSVP embed to update their RSVP status. In RSVP-only mode, Going/Maybe grants access to the event channel.
 
+**Prerequisites:** an event must already exist with its RSVP embed posted (created via `/host event create`, 2.8a) — see the global Prerequisites section above.
+
 - [ ] Click **Going** — confirm:
   - RSVP count updates in the embed
   - Member gains access to the event channel (if RSVP-only mode)
@@ -1078,6 +1037,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] If the BGG game has no tags — confirm tag picker appears
 - [ ] Select tags, click Save — confirm tags appear on the game card and prompt to confirm bringing the game
 - [ ] Click Skip on tag picker — confirm bring prompt appears
+- [ ] Search a very generic term with many BGG matches — confirm the dropdown is capped at Discord's 25-option select menu limit rather than erroring
 
 #### With expansions
 - [ ] Run `/game suggest title:Wingspan with_expansions:True`
@@ -1166,6 +1126,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] `/library add game:arkham` — confirm a "which did you mean?" select menu appears
 - [ ] Select a game from the dropdown — confirm the BGG confirm prompt appears
 - [ ] Confirm **Yes** — confirm game is added with BGG details
+- [ ] Search a very generic term with many BGG matches — confirm the dropdown is capped at Discord's 25-option select menu limit rather than erroring
 
 #### No matches anywhere — custom game
 - [ ] `/library add game:My Custom Game` with nothing matching anywhere — confirm game is added immediately and the "add details" modal appears
@@ -1233,6 +1194,8 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 **What it does:** Requests a specific game be brought to an event.
 
+**Prerequisites:** an active event must exist, and the game being requested must already be in the library, owned by someone who has RSVP'd (see 1.4a/2.4a/3.4a to add a game first).
+
 #### Basic request (no expansions in library)
 - [ ] `/library request game:Catan` from a non-event channel — confirm request targets the soonest upcoming event
 - [ ] `/library request game:Catan` from inside a specific event channel — confirm request targets that event
@@ -1278,6 +1241,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 - [ ] Run `/library import csv` with a valid CSV — confirm games are added
 - [ ] Run with malformed CSV — confirm appropriate error message
+- [ ] Run with a CSV containing duplicate rows for the same game — confirm no duplicate library entries are created
 
 ### 3.4l `/library search`
 
@@ -1344,6 +1308,8 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 **What it does:** Creates a for-sale listing, optionally enriched with BGG game details and current BGG marketplace price data.
 
+**Prerequisites:** most cases below assume a marketplace forum channel is already configured via `/admin marketplace config` (3.9m) — the "no channel configured" case further down is intentionally tested without it.
+
 - [ ] Run `/marketplace post sell item:Wingspan bids_allowed:true condition:Very Good` — confirm BGG price screen appears (ephemeral) with current marketplace prices and "Powered by BGG" logo
 - [ ] Select a price option (use suggested, enter custom, or open to offers) — confirm forum post created with item name, price, condition, and "I'm Interested" button
 - [ ] Run with `bids_allowed:false` — confirm the listing embed shows "*(firm)*" next to the price
@@ -1358,6 +1324,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Start typing an item name that has no BGG match, then select the "📝 not on BGG / custom item" autocomplete option — confirm no BGG price screen appears and you're instead prompted to add a reference link (**Add Link** / **Skip** buttons)
 - [ ] Click **Add Link**, submit a URL in the modal — confirm the listing embed shows a "Reference link" entry pointing to that URL
 - [ ] Click **Skip** — confirm the listing posts with no reference link and no BGG thumbnail
+- [ ] Click **Add Link** and submit a non-URL string (e.g. plain text) — confirm graceful validation rather than a broken link field
 
 ### 3.7b `/marketplace post trade`
 
@@ -1405,54 +1372,19 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 **What it does:** Buyer clicks button, modal opens, bid is submitted, seller is notified.
 
-**Fixed-price sell listing:**
-- [ ] Click "I'm Interested" on a firm-price listing — confirm modal opens with a message field only (no bid amount field)
-- [ ] Submit the modal — confirm seller gets a DM notification with Accept/Deny/Counter buttons
-- [ ] Confirm the DM buttons disappear and a result stamp appears after the seller acts
-
-**Negotiable sell listing:**
-- [ ] Click "I'm Interested" on a negotiable listing — confirm modal shows asking price as reference and a bid amount field
-- [ ] Enter a bid amount and submit — confirm bid posted in forum thread (public mode) or private thread (private mode)
-- [ ] Confirm seller gets DM with bid amount and Accept/Deny/Counter buttons
-- [ ] Confirm listing status updates to 🟡 Pending in the forum post
-- [ ] Click "I'm Interested" again as the same user — confirm error: "You already have an open bid"
-- [ ] Click "I'm Interested" as the seller — confirm error: "You can't bid on your own listing"
-
-**Trade listing:**
-- [ ] Click "I'm Interested" on a trade listing — confirm modal shows "what I'll offer in exchange" field instead of price field
-- [ ] Submit with offer text — confirm offer appears in the forum thread notification
+**Requires a second account — moved to Part 5.1a.** This flow needs a distinct buyer and seller identity (you can't bid on your own listing, and Discord won't let an account DM itself), so it can't be exercised by one tester alone — see Part 5.1a below.
 
 ### 3.7h Negotiation — Accept / Deny / Counter
 
 **What it does:** Seller responds to bids with Accept, Deny, or Counter buttons sent via DM (or thread fallback if DMs are disabled).
 
-**Accept:**
-- [ ] Seller clicks Accept on a bid in their DM — confirm the DM message updates to "✅ Accepted — deal done!" with buttons removed
-- [ ] Confirm listing status becomes 🔴 Sold in forum post
-- [ ] Confirm buyer gets DM: "Your bid was accepted"
-- [ ] If other open bids exist, confirm those buyers get DM: "sold to someone else"
-- [ ] Confirm a "Deal done!" conclusion post appears in the forum thread before it archives
-- [ ] Confirm forum thread is archived
-
-**Deny:**
-- [ ] Seller clicks Deny — confirm DM message updates to "❌ Declined — bid denied." with buttons removed
-- [ ] Confirm buyer is notified
-- [ ] If no other open bids, confirm listing reverts to 🟢 Active
-- [ ] If other bids still open, confirm listing stays 🟡 Pending
-
-**Counter:**
-- [ ] Seller clicks Counter — confirm modal opens for counter amount and message
-- [ ] Confirm DM message updates to "💬 Counter offer sent — waiting for response." with buttons removed
-- [ ] Buyer receives DM with counter details and Accept/Decline buttons
-- [ ] Buyer accepts counter — confirm buyer's DM updates to "✅ Accepted" with buttons removed; listing becomes Sold; seller notified
-- [ ] Buyer declines counter — confirm DM updates to "↩️ Withdrawn" with buttons removed
+**Requires a second account — moved to Part 5.1b.** Accept/Deny/Counter is a live exchange between a seller's DM and a buyer's DM, so it needs two people/accounts watching for prompts around the same time — see Part 5.1b below.
 
 ### 3.7i Negotiation modes
 
 **What it does:** Controls whether bid negotiation is visible publicly in the forum thread or in a private thread.
 
-- [ ] With negotiation_mode=public: click "I'm Interested" — confirm bid notification posted in the public forum thread (visible to all); Accept/Deny/Counter buttons go to seller via DM
-- [ ] With negotiation_mode=private: click "I'm Interested" — confirm a private thread is created with buyer, seller, and bot; bid notification posted there; buttons go to seller via DM
+**Requires a second account — moved to Part 5.1c.** Verifying what each mode shows means comparing what the buyer's action produces against what the seller sees, which needs both identities — see Part 5.1c below.
 
 ### 3.7j `/marketplace close` and `/marketplace reopen`
 
@@ -1486,6 +1418,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Create an event with all fields (end_time, location, link, description) — confirm all appear in the embed
 - [ ] Confirm date formats work: `aug 22`, `August 22`, `august 22, 2026`
 - [ ] Confirm time formats work: `7pm`, `7:00 PM`, `19:00`
+- [ ] Attempt to create an event with a date/time already in the past — confirm the bot handles it gracefully (rejects with a clear error, or accepts per design) rather than silently creating a broken past event
 
 ### 3.8b `/host event cancel`
 
@@ -1523,7 +1456,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 **What it does:** Provides server configuration commands to members with the Admin role (or Manage Guild permission). Non-admins should not see these commands in the Discord command picker.
 
-- [ ] Confirm `/admin` commands are **not visible** in the command picker for regular members and hosts (cross-check using those accounts)
+- [ ] 👑 Confirm `/admin` commands are **not visible** in the command picker for regular members and hosts (cross-check using those accounts)
 - [ ] Confirm `/admin` commands **are visible** for members with the Admin role
 
 ### 3.9a `/admin event config`
@@ -1551,6 +1484,8 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 **What it does:** Force re-fetches a game's data from BoardGameGeek, overwriting cached BGG fields (thumbnail, how-to-play video, expansions, best player count).
 
+**Prerequisites:** the library must already contain a game with a BGG ID (added via BGG search rather than manual entry — see 3.4a) for the success case.
+
 - [ ] Run `/admin library sync game:Wingspan` — confirm updated embed shows with "✅ synced from BoardGameGeek" message
 - [ ] Run with a game name that doesn't exist in the library — confirm "not found" error with partial match suggestions
 - [ ] Run for a game with no BGG ID — confirm "no BGG ID — nothing to sync" error
@@ -1558,6 +1493,8 @@ All `/game` commands should be used inside an active event channel unless otherw
 ### 3.9d `/admin library syncall`
 
 **What it does:** Force re-syncs every game in the library from BoardGameGeek in one pass (slow, rate-limited). Admin-only.
+
+**Prerequisites:** the library should contain a small mix of games with and without a BGG ID, so both the "refreshed" and "skipped" counts can be verified in one run.
 
 - [ ] Run `/admin library syncall` with a small library — confirm all games with a BGG ID are refreshed and a summary count is shown
 - [ ] Confirm games with no BGG ID are skipped and counted separately (not treated as failures)
@@ -1642,7 +1579,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 **What it does:** Admin bulk-deletes listings by status, with an optional user filter.
 
-- [ ] Run as non-admin — confirm "requires Manage Server permission"
+- [ ] 👑 Run as non-admin — confirm "requires Manage Server permission"
 - [ ] Run as admin with no options — confirm sold + closed listings deleted, active/pending remain; reply shows `(filter: sold_closed)`
 - [ ] Run with `user:@member` and no status — confirm ALL of that member's listings are purged (default becomes `all` when user is specified); reply shows `(filter: all)`
 - [ ] Run with `status:Active` — confirm only active listings are removed, pending/sold/closed remain
@@ -1670,6 +1607,8 @@ These features are triggered by Discord events and scheduled timers rather than 
 
 **What it does:** 7 days after archiving, the bot locks the channel by setting `SendMessages: false` for everyone.
 
+**Prerequisites:** run 4.1 first so there's an archived event channel to lock.
+
 - [ ] Check `gamenights.json` for a record with `archived: true` and a `lockAt` date — confirm `locked` is not yet set
 - [ ] After the `lockAt` date passes (or manually set `lockAt` to a past date and restart the bot) — confirm:
   - Bot sets `SendMessages: false` on the channel
@@ -1681,6 +1620,8 @@ These features are triggered by Discord events and scheduled timers rather than 
 ## 4.3 Archived Channel Auto-Deletion
 
 **What it does:** If an admin sets `archive_retention_days` (via `/admin event config`, see 3.9a) to a non-zero value, the bot permanently deletes an archived channel once that many days have passed since the lock date. A value of 0 (the default) disables auto-deletion entirely.
+
+**Prerequisites:** run 4.2 first so there's a locked channel with a `lockAt` date to measure retention against.
 
 - [ ] With `archive_retention_days` unset or `0` — confirm an archived/locked channel is never auto-deleted, no matter how old
 - [ ] Set `archive_retention_days:14` via `/admin event config` — confirm the config summary shows "Archived channel retention: 14 days"
@@ -1717,12 +1658,99 @@ These features are triggered by Discord events and scheduled timers rather than 
 
 **What it does:** When a new member joins the server, the bot sends a welcome DM and posts a message in the configured welcome channel.
 
-- [ ] Have a user join the server — confirm the welcome message is automatically sent to the welcome channel and to the new member via DM
-- [ ] Confirm the message includes a link to the rules channel and Facebook group (if configured via `/admin welcome config`)
+**Requires a second account — moved to Part 5.2.** Triggering this needs an account actually joining the server (a `guildMemberAdd` event), which requires a second identity or a kick-and-reinvite of an alt — see Part 5.2 below.
 
 ---
 
-# Part 5 — General Edge Cases (Any Role)
+# Part 5 — Multi-Person Tests
+
+These test cases involve genuine back-and-forth between two distinct Discord identities, or a real join event — they can't be completed by one tester working alone, even with several test accounts on hand. Grouped by which pairing you need to recruit, so you can knock out everything for one pairing in a single sitting.
+
+**Prerequisites:**
+- A second, distinct Discord account (see the global Prerequisites section above — reusing one of your three test accounts is fine).
+- For 5.1: a marketplace forum channel configured (`/admin marketplace config`, 3.9m), and one account with an active sell or trade listing posted (`/marketplace post sell`/`post trade`, 1.7a/1.7b).
+- For 5.2: a welcome channel configured (`/admin welcome config`, 3.9j).
+
+## 5.1 Buyer + Seller — Marketplace Negotiation
+
+### 5.1a "I'm Interested" button flow
+
+**What it does:** Buyer clicks button, modal opens, bid is submitted, seller is notified.
+
+**Fixed-price sell listing:**
+- [ ] Click "I'm Interested" on a firm-price listing — confirm modal opens with a message field only (no bid amount field)
+- [ ] Submit the modal — confirm seller gets a DM notification with Accept/Deny/Counter buttons
+- [ ] Confirm the DM buttons disappear and a result stamp appears after the seller acts
+
+**Negotiable sell listing:**
+- [ ] Click "I'm Interested" on a negotiable listing — confirm modal shows asking price as reference and a bid amount field
+- [ ] Enter a bid amount and submit — confirm bid posted in forum thread (public mode) or private thread (private mode)
+- [ ] Confirm seller gets DM with bid amount and Accept/Deny/Counter buttons
+- [ ] Confirm listing status updates to 🟡 Pending in the forum post
+- [ ] Click "I'm Interested" again as the same user — confirm error: "You already have an open bid"
+- [ ] Click "I'm Interested" as the seller — confirm error: "You can't bid on your own listing"
+
+**Trade listing:**
+- [ ] Click "I'm Interested" on a trade listing — confirm modal shows "what I'll offer in exchange" field instead of price field
+- [ ] Submit with offer text — confirm offer appears in the forum thread notification
+
+**Edge cases:**
+- [ ] As buyer, submit a bid amount of 0 or a non-numeric value on a negotiable listing — confirm graceful validation rather than a broken bid
+- [ ] Have two different buyer accounts both open bids on the same negotiable listing — confirm the seller sees both as separate open bids and can act on each independently
+
+### 5.1b Negotiation — Accept / Deny / Counter
+
+**What it does:** Seller responds to bids with Accept, Deny, or Counter buttons sent via DM (or thread fallback if DMs are disabled).
+
+**Accept:**
+- [ ] Seller clicks Accept on a bid in their DM — confirm the DM message updates to "✅ Accepted — deal done!" with buttons removed
+- [ ] Confirm listing status becomes 🔴 Sold in forum post
+- [ ] Confirm buyer gets DM: "Your bid was accepted"
+- [ ] If other open bids exist, confirm those buyers get DM: "sold to someone else"
+- [ ] Confirm a "Deal done!" conclusion post appears in the forum thread before it archives
+- [ ] Confirm forum thread is archived
+
+**Deny:**
+- [ ] Seller clicks Deny — confirm DM message updates to "❌ Declined — bid denied." with buttons removed
+- [ ] Confirm buyer is notified
+- [ ] If no other open bids, confirm listing reverts to 🟢 Active
+- [ ] If other bids still open, confirm listing stays 🟡 Pending
+
+**Counter:**
+- [ ] Seller clicks Counter — confirm modal opens for counter amount and message
+- [ ] Confirm DM message updates to "💬 Counter offer sent — waiting for response." with buttons removed
+- [ ] Buyer receives DM with counter details and Accept/Decline buttons
+- [ ] Buyer accepts counter — confirm buyer's DM updates to "✅ Accepted" with buttons removed; listing becomes Sold; seller notified
+- [ ] Buyer declines counter — confirm DM updates to "↩️ Withdrawn" with buttons removed
+
+**Edge cases:**
+- [ ] Disable "Allow direct messages from server members" on the seller's account before a buyer bids — confirm the Accept/Deny/Counter prompt falls back to a thread instead of failing silently (per the "What it does" note above)
+- [ ] Seller tries to act on a bid a second time after already accepting/denying it (e.g. a stale DM with old buttons) — confirm the bot rejects the duplicate action rather than double-processing it
+
+### 5.1c Negotiation modes (public vs. private)
+
+**What it does:** Controls whether bid negotiation is visible publicly in the forum thread or in a private thread.
+
+- [ ] With negotiation_mode=public: click "I'm Interested" — confirm bid notification posted in the public forum thread (visible to all); Accept/Deny/Counter buttons go to seller via DM
+- [ ] With negotiation_mode=private: click "I'm Interested" — confirm a private thread is created with buyer, seller, and bot; bid notification posted there; buttons go to seller via DM
+
+**Edge cases:**
+- [ ] 👑 In private mode, have a third account (neither buyer nor seller) try to view or join the private negotiation thread — confirm they cannot see it (a server owner can typically still see private threads via Discord's own `Manage Threads` permission, which owners always have — this isn't a bot bug, it's Discord's platform behavior)
+
+## 5.2 New Member Join — Welcome Flow
+
+**What it does:** When a new member joins the server, the bot sends a welcome DM and posts a message in the configured welcome channel.
+
+- [ ] Have a second account join the server (a fresh account, or an existing test account you first kick and then re-invite) — confirm the welcome message is automatically sent to the welcome channel and to the new member via DM
+- [ ] Confirm the message includes a link to the rules channel and Facebook group (if configured via `/admin welcome config`)
+
+**Edge cases:**
+- [ ] Trigger a join with `/admin welcome config` left at defaults (no rules channel or Facebook URL set) — confirm the welcome message still sends cleanly without a broken link or placeholder text
+- [ ] Disable DMs on the joining account beforehand — confirm the channel post still happens even if the DM can't be delivered
+
+---
+
+# Part 6 — General Edge Cases (Any Role)
 
 Run through this section once, regardless of which tier you're testing.
 

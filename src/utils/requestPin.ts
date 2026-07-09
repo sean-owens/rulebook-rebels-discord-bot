@@ -117,8 +117,8 @@ export async function updateGameListPin(client: Client, eventId: string): Promis
   const msg = await channel.send({ embeds: [embed] });
   try {
     await msg.pin();
-  } catch {
-    /* may lack ManageMessages — embed still posts */
+  } catch (err) {
+    console.warn(`Could not pin game list message in channel ${gameNight.eventChannelId}:`, err);
   }
 
   gameNight.gameListPinMessageId = msg.id;
@@ -181,8 +181,8 @@ export async function updateRequestPin(client: Client, eventId: string): Promise
   const msg = await channel.send({ embeds: [embed] });
   try {
     await msg.pin();
-  } catch {
-    /* may lack ManageMessages — embed still posts */
+  } catch (err) {
+    console.warn(`Could not pin request message in channel ${gameNight.eventChannelId}:`, err);
   }
 
   gameNight.requestPinMessageId = msg.id;

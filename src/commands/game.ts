@@ -259,8 +259,11 @@ async function handleSuggest(interaction: ChatInputCommandInteraction): Promise<
   if (channelMatch) {
     pendingEventContext.set(interaction.user.id, channelMatch.id);
     // fall through with channelMatch as the resolved event
-  } else if (upcoming.length > 1) {
-    // Outside an event channel with multiple events — show picker.
+  } else {
+    // Outside an event channel — always show the picker, even with a single upcoming event.
+    // Selecting an option is what records pendingEventContext (see handleEventSelect); skipping
+    // this step for the single-event case left later steps (tag picker, expansion select, bring
+    // confirm) unable to resolve the event, since they look it up by channel or pendingEventContext.
     pendingEventSuggest.set(interaction.user.id, { title, withExpansions });
     const options = await Promise.all(
       upcoming.map(async (gn) => {
