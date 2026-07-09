@@ -1,6 +1,7 @@
 import { ChatInputCommandInteraction, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
 import {
   handleCreate as handleEventCreate,
+  handleEdit as handleEventEdit,
   handleCancel as handleEventCancel,
   handleArchiveOld as handleEventArchive,
 } from './gamenight';
@@ -62,6 +63,50 @@ export const data = new SlashCommandBuilder()
       )
       .addSubcommand((sub) =>
         sub
+          .setName('edit')
+          .setDescription('Update an existing game night without cancelling and recreating it')
+          .addStringOption((opt) =>
+            opt
+              .setName('id')
+              .setDescription('Game night ID (shown in the event embed footer)')
+              .setRequired(true),
+          )
+          .addStringOption((opt) =>
+            opt
+              .setName('title')
+              .setDescription('New event name')
+              .setRequired(false),
+          )
+          .addStringOption((opt) =>
+            opt
+              .setName('date')
+              .setDescription('New date (e.g. "August 22" or "aug 22")')
+              .setRequired(false),
+          )
+          .addStringOption((opt) =>
+            opt
+              .setName('time')
+              .setDescription('New start time (e.g. "7pm" or "7:00 PM")')
+              .setRequired(false),
+          )
+          .addStringOption((opt) =>
+            opt
+              .setName('end_time')
+              .setDescription('New end time (e.g. "10pm")')
+              .setRequired(false),
+          )
+          .addStringOption((opt) =>
+            opt.setName('location').setDescription('New location').setRequired(false),
+          )
+          .addStringOption((opt) =>
+            opt.setName('link').setDescription('New URL (e.g. map link, event page)').setRequired(false),
+          )
+          .addStringOption((opt) =>
+            opt.setName('description').setDescription('New extra notes').setRequired(false),
+          ),
+      )
+      .addSubcommand((sub) =>
+        sub
           .setName('cancel')
           .setDescription('Cancel a game night')
           .addStringOption((opt) =>
@@ -107,6 +152,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
   if (group === 'event') {
     if (sub === 'create') await handleEventCreate(interaction);
+    else if (sub === 'edit') await handleEventEdit(interaction);
     else if (sub === 'cancel') await handleEventCancel(interaction);
     else if (sub === 'archive') await handleEventArchive(interaction);
   } else if (group === 'game') {

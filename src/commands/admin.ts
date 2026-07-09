@@ -94,6 +94,43 @@ export const data = new SlashCommandBuilder()
               )
               .setRequired(false)
               .setMinValue(0),
+          )
+          .addIntegerOption((opt) =>
+            opt
+              .setName('lock_hours_before_event')
+              .setDescription(
+                'Lock game suggestions/seats this many hours before an event and run the scheduler (0 = disabled)',
+              )
+              .setRequired(false)
+              .setMinValue(0),
+          )
+          .addIntegerOption((opt) =>
+            opt
+              .setName('table_count')
+              .setDescription('Number of tables available to schedule games in parallel (default: 1)')
+              .setRequired(false)
+              .setMinValue(1),
+          )
+          .addIntegerOption((opt) =>
+            opt
+              .setName('light_buffer_minutes')
+              .setDescription('Minutes added to Light games\' playtime for teach/overflow when scheduling (default: 20)')
+              .setRequired(false)
+              .setMinValue(0),
+          )
+          .addIntegerOption((opt) =>
+            opt
+              .setName('medium_buffer_minutes')
+              .setDescription('Minutes added to Medium games\' playtime for teach/overflow when scheduling (default: 30)')
+              .setRequired(false)
+              .setMinValue(0),
+          )
+          .addIntegerOption((opt) =>
+            opt
+              .setName('heavy_buffer_minutes')
+              .setDescription('Minutes added to Heavy games\' playtime for teach/overflow when scheduling (default: 40)')
+              .setRequired(false)
+              .setMinValue(0),
           ),
       ),
   )

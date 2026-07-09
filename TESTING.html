@@ -1438,7 +1438,23 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Confirm time formats work: `7pm`, `7:00 PM`, `19:00`
 - [ ] Attempt to create an event with a date/time already in the past — confirm the bot handles it gracefully (rejects with a clear error, or accepts per design) rather than silently creating a broken past event
 
-### 2.8b `/host event cancel`
+### 2.8b `/host event edit`
+
+**What it does:** Updates an existing game night in place — title, date, time, end_time, location, link, and description are all editable — without cancelling and recreating it. The Discord scheduled event, event channel name/topic, and RSVP embed are all kept in sync.
+
+**Prerequisites:** an event must already exist (created via 2.8a) — grab its ID from the RSVP embed footer.
+
+- [ ] Run `/host event edit id:<event-id>` with no other options — confirm "Provide at least one field to update" error
+- [ ] Run `/host event edit id:<event-id> location:New Venue` — confirm the RSVP embed updates to show the new location
+- [ ] Run `/host event edit id:<event-id> title:New Title` — confirm the event channel is renamed and re-topic'd, the Discord scheduled event's name updates, and the RSVP embed title updates
+- [ ] Run `/host event edit id:<event-id> date:<a new date>` with no `end_time` — confirm the event's overall duration is preserved (end time shifts by the same amount as the date/start time)
+- [ ] Run `/host event edit id:<event-id> end_time:<a new end time>` — confirm only the end time changes
+- [ ] Attempt to edit with an invalid ID — confirm "No event found" error
+- [ ] Attempt to edit a cancelled event — confirm "already cancelled and cannot be edited" error
+- [ ] Attempt to edit an archived event — confirm "already concluded and cannot be edited" error
+- [ ] Attempt to parse an invalid date/time — confirm a clear parse error, matching `/host event create`'s error style
+
+### 2.8c `/host event cancel`
 
 **What it does:** Cancels a game night, deletes the Discord scheduled event, removes the RSVP embed, and cleans up the event channel.
 
@@ -1447,21 +1463,21 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Attempt to cancel with an invalid ID — confirm "No event found" error
 - [ ] Attempt to cancel an already-cancelled event — confirm "already cancelled" error
 
-### 2.8c `/host event archive`
+### 2.8d `/host event archive`
 
 **What it does:** Manually archives channels for all past events that haven't been archived yet.
 
 - [ ] Run `/host event archive` with no past events — confirm "No past event channels to archive"
 - [ ] Run with a past event — confirm channel moves to "Archive" category and a lock-date message is posted
 
-### 2.8d `/host game cancel`
+### 2.8e `/host game cancel`
 
 **What it does:** Removes any game from the event lineup regardless of who suggested it.
 
 - [ ] Remove another user's game: `/host game cancel title:Wingspan` — confirm card is deleted
 - [ ] Attempt to cancel a game not in the lineup — confirm "No game called X found" error
 
-### 2.8e `/host library unrequest`
+### 2.8f `/host library unrequest`
 
 **What it does:** Shows all game requests for an event (not just the host's own) and allows removing any of them.
 
@@ -1931,7 +1947,23 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Confirm time formats work: `7pm`, `7:00 PM`, `19:00`
 - [ ] Attempt to create an event with a date/time already in the past — confirm the bot handles it gracefully (rejects with a clear error, or accepts per design) rather than silently creating a broken past event
 
-### 3.8b `/host event cancel`
+### 3.8b `/host event edit`
+
+**What it does:** Updates an existing game night in place — title, date, time, end_time, location, link, and description are all editable — without cancelling and recreating it. The Discord scheduled event, event channel name/topic, and RSVP embed are all kept in sync.
+
+**Prerequisites:** an event must already exist (created via 3.8a) — grab its ID from the RSVP embed footer.
+
+- [ ] Run `/host event edit id:<event-id>` with no other options — confirm "Provide at least one field to update" error
+- [ ] Run `/host event edit id:<event-id> location:New Venue` — confirm the RSVP embed updates to show the new location
+- [ ] Run `/host event edit id:<event-id> title:New Title` — confirm the event channel is renamed and re-topic'd, the Discord scheduled event's name updates, and the RSVP embed title updates
+- [ ] Run `/host event edit id:<event-id> date:<a new date>` with no `end_time` — confirm the event's overall duration is preserved (end time shifts by the same amount as the date/start time)
+- [ ] Run `/host event edit id:<event-id> end_time:<a new end time>` — confirm only the end time changes
+- [ ] Attempt to edit with an invalid ID — confirm "No event found" error
+- [ ] Attempt to edit a cancelled event — confirm "already cancelled and cannot be edited" error
+- [ ] Attempt to edit an archived event — confirm "already concluded and cannot be edited" error
+- [ ] Attempt to parse an invalid date/time — confirm a clear parse error, matching `/host event create`'s error style
+
+### 3.8c `/host event cancel`
 
 **What it does:** Cancels a game night, deletes the Discord scheduled event, removes the RSVP embed, and cleans up the event channel.
 
@@ -1940,21 +1972,21 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Attempt to cancel with an invalid ID — confirm "No event found" error
 - [ ] Attempt to cancel an already-cancelled event — confirm "already cancelled" error
 
-### 3.8c `/host event archive`
+### 3.8d `/host event archive`
 
 **What it does:** Manually archives channels for all past events that haven't been archived yet.
 
 - [ ] Run `/host event archive` with no past events — confirm "No past event channels to archive"
 - [ ] Run with a past event — confirm channel moves to "Archive" category and a lock-date message is posted
 
-### 3.8d `/host game cancel`
+### 3.8e `/host game cancel`
 
 **What it does:** Removes any game from the event lineup regardless of who suggested it.
 
 - [ ] Remove another user's game: `/host game cancel title:Wingspan` — confirm card is deleted
 - [ ] Attempt to cancel a game not in the lineup — confirm "No game called X found" error
 
-### 3.8e `/host library unrequest`
+### 3.8f `/host library unrequest`
 
 **What it does:** Shows all game requests for an event (not just the caller's own) and allows removing any of them.
 
@@ -1983,6 +2015,10 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Set `archive_retention_days:14` — confirm it saves and the config summary shows "14 days"
 - [ ] Set `archive_retention_days:3` (below the 7-day minimum) — confirm it is floored to 7 days
 - [ ] Set `archive_retention_days:0` — confirm the config summary shows "Never auto-delete"
+- [ ] Set `lock_hours_before_event:24` — confirm the config summary shows "24h before event"
+- [ ] Set `lock_hours_before_event:0` (the default) — confirm the config summary shows "Disabled"
+- [ ] Set `table_count:2` — confirm it saves and the config summary reflects it (see 4.7 for the scheduler behavior this feeds)
+- [ ] Set `light_buffer_minutes`, `medium_buffer_minutes`, `heavy_buffer_minutes` — confirm all three save independently and appear in the config summary
 
 ### 3.9b `/admin library clear`
 
@@ -2170,6 +2206,27 @@ These features are triggered by Discord events and scheduled timers rather than 
 **What it does:** When a new member joins the server, the bot sends a welcome DM and posts a message in the configured welcome channel.
 
 **Requires a second account — moved to Part 5.2.** Triggering this needs an account actually joining the server (a `guildMemberAdd` event), which requires a second identity or a kick-and-reinvite of an alt — see Part 5.2 below.
+
+## 4.7 Lineup Lock + Scheduler
+
+**What it does:** If `lock_hours_before_event` is set (via `/admin event config`, 3.9a — 0 disables this entirely, which is the default), the bot locks an event's game suggestions and seats that many hours before its start time, then posts a suggested schedule packing the suggested games into rounds across `table_count` parallel tables so no player is double-booked in the same round. Game durations use each game's stored playtime plus a teach/overflow buffer based on its complexity (Light/Medium/Heavy — also configurable via 3.9a). This runs on the same hourly check as archiving (4.1-4.3), plus once on bot startup.
+
+**Prerequisites:**
+- `lock_hours_before_event` set to a non-zero value via `/admin event config` (3.9a).
+- An event with several suggested games (`/game suggest`, 1.3a), seated by more than one confirmed player each — use several test accounts so some games can be given overlapping players (to see round conflicts) and others distinct players (to see them land in the same round).
+- To trigger the lock without waiting for real time to pass, manually set a game night's `startTimeISO` in storage to fall within the configured lock window and wait for the next hourly check (or restart the bot).
+
+- [ ] With the lock threshold crossed, confirm the bot posts a "🔒 Lineup Locked" embed in the event channel listing each round's table assignments
+- [ ] Confirm two games that share a seated player never appear in the same round
+- [ ] Confirm two games with no shared players can land in the same round (up to `table_count` per round)
+- [ ] Confirm a game below its minimum player count appears under "Not scheduled" with a reason, rather than being silently dropped
+- [ ] Confirm the embed footer notes whether the estimated total fits within the event's start–end window
+- [ ] After locking, run `/game suggest` in that event's channel — confirm it's rejected with a lineup-locked message instead of prompting to add a game
+- [ ] After locking, click **Join** or **Leave** on an existing game card — confirm both are rejected with the same lineup-locked message
+- [ ] After locking, click **Join Waitlist** or **Leave Waitlist** — confirm both are rejected the same way
+- [ ] Confirm an event is only locked/scheduled once — running the hourly check again after locking doesn't re-post the schedule or re-lock
+- [ ] Confirm a cancelled or already-archived event is never locked/scheduled, even past its threshold
+- [ ] Set `lock_hours_before_event` back to `0` — confirm no further events get locked, and existing unlocked events remain fully open
 
 ---
 

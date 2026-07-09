@@ -82,6 +82,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
               name: '🎙️  /host — Event & moderation tools',
               value: [
                 '`/host event create` — Schedule a new game night',
+                '`/host event edit` — Update an existing game night',
                 '`/host event cancel` — Cancel a game night',
                 '`/host event archive` — Archive past event channels',
                 '`/host game cancel` — Remove any game from the event lineup',

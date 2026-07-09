@@ -37,7 +37,8 @@ import {
   findGamesByEvent,
 } from '../utils/gameStorage';
 import { buildGameEmbed, buildGameButtons, buildBggAttachment } from '../utils/gameEmbeds';
-import { loadGameNights, GameNight } from '../utils/storage';
+import { loadGameNights, findGameNight, GameNight } from '../utils/storage';
+import { isLineupLocked, LOCK_MESSAGE } from '../utils/scheduler';
 import {
   findGamesByName,
   findGameNamesByPartial,
@@ -367,6 +368,11 @@ async function handleSuggest(interaction: ChatInputCommandInteraction): Promise<
   }
 
   const gameNight = channelMatch ?? upcoming[0];
+
+  if (isLineupLocked(gameNight)) {
+    await interaction.reply({ content: LOCK_MESSAGE, flags: MessageFlags.Ephemeral });
+    return;
+  }
 
   // Check the group library — exact match first
   const libraryMatches = await findGamesByName(interaction.guildId!, title);
@@ -1157,6 +1163,11 @@ export async function handleGameJoin(
     await interaction.reply({ content: 'Game not found.', flags: MessageFlags.Ephemeral });
     return;
   }
+  const gameNight = await findGameNight(game.eventId);
+  if (gameNight && isLineupLocked(gameNight)) {
+    await interaction.reply({ content: LOCK_MESSAGE, flags: MessageFlags.Ephemeral });
+    return;
+  }
 
   const userId = interaction.user.id;
   if (game.seats.includes(userId)) {
@@ -1194,6 +1205,11 @@ export async function handleGameLeave(
     await interaction.reply({ content: 'Game not found.', flags: MessageFlags.Ephemeral });
     return;
   }
+  const gameNight = await findGameNight(game.eventId);
+  if (gameNight && isLineupLocked(gameNight)) {
+    await interaction.reply({ content: LOCK_MESSAGE, flags: MessageFlags.Ephemeral });
+    return;
+  }
 
   const userId = interaction.user.id;
   if (!game.seats.includes(userId)) {
@@ -1227,6 +1243,11 @@ export async function handleWaitlistJoin(
   const game = await findGame(gameId);
   if (!game) {
     await interaction.reply({ content: 'Game not found.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  const gameNight = await findGameNight(game.eventId);
+  if (gameNight && isLineupLocked(gameNight)) {
+    await interaction.reply({ content: LOCK_MESSAGE, flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -1279,6 +1300,11 @@ export async function handleWaitlistLeave(
   const game = await findGame(gameId);
   if (!game) {
     await interaction.reply({ content: 'Game not found.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  const gameNight = await findGameNight(game.eventId);
+  if (gameNight && isLineupLocked(gameNight)) {
+    await interaction.reply({ content: LOCK_MESSAGE, flags: MessageFlags.Ephemeral });
     return;
   }
 

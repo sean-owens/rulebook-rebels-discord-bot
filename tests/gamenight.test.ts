@@ -222,3 +222,238 @@ describe('handleCreate', () => {
     expect(embedTitle).toMatch(/^Trivia Night — .*August 22/);
   });
 });
+
+// ── handleEdit ────────────────────────────────────────────────────────────
+
+describe('handleEdit', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-gamenight-edit-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  async function seedGameNight(overrides: Partial<Record<string, unknown>> = {}) {
+    const { upsertGameNight } = await import('../src/utils/storage');
+    const start = new Date('2026-08-22T19:00:00.000Z');
+    const end = new Date('2026-08-22T23:00:00.000Z');
+    const gn = {
+      id: 'gn-edit-1',
+      title: 'Board Game Bash',
+      date: 'Saturday, August 22, 2026',
+      time: '7:00 PM – 11:00 PM',
+      location: 'Library Room 1',
+      link: '',
+      description: '',
+      messageId: 'announcement-msg-1',
+      channelId: 'announcements',
+      guildId: 'guild-1',
+      discordEventId: 'sched-1',
+      eventChannelId: 'event-channel-1',
+      startTimeISO: start.toISOString(),
+      endTimeISO: end.toISOString(),
+      rsvps: { yes: [], maybe: [], no: [] },
+      createdBy: 'host-1',
+      cancelled: false,
+      archived: false,
+      createdAt: new Date().toISOString(),
+      ...overrides,
+    };
+    await upsertGameNight(gn as any);
+    return gn;
+  }
+
+  function makeClientForEdit() {
+    const eventChannel = {
+      setName: vi.fn(async () => {}),
+      setTopic: vi.fn(async () => {}),
+    };
+    const announcementMsg = { edit: vi.fn(async () => {}) };
+    const announcementChannel = {
+      type: 0, // ChannelType.GuildText
+      messages: { fetch: vi.fn(async () => announcementMsg) },
+    };
+    const scheduledEvent = { edit: vi.fn(async () => {}) };
+    return {
+      channels: {
+        fetch: vi.fn(async (id: string) => {
+          if (id === 'event-channel-1') return eventChannel;
+          if (id === 'announcements') return announcementChannel;
+          return null;
+        }),
+      },
+      guilds: { fetch: vi.fn(async () => ({ members: { fetch: vi.fn() } })) },
+      _eventChannel: eventChannel,
+      _announcementMsg: announcementMsg,
+      _scheduledEvent: scheduledEvent,
+    };
+  }
+
+  function makeEditInteraction(
+    options: Record<string, string | null>,
+    client: ReturnType<typeof makeClientForEdit>,
+  ) {
+    return {
+      guild: {
+        scheduledEvents: { fetch: vi.fn(async () => client._scheduledEvent) },
+      },
+      guildId: 'guild-1',
+      client,
+      user: { id: 'host-2' },
+      memberPermissions: { has: () => true },
+      options: { getString: (name: string) => options[name] ?? null },
+      reply: vi.fn(async () => {}),
+      deferReply: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
+    } as any;
+  }
+
+  it('updates the stored fields and confirms via editReply', async () => {
+    const { handleEdit } = await import('../src/commands/gamenight');
+    const { findGameNight } = await import('../src/utils/storage');
+    await seedGameNight();
+    const client = makeClientForEdit();
+
+    const interaction = makeEditInteraction(
+      { id: 'gn-edit-1', location: 'New Venue', title: null, date: null, time: null, end_time: null, link: null, description: null },
+      client,
+    );
+    await handleEdit(interaction);
+
+    const gn = await findGameNight('gn-edit-1');
+    expect(gn?.location).toBe('New Venue');
+    expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining('updated'));
+  });
+
+  it('renames and retopics the channel when the title changes', async () => {
+    const { handleEdit } = await import('../src/commands/gamenight');
+    await seedGameNight();
+    const client = makeClientForEdit();
+
+    const interaction = makeEditInteraction(
+      { id: 'gn-edit-1', title: 'Trivia Night', date: null, time: null, end_time: null, location: null, link: null, description: null },
+      client,
+    );
+    await handleEdit(interaction);
+
+    expect(client._eventChannel.setName).toHaveBeenCalledWith('august-22-trivia-night');
+    expect(client._eventChannel.setTopic).toHaveBeenCalledWith(expect.stringContaining('Trivia Night'));
+  });
+
+  it('syncs the Discord scheduled event', async () => {
+    const { handleEdit } = await import('../src/commands/gamenight');
+    await seedGameNight();
+    const client = makeClientForEdit();
+
+    const interaction = makeEditInteraction(
+      { id: 'gn-edit-1', title: 'Trivia Night', date: null, time: null, end_time: null, location: null, link: null, description: null },
+      client,
+    );
+    await handleEdit(interaction);
+
+    expect(client._scheduledEvent.edit).toHaveBeenCalledWith(
+      expect.objectContaining({ name: expect.stringContaining('Trivia Night') }),
+    );
+  });
+
+  it('re-renders the RSVP embed', async () => {
+    const { handleEdit } = await import('../src/commands/gamenight');
+    await seedGameNight();
+    const client = makeClientForEdit();
+
+    const interaction = makeEditInteraction(
+      { id: 'gn-edit-1', location: 'New Venue', title: null, date: null, time: null, end_time: null, link: null, description: null },
+      client,
+    );
+    await handleEdit(interaction);
+
+    expect(client._announcementMsg.edit).toHaveBeenCalled();
+  });
+
+  it('preserves the original duration when the date shifts without a new end_time', async () => {
+    const { handleEdit } = await import('../src/commands/gamenight');
+    const { findGameNight } = await import('../src/utils/storage');
+    await seedGameNight();
+    const client = makeClientForEdit();
+
+    const interaction = makeEditInteraction(
+      { id: 'gn-edit-1', date: 'August 29', title: null, time: null, end_time: null, location: null, link: null, description: null },
+      client,
+    );
+    await handleEdit(interaction);
+
+    const gn = await findGameNight('gn-edit-1');
+    const durationMs = new Date(gn!.endTimeISO!).getTime() - new Date(gn!.startTimeISO!).getTime();
+    expect(durationMs).toBe(4 * 60 * 60 * 1000); // original 7pm-11pm = 4 hours
+  });
+
+  it('replies with an error and does not defer when no fields are provided', async () => {
+    const { handleEdit } = await import('../src/commands/gamenight');
+    await seedGameNight();
+    const client = makeClientForEdit();
+
+    const interaction = makeEditInteraction(
+      { id: 'gn-edit-1', title: null, date: null, time: null, end_time: null, location: null, link: null, description: null },
+      client,
+    );
+    await handleEdit(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('at least one field') }),
+    );
+    expect(interaction.deferReply).not.toHaveBeenCalled();
+  });
+
+  it('replies with an error for an unknown event id', async () => {
+    const { handleEdit } = await import('../src/commands/gamenight');
+    const client = makeClientForEdit();
+
+    const interaction = makeEditInteraction(
+      { id: 'no-such-id', title: 'New Title', date: null, time: null, end_time: null, location: null, link: null, description: null },
+      client,
+    );
+    await handleEdit(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('No event found') }),
+    );
+  });
+
+  it('refuses to edit a cancelled event', async () => {
+    const { handleEdit } = await import('../src/commands/gamenight');
+    await seedGameNight({ cancelled: true });
+    const client = makeClientForEdit();
+
+    const interaction = makeEditInteraction(
+      { id: 'gn-edit-1', title: 'New Title', date: null, time: null, end_time: null, location: null, link: null, description: null },
+      client,
+    );
+    await handleEdit(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('already cancelled') }),
+    );
+  });
+
+  it('refuses to edit an archived event', async () => {
+    const { handleEdit } = await import('../src/commands/gamenight');
+    await seedGameNight({ archived: true });
+    const client = makeClientForEdit();
+
+    const interaction = makeEditInteraction(
+      { id: 'gn-edit-1', title: 'New Title', date: null, time: null, end_time: null, location: null, link: null, description: null },
+      client,
+    );
+    await handleEdit(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('already concluded') }),
+    );
+  });
+});
