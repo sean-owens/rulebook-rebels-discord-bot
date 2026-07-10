@@ -956,12 +956,26 @@ async function applyBGGDataToGameInfo(info: GameInfo, bggGame: BGGGame, force: b
   });
 }
 
+function isFullyEnriched(info: GameInfo): boolean {
+  return (
+    info.tags !== undefined &&
+    info.bggExpansions !== undefined &&
+    info.bestPlayers !== undefined &&
+    info.complexity !== undefined &&
+    info.howToPlayUrl !== undefined &&
+    info.thumbnail !== undefined
+  );
+}
+
 export async function handleSyncAll(interaction: ChatInputCommandInteraction): Promise<void> {
-  const allInfos = (await loadGameInfos()).filter((i) => !!i.objectid);
+  const force = interaction.options.getBoolean('force') ?? true;
+  const allInfos = (await loadGameInfos()).filter((i) => !!i.objectid && (force || !isFullyEnriched(i)));
 
   if (allInfos.length === 0) {
     await interaction.reply({
-      content: 'No library games with a BGG ID found — nothing to sync.',
+      content: force
+        ? 'No library games with a BGG ID found — nothing to sync.'
+        : 'No library games are missing BGG data — nothing to enrich.',
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -976,7 +990,7 @@ export async function handleSyncAll(interaction: ChatInputCommandInteraction): P
   // 1 XMLAPI2 call per batch of 20 + 500ms per game for video API
   const estimatedSecs = Math.ceil(batches.length * (BATCH_DELAY_MS / 1000) + allInfos.length * (VIDEO_DELAY_MS / 1000));
   await interaction.reply({
-    content: `Syncing **${allInfos.length}** game(s) in **${batches.length}** BGG batch(es) — estimated **${estimatedSecs}s**. Do not run again until this completes.`,
+    content: `${force ? 'Syncing' : 'Enriching'} **${allInfos.length}** game(s) in **${batches.length}** BGG batch(es) — estimated **${estimatedSecs}s**. Do not run again until this completes.`,
     flags: MessageFlags.Ephemeral,
   });
 
@@ -992,7 +1006,7 @@ export async function handleSyncAll(interaction: ChatInputCommandInteraction): P
       for (const bggGame of games) {
         const info = idToInfo.get(bggGame.id);
         if (!info) continue;
-        await applyBGGDataToGameInfo(info, bggGame, true);
+        await applyBGGDataToGameInfo(info, bggGame, force);
         updated++;
       }
     } catch {
@@ -1001,7 +1015,7 @@ export async function handleSyncAll(interaction: ChatInputCommandInteraction): P
   }
 
   await interaction.followUp({
-    content: `Sync complete — **${updated}** updated, **${failed}** failed.`,
+    content: `${force ? 'Sync' : 'Enrich'} complete — **${updated}** updated, **${failed}** failed.`,
     flags: MessageFlags.Ephemeral,
   });
 }
@@ -1009,16 +1023,7 @@ export async function handleSyncAll(interaction: ChatInputCommandInteraction): P
 export async function enrichFromBGG(canonical: string, force = false): Promise<void> {
   const info = await getGameInfo(canonical);
   if (!info?.objectid) return;
-  if (
-    !force &&
-    info.tags !== undefined &&
-    info.bggExpansions !== undefined &&
-    info.bestPlayers !== undefined &&
-    info.complexity !== undefined &&
-    info.howToPlayUrl !== undefined &&
-    info.thumbnail !== undefined
-  )
-    return;
+  if (!force && isFullyEnriched(info)) return;
   try {
     const bggGame = await getBGGGame(info.objectid);
     await applyBGGDataToGameInfo(info, bggGame, force);
