@@ -14,11 +14,16 @@ function makeRolesCollection(roles: Array<{ id: string; permissions: { has: (p: 
 }
 
 function makeGuild(opts: { existingCategory?: boolean; unresolvableIds?: string[] } = {}) {
-  const eventChannel = {
+  const eventChannel: any = {
     id: 'room-channel-1',
+    name: 'room-channel-1',
     permissionOverwrites: { create: vi.fn(async () => {}) },
     send: vi.fn(async () => {}),
+    setTopic: vi.fn(async () => {}),
   };
+  eventChannel.setName = vi.fn(async (n: string) => {
+    eventChannel.name = n;
+  });
   const category = { id: 'category-1', type: 4, name: 'Private Rooms' };
   const channelsCreate = vi.fn(async (createOpts: { type: number }) => {
     return createOpts.type === 4 ? category : eventChannel;
@@ -295,6 +300,28 @@ describe('/room create', () => {
     expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining('persists until closed'));
   });
 
+  it('prefixes the channel name and topic with the pin icon for a persistent room', async () => {
+    const guild = makeGuild();
+    const interaction = makeInteraction({ sub: 'create', people: '<@111>', persist: true }, guild);
+
+    await execute(interaction);
+
+    expect(guild._channelsCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ name: expect.stringContaining('📌'), topic: expect.stringContaining('📌') }),
+    );
+  });
+
+  it('does not prefix the channel name with the pin icon for a normal expiring room', async () => {
+    const guild = makeGuild();
+    const interaction = makeInteraction({ sub: 'create', people: '<@111>', date: FUTURE_DATE_STR }, guild);
+
+    await execute(interaction);
+
+    expect(guild._channelsCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ name: expect.not.stringContaining('📌') }),
+    );
+  });
+
   it('requires a date when persist is not set to true', async () => {
     const guild = makeGuild();
     const interaction = makeInteraction({ sub: 'create', people: '<@111>', date: null }, guild);
@@ -503,6 +530,39 @@ describe('/room persist', () => {
     );
   });
 
+  it('adds the pin icon to the channel name and topic when turning persistence on', async () => {
+    const guild = makeGuild();
+    await createRoom(guild, 'creator-1');
+    const interaction = makeInteraction(
+      { sub: 'persist', enabled: true },
+      guild,
+      'creator-1',
+      'room-channel-1',
+    );
+
+    await execute(interaction);
+
+    expect(guild._eventChannel.setName).toHaveBeenCalledWith(expect.stringContaining('📌'));
+    expect(guild._eventChannel.setTopic).toHaveBeenCalledWith(expect.stringContaining('📌'));
+  });
+
+  it('removes the pin icon from the channel name and topic when turning persistence off', async () => {
+    const guild = makeGuild();
+    const createInteraction = makeInteraction({ sub: 'create', people: '<@111>', persist: true }, guild, 'creator-1');
+    await execute(createInteraction);
+    const interaction = makeInteraction(
+      { sub: 'persist', enabled: false, date: FUTURE_DATE_STR },
+      guild,
+      'creator-1',
+      'room-channel-1',
+    );
+
+    await execute(interaction);
+
+    expect(guild._eventChannel.setName).toHaveBeenCalledWith(expect.not.stringContaining('📌'));
+    expect(guild._eventChannel.setTopic).toHaveBeenCalledWith(expect.not.stringContaining('📌'));
+  });
+
   it('requires a date when turning persistence back off', async () => {
     const guild = makeGuild();
     const createInteraction = makeInteraction({ sub: 'create', people: '<@111>', persist: true }, guild, 'creator-1');
@@ -583,6 +643,160 @@ describe('/room persist', () => {
   it('replies with a clear error when run outside a private room channel', async () => {
     const guild = makeGuild();
     const interaction = makeInteraction({ sub: 'persist', enabled: true }, guild, 'creator-1', 'general-channel');
+
+    await execute(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('must be run inside a private room channel') }),
+    );
+  });
+});
+
+describe('/room invite', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-room-invite-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  async function createRoom(guild: ReturnType<typeof makeGuild>, creatorId = 'creator-1') {
+    const createInteraction = makeInteraction({ sub: 'create', people: '<@111>' }, guild, creatorId);
+    await execute(createInteraction);
+  }
+
+  it('lets the creator invite a new person, granting channel access and updating the room record', async () => {
+    const guild = makeGuild();
+    await createRoom(guild, 'creator-1');
+    const interaction = makeInteraction(
+      { sub: 'invite', people: '<@333>' },
+      guild,
+      'creator-1',
+      'room-channel-1',
+    );
+
+    await execute(interaction);
+
+    expect(guild._eventChannel.permissionOverwrites.create).toHaveBeenCalledWith('333', {
+      ViewChannel: true,
+      SendMessages: true,
+    });
+    const rooms = await loadRooms();
+    expect(rooms[0].invitedUserIds.sort()).toEqual(['111', '333']);
+    expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining('Added'));
+  });
+
+  it('pings the newly added person in the room channel', async () => {
+    const guild = makeGuild();
+    await createRoom(guild, 'creator-1');
+    const interaction = makeInteraction(
+      { sub: 'invite', people: '<@333>' },
+      guild,
+      'creator-1',
+      'room-channel-1',
+    );
+
+    await execute(interaction);
+
+    expect(guild._eventChannel.send).toHaveBeenCalledWith(expect.stringContaining('<@333>'));
+  });
+
+  it('lets a host invite someone to a room they did not create', async () => {
+    const guild = makeGuild();
+    await createRoom(guild, 'creator-1');
+    const interaction = makeInteraction(
+      { sub: 'invite', people: '<@333>' },
+      guild,
+      'some-host',
+      'room-channel-1',
+    );
+    interaction.memberPermissions = { has: (p: bigint) => p === PermissionFlagsBits.ManageEvents };
+
+    await execute(interaction);
+
+    const rooms = await loadRooms();
+    expect(rooms[0].invitedUserIds).toContain('333');
+  });
+
+  it('blocks an unprivileged non-creator from inviting people', async () => {
+    const guild = makeGuild();
+    await createRoom(guild, 'creator-1');
+    const interaction = makeInteraction(
+      { sub: 'invite', people: '<@333>' },
+      guild,
+      'random-user',
+      'room-channel-1',
+    );
+
+    await execute(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining("creator or a host/admin can invite") }),
+    );
+    const rooms = await loadRooms();
+    expect(rooms[0].invitedUserIds).not.toContain('333');
+  });
+
+  it('rejects mentions of people already in the room', async () => {
+    const guild = makeGuild();
+    await createRoom(guild, 'creator-1');
+    const interaction = makeInteraction(
+      { sub: 'invite', people: '<@111>' },
+      guild,
+      'creator-1',
+      'room-channel-1',
+    );
+
+    await execute(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining("isn't already in this room") }),
+    );
+    expect(interaction.deferReply).not.toHaveBeenCalled();
+  });
+
+  it('skips mentions that cannot be resolved to a guild member and notes the count', async () => {
+    const guild = makeGuild({ unresolvableIds: ['999'] });
+    await createRoom(guild, 'creator-1');
+    const interaction = makeInteraction(
+      { sub: 'invite', people: '<@333> <@999>' },
+      guild,
+      'creator-1',
+      'room-channel-1',
+    );
+
+    await execute(interaction);
+
+    const rooms = await loadRooms();
+    expect(rooms[0].invitedUserIds).toContain('333');
+    expect(rooms[0].invitedUserIds).not.toContain('999');
+    expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining("couldn't be found"));
+  });
+
+  it('replies with a clear error when nobody mentioned can be resolved', async () => {
+    const guild = makeGuild({ unresolvableIds: ['999'] });
+    await createRoom(guild, 'creator-1');
+    const interaction = makeInteraction(
+      { sub: 'invite', people: '<@999>' },
+      guild,
+      'creator-1',
+      'room-channel-1',
+    );
+
+    await execute(interaction);
+
+    expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining("Couldn't find any"));
+  });
+
+  it('replies with a clear error when run outside a private room channel', async () => {
+    const guild = makeGuild();
+    const interaction = makeInteraction({ sub: 'invite', people: '<@333>' }, guild, 'creator-1', 'general-channel');
 
     await execute(interaction);
 
