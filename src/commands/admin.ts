@@ -161,6 +161,12 @@ export const data = new SlashCommandBuilder()
           .setName('syncall')
           .setDescription(
             'Re-sync all library games from BGG — slow, rate-limited, admin only',
+          )
+          .addBooleanOption((opt) =>
+            opt
+              .setName('force')
+              .setDescription('Overwrite existing data (default: true). False only fills in missing fields')
+              .setRequired(false),
           ),
       ),
   )

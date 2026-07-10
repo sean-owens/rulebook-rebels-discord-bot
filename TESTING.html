@@ -2176,11 +2176,13 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.9d `/admin library syncall`
 
-**What it does:** Force re-syncs every game in the library from BoardGameGeek in one pass (slow, rate-limited). Admin-only.
+**What it does:** Re-syncs every game in the library from BoardGameGeek in one pass (slow, rate-limited), batching up to 20 BGG IDs per request. Admin-only. `force:true` (default, or omitted) overwrites existing data on every game with a BGG ID. `force:false` only fetches and fills in games that are missing at least one BGG-sourced field (tags, expansions, best player count, complexity, how-to-play video, or thumbnail) — a non-destructive "enrich" pass that leaves already-enriched games untouched and doesn't re-query BGG for them.
 
 **Prerequisites:** the library should contain a small mix of games with and without a BGG ID, so both the "refreshed" and "skipped" counts can be verified in one run.
 
-- [ ] Run `/admin library syncall` with a small library — confirm all games with a BGG ID are refreshed and a summary count is shown
+- [ ] Run `/admin library syncall` (no `force` option) with a small library — confirm all games with a BGG ID are refreshed and a summary count is shown, including overwriting a game that already had different manually-set data
+- [ ] Run `/admin library syncall force:False` — confirm only games missing BGG data are queried/updated, and an already fully-enriched game's existing data is left unchanged
+- [ ] Run `/admin library syncall force:False` again immediately after — confirm the reply says nothing is missing BGG data and no BGG request is made
 - [ ] Confirm games with no BGG ID are skipped and counted separately (not treated as failures)
 - [ ] Run with an empty library — confirm an appropriate "nothing to sync" message
 - [ ] Confirm the command does not time out or double-reply on a larger library (should defer/edit the reply while syncing)
