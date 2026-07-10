@@ -79,7 +79,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       {
         name: '🔒  /room',
         value: [
-          '`create` — Make a private channel with just you and whoever you mention — hidden from everyone else except hosts and admins. Set an expiration date, or `persist:true` for a room that never auto-expires',
+          '`create` — Make a private channel with just you and whoever you mention — hidden from everyone else except hosts and admins. Set an expiration date, or `persist:true` for a room that never auto-expires (shown with a 📌 in the channel name)',
+          '`invite` — Add more people to a private room (run inside it) — the creator or any host/admin can do this',
           '`close` — Close and delete a private room (run inside it) — the creator or any host/admin can do this',
           '`persist` — Turn a room\'s auto-expiration on or off (run inside it) — the creator or any host/admin can do this',
         ].join('\n'),

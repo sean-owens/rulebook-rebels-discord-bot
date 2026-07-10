@@ -487,12 +487,13 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.8a `/room create`
 
-**What it does:** Creates a new private text channel visible only to whoever you mention, plus hosts and admins — hidden from everyone else. Posts a message pinging each invited person, and creates the channel under a separate category (default "Private Rooms", configurable via `/admin room config`, 3.9o) so it's never mixed in with event/archive channels. Requires a `date` (when the room auto-closes — see 4.8), unless `persist:true` is set, which creates a room with no expiration at all — see 1.8c to toggle this later.
+**What it does:** Creates a new private text channel visible only to whoever you mention, plus hosts and admins — hidden from everyone else. Posts a message pinging each invited person, and creates the channel under a separate category (default "Private Rooms", configurable via `/admin room config`, 3.9o) so it's never mixed in with event/archive channels. Requires a `date` (when the room auto-closes — see 4.8), unless `persist:true` is set, which creates a room with no expiration at all — see 1.8c to toggle this later. A persistent room's channel name and topic are prefixed with 📌 so hosts/admins can spot it in the channel list without opening it.
 
 **Prerequisites:** none — any server member can run this, not just hosts/admins.
 
 - [ ] Run `/room create people:@Alice @Bob date:August 22` — confirm a new channel is created under the "Private Rooms" category, and the ping message + confirmation both state it expires August 22
-- [ ] Run `/room create people:@Alice persist:true` with no `date` — confirm the room is created with no expiration, and the ping message + confirmation both say it persists until closed
+- [ ] Run `/room create people:@Alice persist:true` with no `date` — confirm the room is created with no expiration, the channel name and topic are prefixed with 📌, and the ping message + confirmation both say it persists until closed
+- [ ] Confirm a normal (non-persistent) room's channel name and topic are **not** prefixed with 📌
 - [ ] Attempt to create a room with neither `date` nor `persist:true` — confirm a clear "Provide a `date`..." error and no channel is created
 - [ ] Run with an unparseable `date` (e.g. "whenever") — confirm a clear parse error and no channel is created
 - [ ] Run with a `date` already in the past — confirm "That date has already passed" error and no channel is created
@@ -518,13 +519,26 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.8c `/room persist`
 
-**What it does:** Turns a private room's auto-expiration on (`enabled:true`) or off (`enabled:false`, requires a new `date`). Must be run inside the room's own channel. The room's creator or any host/admin can toggle it — nobody else. See 4.8 for how auto-expiration works.
+**What it does:** Turns a private room's auto-expiration on (`enabled:true`) or off (`enabled:false`, requires a new `date`). Must be run inside the room's own channel. The room's creator or any host/admin can toggle it — nobody else. See 4.8 for how auto-expiration works. The channel's 📌 name/topic prefix updates immediately to match.
 
-- [ ] Run `/room persist enabled:true` inside a room that has a `date` — confirm the reply says the room will no longer auto-expire, and it survives past its original expiration date
-- [ ] Run `/room persist enabled:false` inside a persistent room, with a `date` — confirm the reply confirms the new expiration, and the room auto-closes on that date (4.8)
+- [ ] Run `/room persist enabled:true` inside a room that has a `date` — confirm the reply says the room will no longer auto-expire, the channel name and topic gain the 📌 prefix, and it survives past its original expiration date
+- [ ] Run `/room persist enabled:false` inside a persistent room, with a `date` — confirm the reply confirms the new expiration, the channel name and topic lose the 📌 prefix, and the room auto-closes on that date (4.8)
 - [ ] Run `/room persist enabled:false` inside a persistent room, with **no** `date` — confirm a clear "Provide a `date`..." error and the room remains persistent
 - [ ] Run as a Host or Admin on a room you didn't create — confirm it works
 - [ ] Run as a regular member with no elevated role on a room you didn't create — confirm "Only the room's creator or a host/admin can change this room's expiration" error, and nothing changes
+- [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
+
+### 1.8d `/room invite`
+
+**What it does:** Adds more people to an existing private room, granting them channel access and updating the stored room record. Must be run inside the room's own channel. The room's creator or any host/admin can invite — nobody else.
+
+- [ ] Run `/room invite people:@Carol` inside a room — confirm Carol gains access to the channel, is pinged in a message, and the confirmation reply says she was added
+- [ ] Confirm the newly added person now shows up if the room is later inspected (e.g. they count toward "already in this room" on a repeat invite)
+- [ ] Mention someone who's already the creator or an existing invitee — confirm a clear "isn't already in this room" error and no channel/reply changes
+- [ ] Mention someone who has since left the server — confirm they're skipped with a note in the reply, and any other valid mentions are still added
+- [ ] Mention only people who've all left the server — confirm a clear "couldn't find any" error
+- [ ] Run as a Host or Admin on a room you didn't create — confirm it works
+- [ ] Run as a regular member with no elevated role on a room you didn't create — confirm "Only the room's creator or a host/admin can invite people to this room" error, and nobody is added
 - [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
 
 ---
@@ -1053,12 +1067,13 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.9a `/room create`
 
-**What it does:** Creates a new private text channel visible only to whoever you mention, plus hosts and admins — hidden from everyone else. Posts a message pinging each invited person, and creates the channel under a separate category (default "Private Rooms", configurable via `/admin room config`, 3.9o) so it's never mixed in with event/archive channels. Requires a `date` (when the room auto-closes — see 4.8), unless `persist:true` is set, which creates a room with no expiration at all — see 2.9c to toggle this later.
+**What it does:** Creates a new private text channel visible only to whoever you mention, plus hosts and admins — hidden from everyone else. Posts a message pinging each invited person, and creates the channel under a separate category (default "Private Rooms", configurable via `/admin room config`, 3.9o) so it's never mixed in with event/archive channels. Requires a `date` (when the room auto-closes — see 4.8), unless `persist:true` is set, which creates a room with no expiration at all — see 2.9c to toggle this later. A persistent room's channel name and topic are prefixed with 📌 so hosts/admins can spot it in the channel list without opening it.
 
 **Prerequisites:** none — any server member can run this, not just hosts/admins.
 
 - [ ] Run `/room create people:@Alice @Bob date:August 22` — confirm a new channel is created under the "Private Rooms" category, and the ping message + confirmation both state it expires August 22
-- [ ] Run `/room create people:@Alice persist:true` with no `date` — confirm the room is created with no expiration, and the ping message + confirmation both say it persists until closed
+- [ ] Run `/room create people:@Alice persist:true` with no `date` — confirm the room is created with no expiration, the channel name and topic are prefixed with 📌, and the ping message + confirmation both say it persists until closed
+- [ ] Confirm a normal (non-persistent) room's channel name and topic are **not** prefixed with 📌
 - [ ] Attempt to create a room with neither `date` nor `persist:true` — confirm a clear "Provide a `date`..." error and no channel is created
 - [ ] Run with an unparseable `date` (e.g. "whenever") — confirm a clear parse error and no channel is created
 - [ ] Run with a `date` already in the past — confirm "That date has already passed" error and no channel is created
@@ -1084,13 +1099,26 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.9c `/room persist`
 
-**What it does:** Turns a private room's auto-expiration on (`enabled:true`) or off (`enabled:false`, requires a new `date`). Must be run inside the room's own channel. The room's creator or any host/admin can toggle it — nobody else. See 4.8 for how auto-expiration works.
+**What it does:** Turns a private room's auto-expiration on (`enabled:true`) or off (`enabled:false`, requires a new `date`). Must be run inside the room's own channel. The room's creator or any host/admin can toggle it — nobody else. See 4.8 for how auto-expiration works. The channel's 📌 name/topic prefix updates immediately to match.
 
-- [ ] Run `/room persist enabled:true` inside a room that has a `date` — confirm the reply says the room will no longer auto-expire, and it survives past its original expiration date
-- [ ] Run `/room persist enabled:false` inside a persistent room, with a `date` — confirm the reply confirms the new expiration, and the room auto-closes on that date (4.8)
+- [ ] Run `/room persist enabled:true` inside a room that has a `date` — confirm the reply says the room will no longer auto-expire, the channel name and topic gain the 📌 prefix, and it survives past its original expiration date
+- [ ] Run `/room persist enabled:false` inside a persistent room, with a `date` — confirm the reply confirms the new expiration, the channel name and topic lose the 📌 prefix, and the room auto-closes on that date (4.8)
 - [ ] Run `/room persist enabled:false` inside a persistent room, with **no** `date` — confirm a clear "Provide a `date`..." error and the room remains persistent
 - [ ] Run as a Host or Admin on a room you didn't create — confirm it works
 - [ ] Run as a regular member with no elevated role on a room you didn't create — confirm "Only the room's creator or a host/admin can change this room's expiration" error, and nothing changes
+- [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
+
+### 2.9d `/room invite`
+
+**What it does:** Adds more people to an existing private room, granting them channel access and updating the stored room record. Must be run inside the room's own channel. The room's creator or any host/admin can invite — nobody else.
+
+- [ ] Run `/room invite people:@Carol` inside a room — confirm Carol gains access to the channel, is pinged in a message, and the confirmation reply says she was added
+- [ ] Confirm the newly added person now shows up if the room is later inspected (e.g. they count toward "already in this room" on a repeat invite)
+- [ ] Mention someone who's already the creator or an existing invitee — confirm a clear "isn't already in this room" error and no channel/reply changes
+- [ ] Mention someone who has since left the server — confirm they're skipped with a note in the reply, and any other valid mentions are still added
+- [ ] Mention only people who've all left the server — confirm a clear "couldn't find any" error
+- [ ] Run as a Host or Admin on a room you didn't create — confirm it works
+- [ ] Run as a regular member with no elevated role on a room you didn't create — confirm "Only the room's creator or a host/admin can invite people to this room" error, and nobody is added
 - [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
 
 ---
@@ -1761,12 +1789,13 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.10a `/room create`
 
-**What it does:** Creates a new private text channel visible only to whoever you mention, plus hosts and admins — hidden from everyone else. Posts a message pinging each invited person, and creates the channel under a separate category (default "Private Rooms", configurable via `/admin room config`, 3.9o) so it's never mixed in with event/archive channels. Requires a `date` (when the room auto-closes — see 4.8), unless `persist:true` is set, which creates a room with no expiration at all — see 3.10c to toggle this later.
+**What it does:** Creates a new private text channel visible only to whoever you mention, plus hosts and admins — hidden from everyone else. Posts a message pinging each invited person, and creates the channel under a separate category (default "Private Rooms", configurable via `/admin room config`, 3.9o) so it's never mixed in with event/archive channels. Requires a `date` (when the room auto-closes — see 4.8), unless `persist:true` is set, which creates a room with no expiration at all — see 3.10c to toggle this later. A persistent room's channel name and topic are prefixed with 📌 so hosts/admins can spot it in the channel list without opening it.
 
 **Prerequisites:** none — any server member can run this, not just hosts/admins.
 
 - [ ] Run `/room create people:@Alice @Bob date:August 22` — confirm a new channel is created under the "Private Rooms" category, and the ping message + confirmation both state it expires August 22
-- [ ] Run `/room create people:@Alice persist:true` with no `date` — confirm the room is created with no expiration, and the ping message + confirmation both say it persists until closed
+- [ ] Run `/room create people:@Alice persist:true` with no `date` — confirm the room is created with no expiration, the channel name and topic are prefixed with 📌, and the ping message + confirmation both say it persists until closed
+- [ ] Confirm a normal (non-persistent) room's channel name and topic are **not** prefixed with 📌
 - [ ] Attempt to create a room with neither `date` nor `persist:true` — confirm a clear "Provide a `date`..." error and no channel is created
 - [ ] Run with an unparseable `date` (e.g. "whenever") — confirm a clear parse error and no channel is created
 - [ ] Run with a `date` already in the past — confirm "That date has already passed" error and no channel is created
@@ -1792,13 +1821,26 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.10c `/room persist`
 
-**What it does:** Turns a private room's auto-expiration on (`enabled:true`) or off (`enabled:false`, requires a new `date`). Must be run inside the room's own channel. The room's creator or any host/admin can toggle it — nobody else. See 4.8 for how auto-expiration works.
+**What it does:** Turns a private room's auto-expiration on (`enabled:true`) or off (`enabled:false`, requires a new `date`). Must be run inside the room's own channel. The room's creator or any host/admin can toggle it — nobody else. See 4.8 for how auto-expiration works. The channel's 📌 name/topic prefix updates immediately to match.
 
-- [ ] Run `/room persist enabled:true` inside a room that has a `date` — confirm the reply says the room will no longer auto-expire, and it survives past its original expiration date
-- [ ] Run `/room persist enabled:false` inside a persistent room, with a `date` — confirm the reply confirms the new expiration, and the room auto-closes on that date (4.8)
+- [ ] Run `/room persist enabled:true` inside a room that has a `date` — confirm the reply says the room will no longer auto-expire, the channel name and topic gain the 📌 prefix, and it survives past its original expiration date
+- [ ] Run `/room persist enabled:false` inside a persistent room, with a `date` — confirm the reply confirms the new expiration, the channel name and topic lose the 📌 prefix, and the room auto-closes on that date (4.8)
 - [ ] Run `/room persist enabled:false` inside a persistent room, with **no** `date` — confirm a clear "Provide a `date`..." error and the room remains persistent
 - [ ] Run as a Host or Admin on a room you didn't create — confirm it works
 - [ ] Run as a regular member with no elevated role on a room you didn't create — confirm "Only the room's creator or a host/admin can change this room's expiration" error, and nothing changes
+- [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
+
+### 3.10d `/room invite`
+
+**What it does:** Adds more people to an existing private room, granting them channel access and updating the stored room record. Must be run inside the room's own channel. The room's creator or any host/admin can invite — nobody else.
+
+- [ ] Run `/room invite people:@Carol` inside a room — confirm Carol gains access to the channel, is pinged in a message, and the confirmation reply says she was added
+- [ ] Confirm the newly added person now shows up if the room is later inspected (e.g. they count toward "already in this room" on a repeat invite)
+- [ ] Mention someone who's already the creator or an existing invitee — confirm a clear "isn't already in this room" error and no channel/reply changes
+- [ ] Mention someone who has since left the server — confirm they're skipped with a note in the reply, and any other valid mentions are still added
+- [ ] Mention only people who've all left the server — confirm a clear "couldn't find any" error
+- [ ] Run as a Host or Admin on a room you didn't create — confirm it works
+- [ ] Run as a regular member with no elevated role on a room you didn't create — confirm "Only the room's creator or a host/admin can invite people to this room" error, and nobody is added
 - [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
 
 ---

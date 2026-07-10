@@ -17,13 +17,40 @@ import { upsertRoom, findRoomByChannel, removeRoom, loadRooms, PrivateRoom } fro
 // the /room create command only asks for a date, not a time.
 const EXPIRY_TIME_OF_DAY = '11:59pm';
 
-function slugify(str: string): string {
+// Prefixed onto the channel name and mentioned in the topic so hosts/admins can
+// tell at a glance, from the channel list alone, that a room won't auto-expire.
+const PERSISTENT_ICON = '📌';
+
+function slugify(str: string, maxLength = 100): string {
   const slug = str
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
-    .slice(0, 100);
+    .slice(0, maxLength);
   return slug || 'room';
+}
+
+function channelNameFor(name: string, persistent: boolean): string {
+  const prefix = persistent ? `${PERSISTENT_ICON}-` : '';
+  return `${prefix}${slugify(name, 100 - prefix.length)}`;
+}
+
+function formatExpiryDate(date: Date): string {
+  return date.toLocaleDateString('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+function buildRoomTopic(persistent: boolean, expiresAt: Date | null): string {
+  if (persistent) {
+    return `${PERSISTENT_ICON} Persistent private room — no auto-expiration. Close it with /room close, or set one with /room persist enabled:false.`;
+  }
+  return expiresAt
+    ? `Private room — expires ${formatExpiryDate(expiresAt)}. Close early with /room close.`
+    : 'Private room.';
 }
 
 function parseMentionedUserIds(text: string): string[] {
@@ -97,6 +124,17 @@ export const data = new SlashCommandBuilder()
           .setDescription('New expiration date (e.g. "August 22") — required when enabled:false')
           .setRequired(false),
       ),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName('invite')
+      .setDescription('Add more people to this private room — run inside the room channel')
+      .addStringOption((opt) =>
+        opt
+          .setName('people')
+          .setDescription('Mention everyone to add (e.g. @Alice @Bob)')
+          .setRequired(true),
+      ),
   );
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -104,6 +142,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   if (sub === 'create') await handleCreate(interaction);
   else if (sub === 'close') await handleClose(interaction);
   else if (sub === 'persist') await handlePersist(interaction);
+  else if (sub === 'invite') await handleInvite(interaction);
 }
 
 async function handleCreate(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -172,9 +211,10 @@ async function handleCreate(interaction: ChatInputCommandInteraction): Promise<v
   let channel: TextChannel;
   try {
     channel = (await guild.channels.create({
-      name: slugify(name),
+      name: channelNameFor(name, persist),
       type: ChannelType.GuildText,
       parent: category.id,
+      topic: buildRoomTopic(persist, expiresAt),
     })) as TextChannel;
 
     // Bot's own overwrite must be created before denying @everyone below -- if @everyone
@@ -206,19 +246,12 @@ async function handleCreate(interaction: ChatInputCommandInteraction): Promise<v
     return;
   }
 
-  const expiresDateStr = expiresAt
-    ? expiresAt.toLocaleDateString('en-US', {
-        weekday: 'long',
-        month: 'long',
-        day: 'numeric',
-        year: 'numeric',
-      })
-    : null;
+  const expiresDateStr = expiresAt ? formatExpiryDate(expiresAt) : null;
 
   const mentions = validMembers.map((m) => `<@${m.id}>`).join(' ');
   const lifespanNote = expiresDateStr
     ? `This room closes automatically at the end of **${expiresDateStr}** — use \`/room close\` in here if you're done sooner.`
-    : `This room does not auto-expire — use \`/room close\` in here when you're done, or \`/room persist enabled:false\` to give it an expiration date.`;
+    : `${PERSISTENT_ICON} This room does not auto-expire — use \`/room close\` in here when you're done, or \`/room persist enabled:false\` to give it an expiration date.`;
   await channel.send(
     `🔒 **Private room** — ${mentions}\n` +
       `You've been added to a private room by <@${interaction.user.id}>. Only the people mentioned here, plus hosts and admins, can see this channel.\n` +
@@ -318,9 +351,10 @@ async function handlePersist(interaction: ChatInputCommandInteraction): Promise<
   if (enabled) {
     room.persistent = true;
     await upsertRoom(room);
+    await updateRoomChannelDisplay(interaction.client, room);
     await interaction.reply({
       content:
-        "This room will no longer auto-expire — use `/room close` (or `/room persist enabled:false`) when you're done.",
+        `${PERSISTENT_ICON} This room will no longer auto-expire — use \`/room close\` (or \`/room persist enabled:false\`) when you're done.`,
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -343,17 +377,101 @@ async function handlePersist(interaction: ChatInputCommandInteraction): Promise<
   room.persistent = false;
   room.expiresAt = parsed.date.toISOString();
   await upsertRoom(room);
+  await updateRoomChannelDisplay(interaction.client, room);
 
-  const expiresDateStr = parsed.date.toLocaleDateString('en-US', {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-  });
   await interaction.reply({
-    content: `This room will now expire at the end of **${expiresDateStr}**.`,
+    content: `This room will now expire at the end of **${formatExpiryDate(parsed.date)}**.`,
     flags: MessageFlags.Ephemeral,
   });
+}
+
+async function handleInvite(interaction: ChatInputCommandInteraction): Promise<void> {
+  const room = await findRoomByChannel(interaction.channelId);
+  if (!room) {
+    await interaction.reply({
+      content: 'This command must be run inside a private room channel created by `/room create`.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  if (!canManageRoom(interaction, room)) {
+    await interaction.reply({
+      content: "Only the room's creator or a host/admin can invite people to this room.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const peopleText = interaction.options.getString('people', true);
+  const alreadyIn = new Set([room.createdBy, ...room.invitedUserIds]);
+  const userIds = parseMentionedUserIds(peopleText).filter((id) => !alreadyIn.has(id));
+  if (userIds.length === 0) {
+    await interaction.reply({
+      content: "Mention at least one person who isn't already in this room (e.g. `people:@Alice @Bob`).",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const resolvedMembers = await Promise.all(
+    userIds.map((id) => interaction.guild!.members.fetch(id).catch(() => null)),
+  );
+  const validMembers = resolvedMembers.filter((m): m is NonNullable<typeof m> => m !== null);
+  const skippedCount = userIds.length - validMembers.length;
+
+  if (validMembers.length === 0) {
+    await interaction.editReply("Couldn't find any of the mentioned people in this server.");
+    return;
+  }
+
+  const channel = await interaction.client.channels.fetch(room.channelId);
+  if (!channel || !('permissionOverwrites' in channel) || !('send' in channel)) {
+    await interaction.editReply("Couldn't find this room's channel.");
+    return;
+  }
+  const textChannel = channel as TextChannel;
+
+  try {
+    for (const member of validMembers) {
+      await textChannel.permissionOverwrites.create(member.id, { ViewChannel: true, SendMessages: true });
+    }
+  } catch (err) {
+    console.warn(`Could not grant access to invited members for room channel ${room.channelId}:`, err);
+    await interaction.editReply(
+      'Could not update channel permissions — check that the bot has Manage Roles/Channels permission.',
+    );
+    return;
+  }
+
+  room.invitedUserIds = [...room.invitedUserIds, ...validMembers.map((m) => m.id)];
+  await upsertRoom(room);
+
+  const mentions = validMembers.map((m) => `<@${m.id}>`).join(' ');
+  await textChannel.send(`${mentions} You've been added to this private room by <@${interaction.user.id}>.`);
+
+  const skippedNote =
+    skippedCount > 0
+      ? ` (${skippedCount} mentioned ${skippedCount !== 1 ? 'people' : 'person'} couldn't be found and ${skippedCount !== 1 ? 'were' : 'was'} skipped)`
+      : '';
+  await interaction.editReply(`Added ${mentions} to this room${skippedNote}.`);
+}
+
+async function updateRoomChannelDisplay(client: Client, room: PrivateRoom): Promise<void> {
+  try {
+    const channel = await client.channels.fetch(room.channelId);
+    if (!channel || !('setName' in channel) || !('setTopic' in channel)) return;
+    const textChannel = channel as TextChannel;
+    const newName = channelNameFor(room.name, !!room.persistent);
+    if (textChannel.name !== newName) await textChannel.setName(newName);
+    await textChannel.setTopic(
+      buildRoomTopic(!!room.persistent, room.expiresAt ? new Date(room.expiresAt) : null),
+    );
+  } catch (err) {
+    console.warn(`Could not update display for room channel ${room.channelId}:`, err);
+  }
 }
 
 async function closeRoom(client: Client, room: PrivateRoom, reason: string): Promise<void> {
