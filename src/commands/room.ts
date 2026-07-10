@@ -464,17 +464,35 @@ async function handleInvite(interaction: ChatInputCommandInteraction): Promise<v
 }
 
 async function updateRoomChannelDisplay(client: Client, room: PrivateRoom): Promise<void> {
+  let channel;
   try {
-    const channel = await client.channels.fetch(room.channelId);
-    if (!channel || !('setName' in channel) || !('setTopic' in channel)) return;
-    const textChannel = channel as TextChannel;
-    const newName = channelNameFor(room.name, !!room.persistent);
-    if (textChannel.name !== newName) await textChannel.setName(newName);
+    channel = await client.channels.fetch(room.channelId);
+  } catch (err) {
+    console.warn(`Could not fetch room channel ${room.channelId} to update its display:`, err);
+    return;
+  }
+  if (!channel || !('setName' in channel) || !('setTopic' in channel)) return;
+  const textChannel = channel as TextChannel;
+
+  // Renaming and re-topicing are independent try/catches -- Discord's channel-rename
+  // rate limit (2 renames per 10 minutes) is easy to hit when toggling persistence
+  // rapidly, and a failed rename must not also block the topic (which carries the
+  // authoritative expiration info) from updating.
+  const newName = channelNameFor(room.name, !!room.persistent);
+  if (textChannel.name !== newName) {
+    try {
+      await textChannel.setName(newName);
+    } catch (err) {
+      console.warn(`Could not rename room channel ${room.channelId} (possibly Discord's rename rate limit):`, err);
+    }
+  }
+
+  try {
     await textChannel.setTopic(
       buildRoomTopic(!!room.persistent, room.expiresAt ? new Date(room.expiresAt) : null),
     );
   } catch (err) {
-    console.warn(`Could not update display for room channel ${room.channelId}:`, err);
+    console.warn(`Could not update topic for room channel ${room.channelId}:`, err);
   }
 }
 

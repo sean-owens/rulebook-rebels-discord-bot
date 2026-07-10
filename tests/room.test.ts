@@ -563,6 +563,25 @@ describe('/room persist', () => {
     expect(guild._eventChannel.setTopic).toHaveBeenCalledWith(expect.not.stringContaining('📌'));
   });
 
+  it('still updates the topic even if renaming the channel fails (e.g. a Discord rate limit)', async () => {
+    const guild = makeGuild();
+    const createInteraction = makeInteraction({ sub: 'create', people: '<@111>', persist: true }, guild, 'creator-1');
+    await execute(createInteraction);
+    guild._eventChannel.setName = vi.fn(async () => {
+      throw new Error('rate limited');
+    });
+    const interaction = makeInteraction(
+      { sub: 'persist', enabled: false, date: FUTURE_DATE_STR },
+      guild,
+      'creator-1',
+      'room-channel-1',
+    );
+
+    await execute(interaction);
+
+    expect(guild._eventChannel.setTopic).toHaveBeenCalledWith(expect.not.stringContaining('📌'));
+  });
+
   it('requires a date when turning persistence back off', async () => {
     const guild = makeGuild();
     const createInteraction = makeInteraction({ sub: 'create', people: '<@111>', persist: true }, guild, 'creator-1');
