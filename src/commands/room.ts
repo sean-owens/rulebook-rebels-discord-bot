@@ -351,12 +351,16 @@ async function handlePersist(interaction: ChatInputCommandInteraction): Promise<
   if (enabled) {
     room.persistent = true;
     await upsertRoom(room);
-    await updateRoomChannelDisplay(interaction.client, room);
+    // Reply before touching the Discord channel (rename + topic) below -- those are
+    // real API calls that can take long enough to blow past Discord's 3-second ack
+    // window, which shows the user "The application did not respond" even though the
+    // underlying change still goes through. /room close follows this same ack-first order.
     await interaction.reply({
       content:
         `${PERSISTENT_ICON} This room will no longer auto-expire — use \`/room close\` (or \`/room persist enabled:false\`) when you're done.`,
       flags: MessageFlags.Ephemeral,
     });
+    await updateRoomChannelDisplay(interaction.client, room);
     return;
   }
 
@@ -377,12 +381,12 @@ async function handlePersist(interaction: ChatInputCommandInteraction): Promise<
   room.persistent = false;
   room.expiresAt = parsed.date.toISOString();
   await upsertRoom(room);
-  await updateRoomChannelDisplay(interaction.client, room);
 
   await interaction.reply({
     content: `This room will now expire at the end of **${formatExpiryDate(parsed.date)}**.`,
     flags: MessageFlags.Ephemeral,
   });
+  await updateRoomChannelDisplay(interaction.client, room);
 }
 
 async function handleInvite(interaction: ChatInputCommandInteraction): Promise<void> {
