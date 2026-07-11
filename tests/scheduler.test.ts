@@ -274,10 +274,23 @@ describe('lockAndScheduleEvent', () => {
 
   function makeClient(sendMock = vi.fn(async () => {})) {
     const channel = { send: sendMock };
-    return { channels: { fetch: vi.fn(async () => channel) }, _channel: channel };
+    const guild = {
+      members: { fetch: vi.fn(async (id: string) => ({ displayName: `Display-${id}` })) },
+    };
+    return {
+      channels: { fetch: vi.fn(async () => channel) },
+      guilds: { fetch: vi.fn(async () => guild) },
+      _channel: channel,
+    };
   }
 
-  const BUFFER_CONFIG = { scheduleTableCount: 2, lightBufferMinutes: 20, mediumBufferMinutes: 30, heavyBufferMinutes: 40 };
+  const BUFFER_CONFIG = {
+    scheduleTableCount: 2,
+    lightBufferMinutes: 20,
+    mediumBufferMinutes: 30,
+    heavyBufferMinutes: 40,
+    postBgStatsLinks: false,
+  };
 
   it('marks the event locked and posts a schedule embed', async () => {
     const { upsertGameNight, findGameNight } = await import('../src/utils/storage');
@@ -318,6 +331,81 @@ describe('lockAndScheduleEvent', () => {
     const game = await findGame('game1');
     expect(game?.scheduledRound).toBe(1);
     expect(game?.scheduledTable).toBe(1);
+  });
+
+  it('posts a BG Stats button per scheduled game when postBgStatsLinks is enabled', async () => {
+    const { upsertGameNight } = await import('../src/utils/storage');
+    const { upsertGame } = await import('../src/utils/gameStorage');
+    const gn = makeGameNight({ location: 'The Rec Room' });
+    await upsertGameNight(gn as any);
+    await upsertGame({
+      id: 'game1', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm1', guildId: 'guild-1',
+      bggId: '266192', title: 'Wingspan', bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
+      minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: ['p1'], waitlist: [],
+      createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Light',
+    } as any);
+    const client = makeClient();
+
+    await lockAndScheduleEvent(client as any, gn as any, { ...BUFFER_CONFIG, postBgStatsLinks: true });
+
+    // One call for the schedule-summary embed, one more per scheduled game.
+    expect(client._channel.send).toHaveBeenCalledTimes(2);
+    const bgStatsCall = (client._channel.send as any).mock.calls[1][0];
+    const button = bgStatsCall.components[0].toJSON().components[0];
+    expect(button.label).toBe('Log in BG Stats');
+
+    const data = JSON.parse(decodeURIComponent(button.url.split('?data=')[1]));
+    expect(data.sourceName).toBe('Rulebook Rebels Discord Bot');
+    expect(data.sourcePlayId).toBe('game1');
+    expect(typeof data.playDate).toBe('string');
+    expect(data.game.name).toBe('Wingspan');
+    expect(data.location).toBe('The Rec Room');
+    expect(data.players).toEqual([{ name: 'Display-p1', sourcePlayerId: 'p1' }]);
+
+    // A QR code encoding the same URL is attached alongside the button.
+    expect(bgStatsCall.files).toHaveLength(1);
+    expect(bgStatsCall.files[0].toJSON().name).toBe('bgstats-game1.png');
+  });
+
+  it('does not post BG Stats buttons when postBgStatsLinks is disabled (default)', async () => {
+    const { upsertGameNight } = await import('../src/utils/storage');
+    const { upsertGame } = await import('../src/utils/gameStorage');
+    const gn = makeGameNight();
+    await upsertGameNight(gn as any);
+    await upsertGame({
+      id: 'game1', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm1', guildId: 'guild-1',
+      bggId: '1', title: 'Wingspan', bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
+      minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: ['p1'], waitlist: [],
+      createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Light',
+    } as any);
+    const client = makeClient();
+
+    await lockAndScheduleEvent(client as any, gn as any, BUFFER_CONFIG);
+
+    expect(client._channel.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses a player's linked BGG username instead of their Discord display name when available", async () => {
+    const { upsertGameNight } = await import('../src/utils/storage');
+    const { upsertGame } = await import('../src/utils/gameStorage');
+    const { setBggAccount } = await import('../src/utils/bggAccountStorage');
+    const gn = makeGameNight();
+    await upsertGameNight(gn as any);
+    await upsertGame({
+      id: 'game1', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm1', guildId: 'guild-1',
+      bggId: '1', title: 'Wingspan', bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
+      minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: ['p1'], waitlist: [],
+      createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Light',
+    } as any);
+    await setBggAccount('guild-1', 'p1', 'sean_o');
+    const client = makeClient();
+
+    await lockAndScheduleEvent(client as any, gn as any, { ...BUFFER_CONFIG, postBgStatsLinks: true });
+
+    const bgStatsCall = (client._channel.send as any).mock.calls[1][0];
+    const button = bgStatsCall.components[0].toJSON().components[0];
+    const data = JSON.parse(decodeURIComponent(button.url.split('?data=')[1]));
+    expect(data.players).toEqual([{ name: 'sean_o', sourcePlayerId: 'p1' }]);
   });
 });
 

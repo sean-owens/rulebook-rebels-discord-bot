@@ -491,6 +491,7 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
   const lightBufferMinutes = interaction.options.getInteger('light_buffer_minutes');
   const mediumBufferMinutes = interaction.options.getInteger('medium_buffer_minutes');
   const heavyBufferMinutes = interaction.options.getInteger('heavy_buffer_minutes');
+  const postBgStatsLinks = interaction.options.getBoolean('post_bgstats_links');
 
   if (location !== null) patch.defaultLocation = location;
   if (time !== null) patch.defaultTime = time;
@@ -509,6 +510,7 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
   if (lightBufferMinutes !== null) patch.lightBufferMinutes = lightBufferMinutes;
   if (mediumBufferMinutes !== null) patch.mediumBufferMinutes = mediumBufferMinutes;
   if (heavyBufferMinutes !== null) patch.heavyBufferMinutes = heavyBufferMinutes;
+  if (postBgStatsLinks !== null) patch.postBgStatsLinks = postBgStatsLinks;
 
   function formatConfig(c: GuildConfig): string {
     const retentionDays = c.archivedChannelRetentionDays ?? 0;
@@ -526,6 +528,7 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
       `> Lineup lock: ${c.lockHoursBeforeEvent === 0 ? 'Disabled' : `${c.lockHoursBeforeEvent}h before event`}`,
       `> Scheduler tables: ${c.scheduleTableCount}`,
       `> Scheduling buffers: Light +${c.lightBufferMinutes}m, Medium +${c.mediumBufferMinutes}m, Heavy +${c.heavyBufferMinutes}m`,
+      `> BG Stats buttons on lock: ${c.postBgStatsLinks ? 'Enabled' : 'Disabled'}`,
     ].join('\n');
   }
 

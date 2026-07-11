@@ -2,6 +2,8 @@ import { Client, EmbedBuilder, TextChannel } from 'discord.js';
 import { GameSuggestion, findGamesByChannel, upsertGame } from './gameStorage';
 import { GuildConfig, getGuildConfig } from './config';
 import { GameNight, loadGameNights, upsertGameNight } from './storage';
+import { resolvePlayerNames } from './playerNames';
+import { buildBgStatsPlayUrl, buildBgStatsButton, buildBgStatsQrAttachment } from './bgStats';
 
 export const LOCK_MESSAGE =
   "This event's lineup is locked ahead of the scheduled start — suggestions and seats can no longer change.";
@@ -204,10 +206,71 @@ export function buildScheduleEmbed(
   return embed;
 }
 
+async function postBgStatsButtons(
+  client: Client,
+  gn: GameNight,
+  games: GameSuggestion[],
+  result: ScheduleResult,
+): Promise<void> {
+  if (!gn.eventChannelId) return;
+
+  const scheduledGameIds = new Set(result.assignments.map((a) => a.gameId));
+  const scheduledGames = games.filter((g) => scheduledGameIds.has(g.id));
+  if (scheduledGames.length === 0) return;
+
+  const assignmentByGame = new Map(result.assignments.map((a) => [a.gameId, a]));
+  const allPlayerIds = [...new Set(scheduledGames.flatMap((g) => g.seats))];
+  const nameMap = await resolvePlayerNames(client, gn.guildId, allPlayerIds);
+
+  try {
+    const channel = (await client.channels.fetch(gn.eventChannelId)) as TextChannel;
+    if (!channel) return;
+
+    for (const game of scheduledGames) {
+      const assignment = assignmentByGame.get(game.id)!;
+      const url = buildBgStatsPlayUrl({
+        gameName: game.title,
+        bggId: game.bggId,
+        location: gn.location,
+        players: game.seats.map((id) => ({ name: nameMap[id] ?? id, sourcePlayerId: id })),
+        sourcePlayId: game.id,
+        playDate: new Date(gn.startTimeISO),
+      });
+      const qrFilename = `bgstats-${game.id}.png`;
+      const qrAttachment = await buildBgStatsQrAttachment(url, qrFilename);
+
+      const embed = new EmbedBuilder()
+        .setTitle(`📊 ${game.title}`)
+        .setDescription(`Round ${assignment.round}, Table ${assignment.table}`)
+        .addFields({
+          name: 'Players',
+          value: game.seats.map((id) => nameMap[id] ?? id).join('\n') || '*(no seats defined)*',
+        })
+        .setColor(0xe8a838)
+        .setImage(`attachment://${qrFilename}`);
+
+      await channel.send({
+        embeds: [embed],
+        components: [buildBgStatsButton(url)],
+        files: [qrAttachment],
+      });
+    }
+  } catch (err) {
+    console.warn(`Could not post BG Stats buttons for game night ${gn.id}:`, err);
+  }
+}
+
 export async function lockAndScheduleEvent(
   client: Client,
   gn: GameNight,
-  config: Pick<GuildConfig, 'scheduleTableCount' | 'lightBufferMinutes' | 'mediumBufferMinutes' | 'heavyBufferMinutes'>,
+  config: Pick<
+    GuildConfig,
+    | 'scheduleTableCount'
+    | 'lightBufferMinutes'
+    | 'mediumBufferMinutes'
+    | 'heavyBufferMinutes'
+    | 'postBgStatsLinks'
+  >,
 ): Promise<void> {
   gn.suggestionsLocked = true;
 
@@ -239,6 +302,10 @@ export async function lockAndScheduleEvent(
     } catch (err) {
       console.warn(`Could not post schedule for game night ${gn.id}:`, err);
     }
+  }
+
+  if (config.postBgStatsLinks) {
+    await postBgStatsButtons(client, gn, games, result);
   }
 
   console.log(

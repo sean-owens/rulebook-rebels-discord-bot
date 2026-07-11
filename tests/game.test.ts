@@ -525,3 +525,146 @@ describe('/game suggest — inside a private room', () => {
     expect(mockUpdateGameListPin).not.toHaveBeenCalled();
   });
 });
+
+describe('/game bgstats', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-game-bgstats-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeBgStatsInteraction(
+    title: string,
+    location: string | null,
+    channelId: string,
+    guildId = 'g1',
+    userId = 'u1',
+  ) {
+    const guild = {
+      members: { fetch: vi.fn(async (id: string) => ({ displayName: `Display-${id}` })) },
+    };
+    return {
+      options: {
+        getString: (name: string) =>
+          name === 'title' ? title : name === 'location' ? location : null,
+        getSubcommand: () => 'bgstats',
+      },
+      reply: vi.fn(async () => {}),
+      deferReply: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
+      channelId,
+      guildId,
+      user: { id: userId },
+      isChatInputCommand: () => true,
+      client: {
+        channels: { fetch: vi.fn(async () => ({})) },
+        guilds: { fetch: vi.fn(async () => guild) },
+      },
+    } as any;
+  }
+
+  async function seedSuggestion(overrides: Partial<Record<string, unknown>> = {}) {
+    const { upsertGame } = await import('../src/utils/gameStorage');
+    const game = {
+      id: 'game1',
+      eventId: 'gn1',
+      channelId: 'event-channel-1',
+      messageId: 'm1',
+      guildId: 'g1',
+      bggId: '266192',
+      title: 'Wingspan',
+      bggLink: '',
+      minPlayers: 1,
+      maxPlayers: 4,
+      suggestedPlayers: null,
+      minPlaytime: 40,
+      maxPlaytime: 60,
+      suggestedStartTime: null,
+      expansions: [],
+      seats: ['p1'],
+      waitlist: [],
+      createdAt: new Date().toISOString(),
+      createdBy: 'p1',
+      ...overrides,
+    };
+    await upsertGame(game as any);
+    return game;
+  }
+
+  it('finds a suggested game by title and posts publicly with the event location, button, and QR code', async () => {
+    await upsertGameNight(makeGameNight({ id: 'gn1', eventChannelId: 'event-channel-1', location: 'The Rec Room' }));
+    await seedSuggestion();
+
+    const interaction = makeBgStatsInteraction('Wingspan', null, 'event-channel-1');
+    await execute(interaction);
+
+    expect(interaction.deferReply).toHaveBeenCalled();
+    expect(interaction.editReply).toHaveBeenCalled();
+    const reply = interaction.editReply.mock.calls[0][0];
+    expect(reply.files).toHaveLength(1);
+
+    const button = reply.components[0].toJSON().components[0];
+    const data = JSON.parse(decodeURIComponent(button.url.split('?data=')[1]));
+    expect(data.game.name).toBe('Wingspan');
+    expect(data.location).toBe('The Rec Room');
+    expect(data.players).toEqual([{ name: 'Display-p1', sourcePlayerId: 'p1' }]);
+  });
+
+  it('uses the location option to override the event default', async () => {
+    await upsertGameNight(makeGameNight({ id: 'gn1', eventChannelId: 'event-channel-1', location: 'The Rec Room' }));
+    await seedSuggestion();
+
+    const interaction = makeBgStatsInteraction('Wingspan', "Sean's place", 'event-channel-1');
+    await execute(interaction);
+
+    const reply = interaction.editReply.mock.calls[0][0];
+    const button = reply.components[0].toJSON().components[0];
+    const data = JSON.parse(decodeURIComponent(button.url.split('?data=')[1]));
+    expect(data.location).toBe("Sean's place");
+  });
+
+  it('falls back to a blank location in a private room with no location option given', async () => {
+    const { upsertRoom } = await import('../src/utils/roomStorage');
+    await upsertRoom({
+      id: 'room1',
+      guildId: 'g1',
+      channelId: 'room-channel-1',
+      name: 'Test Room',
+      createdBy: 'p1',
+      invitedUserIds: [],
+      createdAt: new Date().toISOString(),
+    } as any);
+    await seedSuggestion({ channelId: 'room-channel-1' });
+
+    const interaction = makeBgStatsInteraction('Wingspan', null, 'room-channel-1');
+    await execute(interaction);
+
+    const reply = interaction.editReply.mock.calls[0][0];
+    const button = reply.components[0].toJSON().components[0];
+    const data = JSON.parse(decodeURIComponent(button.url.split('?data=')[1]));
+    expect(data.location).toBe('');
+  });
+
+  it('replies with a clear ephemeral error when no game matches the given title', async () => {
+    await upsertGameNight(makeGameNight({ id: 'gn1', eventChannelId: 'event-channel-1' }));
+    await seedSuggestion();
+
+    const interaction = makeBgStatsInteraction('Not A Real Game', null, 'event-channel-1');
+    await execute(interaction);
+
+    expect(interaction.deferReply).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('No game called'),
+        flags: expect.anything(),
+      }),
+    );
+  });
+});

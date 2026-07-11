@@ -57,6 +57,8 @@ import {
 import { updateRequestPin, updateGameListPin } from '../utils/requestPin';
 import { enrichFromBGG } from './library';
 import { getGuildConfig } from '../utils/config';
+import { buildBgStatsPlayUrl, buildBgStatsButton, buildBgStatsQrAttachment } from '../utils/bgStats';
+import { resolvePlayerNames } from '../utils/playerNames';
 
 const MANUAL_VALUE = '__manual__';
 const BGG_VALUE = '__bgg__';
@@ -124,6 +126,20 @@ export const data = new SlashCommandBuilder()
       .addStringOption((opt) =>
         opt.setName('title').setDescription('Title of the game to remove').setRequired(true),
       ),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName('bgstats')
+      .setDescription('Generate a "Log in BG Stats" button + QR code for a suggested game')
+      .addStringOption((opt) =>
+        opt.setName('title').setDescription('Title of the game to generate a link for').setRequired(true),
+      )
+      .addStringOption((opt) =>
+        opt
+          .setName('location')
+          .setDescription('Where you\'re playing (defaults to the event location, blank in private rooms)')
+          .setRequired(false),
+      ),
   );
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -131,6 +147,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   if (sub === 'suggest') await handleSuggest(interaction);
   else if (sub === 'list') await handleGameList(interaction);
   else if (sub === 'cancel') await handleGameCancel(interaction);
+  else if (sub === 'bgstats') await handleGameBgStats(interaction);
 }
 
 // Private rooms have no RSVPs/lineup pin/request tracking of their own, but the rest of the
@@ -692,6 +709,59 @@ async function handleGameCancel(interaction: ChatInputCommandInteraction): Promi
   await interaction.reply({
     content: `**${match.title}** has been removed from the lineup.`,
     flags: MessageFlags.Ephemeral,
+  });
+}
+
+// ── Generate a BG Stats "log play" link for a suggested game ─────────────────
+
+async function handleGameBgStats(interaction: ChatInputCommandInteraction): Promise<void> {
+  const title = interaction.options.getString('title', true).trim();
+  const locationOption = interaction.options.getString('location');
+  const games = await findGamesByChannel(interaction.channelId!);
+  const match = games.find((g) => g.title.toLowerCase() === title.toLowerCase());
+
+  if (!match) {
+    const titles = games.map((g) => `**${g.title}**`).join(', ');
+    await interaction.reply({
+      content: `No game called **"${title}"** found in the lineup.${titles ? ` Current games: ${titles}` : ''}`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  // Resolving player names and generating the QR code both take a moment —
+  // ack the interaction before Discord's 3-second window elapses.
+  await interaction.deferReply();
+
+  const gameNight = await findGameNightForInteraction(interaction.user.id, interaction.channelId);
+  const location = locationOption ?? gameNight?.location ?? '';
+
+  const nameMap = await resolvePlayerNames(interaction.client, interaction.guildId!, match.seats);
+  const url = buildBgStatsPlayUrl({
+    gameName: match.title,
+    bggId: match.bggId,
+    location,
+    players: match.seats.map((id) => ({ name: nameMap[id] ?? id, sourcePlayerId: id })),
+    sourcePlayId: match.id,
+    playDate: new Date(),
+  });
+
+  const qrFilename = `bgstats-${match.id}.png`;
+  const qrAttachment = await buildBgStatsQrAttachment(url, qrFilename);
+
+  const embed = new EmbedBuilder()
+    .setTitle(`📊 ${match.title}`)
+    .addFields({
+      name: 'Players',
+      value: match.seats.map((id) => nameMap[id] ?? id).join('\n') || '*(no seats defined)*',
+    })
+    .setColor(0xe8a838)
+    .setImage(`attachment://${qrFilename}`);
+
+  await interaction.editReply({
+    embeds: [embed],
+    components: [buildBgStatsButton(url)],
+    files: [qrAttachment],
   });
 }
 

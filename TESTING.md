@@ -166,6 +166,18 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] After suggesting a BGG game, click **Yes, I'll bring it** — confirm game is added to your library (check with `/library mine`)
 - [ ] Click **No** — confirm the game is still in the lineup but not added to your library
 
+### 1.3g `/game bgstats`
+
+**What it does:** Generates a "Log in BG Stats" button and QR code for one of the current channel's suggested games, pre-filled with that game, its seated players, and a location — useful for a one-off play (especially in `/room` private rooms, which have no automatic scheduler pass). Works the same in event channels and private rooms; anyone who can see the game card can run it, not just its creator.
+
+- [ ] Run `/game bgstats title:Wingspan` in an event channel with that game suggested — confirm a public reply with a "📊 Log in BG Stats" button and a QR code image
+- [ ] Confirm the button opens BG Stats (or, pasted/decoded, contains) the correct game, the event's configured location, and the seated players
+- [ ] Confirm the QR code decodes to the exact same link as the button
+- [ ] For a seated player with a linked BGG account (`/bgg link`), confirm their BGG username appears instead of their Discord display name
+- [ ] Run `/game bgstats title:Wingspan location:Sean's place` — confirm the supplied location overrides the event's default
+- [ ] Run the same command inside a `/room`-created private room with a suggested game — confirm it works identically, and that location is blank unless the `location` option is given (rooms have no location of their own)
+- [ ] Run with a title that doesn't match any suggested game — confirm a clear ephemeral "No game called... found" error listing current games
+
 ## 1.4 `/library` — Game Library
 
 ### 1.4a `/library add`
@@ -1661,6 +1673,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Set `lock_hours_before_event:0` (the default) — confirm the config summary shows "Disabled"
 - [ ] Set `table_count:2` — confirm it saves and the config summary reflects it (see 4.7 for the scheduler behavior this feeds)
 - [ ] Set `light_buffer_minutes`, `medium_buffer_minutes`, `heavy_buffer_minutes` — confirm all three save independently and appear in the config summary
+- [ ] Set `post_bgstats_links:true` — confirm the config summary shows "Enabled" (see 4.7 for the behavior this feeds); set back to `false` — confirm it shows "Disabled" (the default)
 
 ### 3.9b `/admin library clear`
 
@@ -1925,6 +1938,7 @@ These features are triggered by Discord events and scheduled timers rather than 
 - `lock_hours_before_event` set to a non-zero value via `/admin event config` (3.9a).
 - An event with several suggested games (`/game suggest`, 1.3a), seated by more than one confirmed player each — use several test accounts so some games can be given overlapping players (to see round conflicts) and others distinct players (to see them land in the same round).
 - To trigger the lock without waiting for real time to pass, manually set a game night's `startTimeISO` in storage to fall within the configured lock window and wait for the next hourly check (or restart the bot).
+- To test the BG Stats buttons specifically, also set `post_bgstats_links:true` (3.9a), and link at least one seated test account's BGG account (`/bgg link`) so you can see the username-vs-display-name fallback in action.
 
 - [ ] With the lock threshold crossed, confirm the bot posts a "🔒 Lineup Locked" embed in the event channel listing each round's table assignments
 - [ ] Confirm two games that share a seated player never appear in the same round
@@ -1937,6 +1951,14 @@ These features are triggered by Discord events and scheduled timers rather than 
 - [ ] Confirm an event is only locked/scheduled once — running the hourly check again after locking doesn't re-post the schedule or re-lock
 - [ ] Confirm a cancelled or already-archived event is never locked/scheduled, even past its threshold
 - [ ] Set `lock_hours_before_event` back to `0` — confirm no further events get locked, and existing unlocked events remain fully open
+
+**With `post_bgstats_links:true`:**
+- [ ] Confirm a separate message with a "📊 Log in BG Stats" button and a QR code image is posted for each *scheduled* game (not for games listed under "Not scheduled")
+- [ ] Tap the button on mobile with the BG Stats app installed — confirm it opens directly to a new-play screen pre-filled with the correct game, location (the event's configured location), and the full seated roster for that table
+- [ ] Scan the QR code with a phone camera — confirm it decodes to the exact same link as the button (useful for players on a desktop/laptop rather than mobile)
+- [ ] For a seated player with a linked BGG account (`/bgg link`), confirm their BGG username is used as their player name in BG Stats rather than their Discord display name
+- [ ] For a seated player without a linked BGG account, confirm their Discord display name is used instead
+- [ ] With `post_bgstats_links:false` (the default), confirm no BG Stats messages are posted at all — only the existing "🔒 Lineup Locked" schedule embed
 
 ## 4.8 Private Room Expiration
 
