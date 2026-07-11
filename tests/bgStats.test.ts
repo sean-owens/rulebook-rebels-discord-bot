@@ -234,6 +234,19 @@ describe('buildBgStatsButtonUrl', () => {
     );
     expect(buttonUrl).not.toContain('.com//s/');
   });
+
+  // Regression: Railway's dashboard shows generated domains without a scheme
+  // (e.g. "my-app.up.railway.app"), so SHORT_LINK_BASE_URL was set that way in
+  // both .env and the Railway dashboard — producing a schemeless button URL
+  // that Discord would reject.
+  it('defaults to https:// when SHORT_LINK_BASE_URL has no scheme', async () => {
+    vi.stubEnv('SHORT_LINK_BASE_URL', 'my-app.up.railway.app');
+
+    const buttonUrl = await buildBgStatsButtonUrl(
+      'https://app.bgstatsapp.com/createPlay.html?data=abc',
+    );
+    expect(buttonUrl).toMatch(/^https:\/\/my-app\.up\.railway\.app\/s\/[A-Za-z0-9_-]+$/);
+  });
 });
 
 describe('buildBgStatsQrAttachment', () => {
