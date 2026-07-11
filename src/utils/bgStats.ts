@@ -3,6 +3,12 @@ import QRCode from 'qrcode';
 
 const BG_STATS_CREATE_PLAY_URL = 'https://app.bgstatsapp.com/createPlay.html';
 
+// Discord rejects a button whose `url` exceeds this length (BASE_TYPE_MAX_LENGTH).
+// The BG Stats payload grows with player count, so this fits solo/duo plays but
+// not larger tables — callers must check before adding the button, and always
+// fall back to the QR code (buildBgStatsQrAttachment), which has no such limit.
+export const DISCORD_BUTTON_URL_MAX_LENGTH = 512;
+
 // Identifies this bot as the source app in BG Stats' playData schema — required field.
 const SOURCE_NAME = 'Rulebook Rebels Discord Bot';
 
@@ -68,6 +74,10 @@ export function buildBgStatsPlayUrl(opts: BgStatsPlayUrlOptions): string {
 
   const data = encodeURIComponent(JSON.stringify(payload));
   return `${BG_STATS_CREATE_PLAY_URL}?data=${data}`;
+}
+
+export function fitsDiscordButton(url: string): boolean {
+  return url.length <= DISCORD_BUTTON_URL_MAX_LENGTH;
 }
 
 export function buildBgStatsButton(url: string): ActionRowBuilder<ButtonBuilder> {

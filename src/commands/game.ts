@@ -57,7 +57,12 @@ import {
 import { updateRequestPin, updateGameListPin } from '../utils/requestPin';
 import { enrichFromBGG } from './library';
 import { getGuildConfig } from '../utils/config';
-import { buildBgStatsPlayUrl, buildBgStatsButton, buildBgStatsQrAttachment } from '../utils/bgStats';
+import {
+  buildBgStatsPlayUrl,
+  buildBgStatsButton,
+  buildBgStatsQrAttachment,
+  fitsDiscordButton,
+} from '../utils/bgStats';
 import { resolvePlayerNames } from '../utils/playerNames';
 
 const MANUAL_VALUE = '__manual__';
@@ -748,9 +753,18 @@ async function handleGameBgStats(interaction: ChatInputCommandInteraction): Prom
 
   const qrFilename = `bgstats-${match.id}.png`;
   const qrAttachment = await buildBgStatsQrAttachment(url, qrFilename);
+  // BG Stats' link grows with player count and Discord caps button URLs at
+  // 512 chars — the button only fits for small tables. The QR code has no
+  // such limit and always works, so it's the primary path either way.
+  const canUseButton = fitsDiscordButton(url);
 
   const embed = new EmbedBuilder()
     .setTitle(`📊 ${match.title}`)
+    .setDescription(
+      canUseButton
+        ? 'Tap the button or scan the QR code to log this play in BG Stats.'
+        : 'Scan the QR code to log this play in BG Stats (too many players for a tappable link).',
+    )
     .addFields({
       name: 'Players',
       value: match.seats.map((id) => nameMap[id] ?? id).join('\n') || '*(no seats defined)*',
@@ -760,7 +774,7 @@ async function handleGameBgStats(interaction: ChatInputCommandInteraction): Prom
 
   await interaction.editReply({
     embeds: [embed],
-    components: [buildBgStatsButton(url)],
+    components: canUseButton ? [buildBgStatsButton(url)] : [],
     files: [qrAttachment],
   });
 }

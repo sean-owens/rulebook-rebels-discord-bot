@@ -617,6 +617,21 @@ describe('/game bgstats', () => {
     expect(data.players).toEqual([{ name: 'Display-p1', sourcePlayerId: 'p1' }]);
   });
 
+  // Regression: BG Stats' link grows with player count and Discord caps button
+  // URLs at 512 chars — this crashed /game bgstats in production for any real
+  // multi-player game (DiscordAPIError 50035). The QR code has no such limit.
+  it('omits the button (but still attaches the QR code) for a game with enough players to exceed the Discord button URL limit', async () => {
+    await upsertGameNight(makeGameNight({ id: 'gn1', eventChannelId: 'event-channel-1', location: 'The Rec Room' }));
+    await seedSuggestion({ seats: ['p1', 'p2', 'p3', 'p4', 'p5'] });
+
+    const interaction = makeBgStatsInteraction('Wingspan', null, 'event-channel-1');
+    await execute(interaction);
+
+    const reply = interaction.editReply.mock.calls[0][0];
+    expect(reply.components).toEqual([]);
+    expect(reply.files).toHaveLength(1);
+  });
+
   it('uses the location option to override the event default', async () => {
     await upsertGameNight(makeGameNight({ id: 'gn1', eventChannelId: 'event-channel-1', location: 'The Rec Room' }));
     await seedSuggestion();
