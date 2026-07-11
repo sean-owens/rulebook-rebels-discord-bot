@@ -104,7 +104,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       ...(isAdmin
         ? [
             {
-              name: '🔧  /admin — Server configuration',
+              name: '🔧  /admin — Server & library configuration',
               value: [
                 '`/admin event config` — Set server-wide defaults for new events (location, time, description)',
                 "`/admin library clear` — Clear a specific member's entire library",
@@ -115,6 +115,11 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
                 '`/admin tags list` — List all current tags',
                 '`/admin tags sync` — Create roles for all built-in tags at once',
                 '`/admin tags clear` — Remove all game tags and their roles',
+              ].join('\n'),
+            },
+            {
+              name: '🔧  /admin — Welcome, marketplace & rooms',
+              value: [
                 '`/admin welcome config` — Configure the welcome message and channel',
                 '`/admin welcome test` — Preview the welcome message',
                 '`/admin welcome greet` — Manually send the welcome message to a member',
