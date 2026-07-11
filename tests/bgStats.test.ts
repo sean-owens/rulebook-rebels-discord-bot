@@ -41,7 +41,13 @@ describe('buildBgStatsPlayUrl', () => {
       sourceName: 'Rulebook Rebels Discord Bot',
       sourcePlayId: 'game-1',
       playDate: '2026-07-11 19:30:00',
-      game: { name: 'Wingspan', sourceGameId: '266192', bggId: '266192' },
+      game: {
+        name: 'Wingspan',
+        sourceGameId: '266192',
+        bggId: '266192',
+        highestWins: true,
+        noPoints: false,
+      },
       location: "Sean's place",
       players: [
         { name: 'sean_o', sourcePlayerId: 'user-1', winner: false, startPlayer: false },
@@ -62,6 +68,22 @@ describe('buildBgStatsPlayUrl', () => {
     const data = decodeDataParam(url);
     expect(data.players[0].winner).toBe(false);
     expect(data.players[0].startPlayer).toBe(false);
+  });
+
+  // Regression case: same "No value for <field>" crash, this time for the
+  // game object's boolean fields rather than a player's.
+  it('includes explicit game.highestWins:true and game.noPoints:false — same "No value for <field>" crash applies to every boolean in this schema', () => {
+    const url = buildBgStatsPlayUrl({
+      gameName: 'Wingspan',
+      location: 'TBD',
+      players: [],
+      sourcePlayId: 'game-6',
+      playDate: PLAY_DATE,
+    });
+
+    const data = decodeDataParam(url);
+    expect(data.game.highestWins).toBe(true);
+    expect(data.game.noPoints).toBe(false);
   });
 
   it('falls back to a slugified sourceGameId when bggId is blank (manually-added games)', () => {
@@ -149,13 +171,29 @@ describe('fitsDiscordButton', () => {
     expect(fitsDiscordButton(url)).toBe(false);
   });
 
-  it('allows a solo play through, which typically fits', () => {
+  // Once every field BG Stats' Android app actually requires (winner,
+  // startPlayer, highestWins, noPoints) is included, even a solo play with a
+  // full-length Discord snowflake ID no longer fits under 512 chars without
+  // the short-link server — this is exactly why buildBgStatsButtonUrl exists.
+  it('no longer fits even a solo play once every required field is included, without a short link', () => {
     const url = buildBgStatsPlayUrl({
       gameName: 'Wingspan',
       bggId: '266192',
       location: 'The Rec Room',
       players: [{ name: 'sean_o', sourcePlayerId: '123456789012345678' }],
       sourcePlayId: 'game-1',
+      playDate: PLAY_DATE,
+    });
+
+    expect(fitsDiscordButton(url)).toBe(false);
+  });
+
+  it('fits a minimal play with no players and a short name', () => {
+    const url = buildBgStatsPlayUrl({
+      gameName: 'Go',
+      location: '',
+      players: [],
+      sourcePlayId: 'g1',
       playDate: PLAY_DATE,
     });
 

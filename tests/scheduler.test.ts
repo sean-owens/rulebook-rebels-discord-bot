@@ -335,8 +335,14 @@ describe('lockAndScheduleEvent', () => {
   });
 
   it('posts a BG Stats button per scheduled game when postBgStatsLinks is enabled', async () => {
+    // BG Stats' payload no longer fits under Discord's button limit even for
+    // a solo play once every field their app actually requires is included —
+    // stub the short-link server (the realistic production config) so the
+    // button reliably appears, and verify its contents via the stored link.
+    vi.stubEnv('SHORT_LINK_BASE_URL', 'https://bot.example.com');
     const { upsertGameNight } = await import('../src/utils/storage');
     const { upsertGame } = await import('../src/utils/gameStorage');
+    const { findShortLink } = await import('../src/utils/shortLinkStorage');
     const gn = makeGameNight({ location: 'The Rec Room' });
     await upsertGameNight(gn as any);
     await upsertGame({
@@ -355,7 +361,8 @@ describe('lockAndScheduleEvent', () => {
     const button = bgStatsCall.components[0].toJSON().components[0];
     expect(button.label).toBe('Log in BG Stats');
 
-    const data = JSON.parse(decodeURIComponent(button.url.split('?data=')[1]));
+    const stored = await findShortLink(button.url.split('/s/')[1]);
+    const data = JSON.parse(decodeURIComponent(stored!.url.split('?data=')[1]));
     expect(data.sourceName).toBe('Rulebook Rebels Discord Bot');
     expect(data.sourcePlayId).toBe('game1');
     expect(typeof data.playDate).toBe('string');
@@ -363,7 +370,7 @@ describe('lockAndScheduleEvent', () => {
     expect(data.location).toBe('The Rec Room');
     expect(data.players).toEqual([{ name: 'Display-p1', sourcePlayerId: 'p1', winner: false, startPlayer: false }]);
 
-    // A QR code encoding the same URL is attached alongside the button.
+    // A QR code (encoding the same short link as the button, for easier scanning) is attached alongside it.
     expect(bgStatsCall.files).toHaveLength(1);
     expect(bgStatsCall.files[0].toJSON().name).toBe('bgstats-game1.png');
   });
@@ -434,9 +441,11 @@ describe('lockAndScheduleEvent', () => {
   });
 
   it("uses a player's linked BGG username instead of their Discord display name when available", async () => {
+    vi.stubEnv('SHORT_LINK_BASE_URL', 'https://bot.example.com');
     const { upsertGameNight } = await import('../src/utils/storage');
     const { upsertGame } = await import('../src/utils/gameStorage');
     const { setBggAccount } = await import('../src/utils/bggAccountStorage');
+    const { findShortLink } = await import('../src/utils/shortLinkStorage');
     const gn = makeGameNight();
     await upsertGameNight(gn as any);
     await upsertGame({
@@ -452,7 +461,8 @@ describe('lockAndScheduleEvent', () => {
 
     const bgStatsCall = (client._channel.send as any).mock.calls[1][0];
     const button = bgStatsCall.components[0].toJSON().components[0];
-    const data = JSON.parse(decodeURIComponent(button.url.split('?data=')[1]));
+    const stored = await findShortLink(button.url.split('/s/')[1]);
+    const data = JSON.parse(decodeURIComponent(stored!.url.split('?data=')[1]));
     expect(data.players).toEqual([{ name: 'sean_o', sourcePlayerId: 'p1', winner: false, startPlayer: false }]);
   });
 });

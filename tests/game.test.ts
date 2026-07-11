@@ -600,6 +600,12 @@ describe('/game bgstats', () => {
   }
 
   it('finds a suggested game by title and posts publicly with the event location, button, and QR code', async () => {
+    // BG Stats' payload no longer fits under Discord's button limit even for a
+    // solo play once every field their app actually requires is included —
+    // stub the short-link server (the realistic production config) so the
+    // button reliably appears, and verify its contents via the stored link.
+    vi.stubEnv('SHORT_LINK_BASE_URL', 'https://bot.example.com');
+    const { findShortLink } = await import('../src/utils/shortLinkStorage');
     await upsertGameNight(makeGameNight({ id: 'gn1', eventChannelId: 'event-channel-1', location: 'The Rec Room' }));
     await seedSuggestion();
 
@@ -612,7 +618,9 @@ describe('/game bgstats', () => {
     expect(reply.files).toHaveLength(1);
 
     const button = reply.components[0].toJSON().components[0];
-    const data = JSON.parse(decodeURIComponent(button.url.split('?data=')[1]));
+    const code = button.url.split('/s/')[1];
+    const stored = await findShortLink(code);
+    const data = JSON.parse(decodeURIComponent(stored!.url.split('?data=')[1]));
     expect(data.game.name).toBe('Wingspan');
     expect(data.location).toBe('The Rec Room');
     expect(data.players).toEqual([{ name: 'Display-p1', sourcePlayerId: 'p1', winner: false, startPlayer: false }]);
@@ -647,6 +655,8 @@ describe('/game bgstats', () => {
   });
 
   it('uses the location option to override the event default', async () => {
+    vi.stubEnv('SHORT_LINK_BASE_URL', 'https://bot.example.com');
+    const { findShortLink } = await import('../src/utils/shortLinkStorage');
     await upsertGameNight(makeGameNight({ id: 'gn1', eventChannelId: 'event-channel-1', location: 'The Rec Room' }));
     await seedSuggestion();
 
@@ -655,12 +665,15 @@ describe('/game bgstats', () => {
 
     const reply = interaction.editReply.mock.calls[0][0];
     const button = reply.components[0].toJSON().components[0];
-    const data = JSON.parse(decodeURIComponent(button.url.split('?data=')[1]));
+    const stored = await findShortLink(button.url.split('/s/')[1]);
+    const data = JSON.parse(decodeURIComponent(stored!.url.split('?data=')[1]));
     expect(data.location).toBe("Sean's place");
   });
 
   it('falls back to a blank location in a private room with no location option given', async () => {
+    vi.stubEnv('SHORT_LINK_BASE_URL', 'https://bot.example.com');
     const { upsertRoom } = await import('../src/utils/roomStorage');
+    const { findShortLink } = await import('../src/utils/shortLinkStorage');
     await upsertRoom({
       id: 'room1',
       guildId: 'g1',
@@ -677,7 +690,8 @@ describe('/game bgstats', () => {
 
     const reply = interaction.editReply.mock.calls[0][0];
     const button = reply.components[0].toJSON().components[0];
-    const data = JSON.parse(decodeURIComponent(button.url.split('?data=')[1]));
+    const stored = await findShortLink(button.url.split('/s/')[1]);
+    const data = JSON.parse(decodeURIComponent(stored!.url.split('?data=')[1]));
     expect(data.location).toBe('');
   });
 
