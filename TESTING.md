@@ -168,12 +168,13 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.3g `/game bgstats`
 
-**What it does:** Generates a QR code (and, for small enough tables, a "Log in BG Stats" button) for one of the current channel's suggested games, pre-filled with that game, its seated players, and a location — useful for a one-off play (especially in `/room` private rooms, which have no automatic scheduler pass). Works the same in event channels and private rooms; anyone who can see the game card can run it, not just its creator.
+**What it does:** Generates a QR code (and, for small enough tables — or always, if `SHORT_LINK_BASE_URL` is configured, see 4.7a — a "Log in BG Stats" button) for one of the current channel's suggested games, pre-filled with that game, its seated players, and a location — useful for a one-off play (especially in `/room` private rooms, which have no automatic scheduler pass). Works the same in event channels and private rooms; anyone who can see the game card can run it, not just its creator.
 
 - [ ] Run `/game bgstats title:Wingspan` in an event channel with 1-2 players seated — confirm a public reply with a "📊 Log in BG Stats" button and a QR code image
 - [ ] Confirm the button opens BG Stats (or, pasted/decoded, contains) the correct game, the event's configured location, and the seated players
-- [ ] Run against a game with several seated players (roughly 3+) — confirm the button is **omitted** (Discord caps button links at 512 characters and BG Stats' link grows with player count) but the QR code is still present, and the reply text explains why there's no button
-- [ ] Confirm the QR code decodes to the exact same link the button would have used, regardless of player count
+- [ ] Without `SHORT_LINK_BASE_URL` configured, run against a game with several seated players (roughly 3+) — confirm the button is **omitted** (Discord caps button links at 512 characters and BG Stats' link grows with player count) but the QR code is still present, and the reply text explains why there's no button
+- [ ] With `SHORT_LINK_BASE_URL` configured (4.7a), run the same multi-player case — confirm the button **is** present now, using a short `<domain>/s/<code>` link
+- [ ] Confirm the QR code decodes to (or, via the short link, redirects to) the exact same play details the button would have used, regardless of player count
 - [ ] Scan the QR code (or tap the button) and confirm BG Stats opens the pre-filled play screen without an "Invalid data" JSON error (regression: BG Stats' Android app requires an explicit `winner` value per player, even though it's documented as optional)
 - [ ] For a seated player with a linked BGG account (`/bgg link`), confirm their BGG username appears instead of their Discord display name
 - [ ] Run `/game bgstats title:Wingspan location:Sean's place` — confirm the supplied location overrides the event's default
@@ -1956,12 +1957,21 @@ These features are triggered by Discord events and scheduled timers rather than 
 
 **With `post_bgstats_links:true`:**
 - [ ] Confirm a separate message with a QR code image is posted for each *scheduled* game (not for games listed under "Not scheduled")
-- [ ] For a game with only 1-2 seated players, confirm a "📊 Log in BG Stats" button is also present, and tapping it on mobile with the BG Stats app installed opens directly to a new-play screen pre-filled with the correct game, location (the event's configured location), and the full seated roster for that table
-- [ ] For a game with several seated players (roughly 3+, depending on name lengths), confirm the button is **omitted** — Discord caps a button's link at 512 characters, and BG Stats' link grows with player count, so larger tables only get the QR code. The message text should say so ("too many players for a tappable link") rather than the button silently vanishing with no explanation
-- [ ] Scan the QR code with a phone camera — confirm it decodes to the exact same link the button would have used, regardless of player count (the QR has no length limit)
+- [ ] **With `SHORT_LINK_BASE_URL` configured** (see 4.7a below): confirm a "📊 Log in BG Stats" button is present regardless of how many players are seated, and tapping it opens directly to a new-play screen pre-filled with the correct game, location (the event's configured location), and the full seated roster for that table
+- [ ] **Without `SHORT_LINK_BASE_URL` configured**: for a game with only 1-2 seated players, confirm the button is still present (the raw link is short enough); for a game with several seated players (roughly 3+, depending on name lengths), confirm the button is **omitted** and the message text explains why ("too many players for a tappable link") rather than silently vanishing
+- [ ] Scan the QR code with a phone camera — confirm it decodes to (or, via the short link, redirects to) the exact same play details regardless of player count
 - [ ] Scan the QR code (or tap the button) and confirm BG Stats opens the pre-filled play screen **without** an "Invalid data" JSON error (regression: BG Stats' Android app requires an explicit `winner` value per player even though it's documented as optional — omitting it entirely threw `JSONException: No value for winner`)
 - [ ] For a seated player with a linked BGG account (`/bgg link`), confirm their BGG username is used as their player name in BG Stats rather than their Discord display name
 - [ ] For a seated player without a linked BGG account, confirm their Discord display name is used instead
+
+### 4.7a BG Stats short-link redirect service
+
+**What it does:** Backs the "Log in BG Stats" button with a short `https://<domain>/s/<code>` URL instead of the full BG Stats deep link, so the button stays under Discord's 512-character link limit no matter how many players are seated. Requires `SHORT_LINK_BASE_URL` to be set to a public domain generated for this Railway service (Settings → Networking → Generate Domain); the bot listens on Railway's injected `$PORT`. If unset, this feature no-ops entirely — buttons fall back to the old "only if the raw link is short enough" behavior (see 4.7 above).
+
+- [ ] With `SHORT_LINK_BASE_URL` set and the service redeployed, confirm the button's link is a short `<domain>/s/<code>` URL (not the raw `bgstatsapp.com` link) even for a large table
+- [ ] Visit that short link directly in a browser — confirm it 302-redirects straight to the full BG Stats deep link
+- [ ] Visit `<domain>/s/<made-up-code>` — confirm a 404 rather than a crash or an open redirect to an arbitrary URL
+- [ ] Confirm `/game bgstats` (1.3g) also produces a short-link button under the same configuration
 - [ ] With `post_bgstats_links:false` (the default), confirm no BG Stats messages are posted at all — only the existing "🔒 Lineup Locked" schedule embed
 
 ## 4.8 Private Room Expiration

@@ -538,6 +538,7 @@ describe('/game bgstats', () => {
   afterEach(() => {
     cwdSpy.mockRestore();
     fs.rmSync(tmpDir, { recursive: true, force: true });
+    vi.unstubAllEnvs();
   });
 
   function makeBgStatsInteraction(
@@ -630,6 +631,19 @@ describe('/game bgstats', () => {
     const reply = interaction.editReply.mock.calls[0][0];
     expect(reply.components).toEqual([]);
     expect(reply.files).toHaveLength(1);
+  });
+
+  it('includes a working short-link button for a multi-player game when SHORT_LINK_BASE_URL is configured', async () => {
+    vi.stubEnv('SHORT_LINK_BASE_URL', 'https://bot.example.com');
+    await upsertGameNight(makeGameNight({ id: 'gn1', eventChannelId: 'event-channel-1', location: 'The Rec Room' }));
+    await seedSuggestion({ seats: ['p1', 'p2', 'p3', 'p4', 'p5'] });
+
+    const interaction = makeBgStatsInteraction('Wingspan', null, 'event-channel-1');
+    await execute(interaction);
+
+    const reply = interaction.editReply.mock.calls[0][0];
+    const button = reply.components[0].toJSON().components[0];
+    expect(button.url).toMatch(/^https:\/\/bot\.example\.com\/s\/[A-Za-z0-9_-]+$/);
   });
 
   it('uses the location option to override the event default', async () => {

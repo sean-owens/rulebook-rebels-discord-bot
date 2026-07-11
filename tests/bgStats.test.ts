@@ -1,12 +1,17 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { ButtonStyle } from 'discord.js';
 import {
   buildBgStatsPlayUrl,
   buildBgStatsButton,
+  buildBgStatsButtonUrl,
   buildBgStatsQrAttachment,
   fitsDiscordButton,
   DISCORD_BUTTON_URL_MAX_LENGTH,
 } from '../src/utils/bgStats';
+import { findShortLink } from '../src/utils/shortLinkStorage';
 
 const PLAY_DATE = new Date('2026-07-11T19:30:00.000Z');
 
@@ -154,6 +159,80 @@ describe('fitsDiscordButton', () => {
     });
 
     expect(fitsDiscordButton(url)).toBe(true);
+  });
+});
+
+describe('buildBgStatsButtonUrl', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-bgstats-buttonurl-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    vi.unstubAllEnvs();
+  });
+
+  it('falls back to the length-check behavior when SHORT_LINK_BASE_URL is unset', async () => {
+    vi.stubEnv('SHORT_LINK_BASE_URL', '');
+
+    const longUrl = buildBgStatsPlayUrl({
+      gameName: 'Wingspan',
+      bggId: '266192',
+      location: 'The Rec Room',
+      players: Array.from({ length: 4 }, (_, i) => ({
+        name: `player_name_${i}`,
+        sourcePlayerId: `12345678901234567${i}`,
+      })),
+      sourcePlayId: 'game-1',
+      playDate: PLAY_DATE,
+    });
+
+    expect(await buildBgStatsButtonUrl(longUrl)).toBeNull();
+
+    const shortUrl = 'https://app.bgstatsapp.com/createPlay.html?data=abc';
+    expect(await buildBgStatsButtonUrl(shortUrl)).toBe(shortUrl);
+  });
+
+  // Regression case: even a real 2-player game's link exceeds Discord's
+  // 512-char button limit (confirmed against production), so the button
+  // silently never appeared for genuine multi-player games. A short link
+  // fixes that regardless of player count.
+  it('returns a short redirect link and persists the full URL when SHORT_LINK_BASE_URL is set', async () => {
+    vi.stubEnv('SHORT_LINK_BASE_URL', 'https://bot.example.com');
+
+    const longUrl = buildBgStatsPlayUrl({
+      gameName: 'Sky Team',
+      location: '',
+      players: [
+        { name: 'snwns1', sourcePlayerId: '111111111111111111' },
+        { name: 'Bucko77', sourcePlayerId: '222222222222222222' },
+      ],
+      sourcePlayId: 'game-1',
+      playDate: PLAY_DATE,
+    });
+    expect(fitsDiscordButton(longUrl)).toBe(false);
+
+    const buttonUrl = await buildBgStatsButtonUrl(longUrl);
+    expect(buttonUrl).toMatch(/^https:\/\/bot\.example\.com\/s\/[A-Za-z0-9_-]+$/);
+    expect(fitsDiscordButton(buttonUrl!)).toBe(true);
+
+    const code = buttonUrl!.split('/s/')[1];
+    const stored = await findShortLink(code);
+    expect(stored?.url).toBe(longUrl);
+  });
+
+  it('strips a trailing slash from SHORT_LINK_BASE_URL', async () => {
+    vi.stubEnv('SHORT_LINK_BASE_URL', 'https://bot.example.com/');
+
+    const buttonUrl = await buildBgStatsButtonUrl(
+      'https://app.bgstatsapp.com/createPlay.html?data=abc',
+    );
+    expect(buttonUrl).not.toContain('.com//s/');
   });
 });
 

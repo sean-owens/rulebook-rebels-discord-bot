@@ -13,8 +13,16 @@ import { handleGuildCreate } from './events/guildCreate';
 import { handleGuildDelete } from './events/guildDelete';
 import { runRetentionCleanup } from './utils/guildLifecycle';
 import { loadBGGCatalog } from './utils/bggCatalog';
+import { startShortLinkServer } from './utils/shortLinkServer';
 
 loadBGGCatalog().catch((err) => console.error('[BGGCatalog] Startup error:', err));
+
+// Backs the BG Stats "Log in BG Stats" button (see src/utils/bgStats.ts) — a
+// short redirect URL that fits Discord's button length limit regardless of
+// player count. No-ops entirely if not configured (see .env.example).
+if (process.env.SHORT_LINK_BASE_URL && process.env.PORT) {
+  startShortLinkServer(Number(process.env.PORT));
+}
 
 const client = new Client({
   intents: [
