@@ -52,6 +52,9 @@ describe('shortLinkServer', () => {
     expect(res.contentType).toContain('text/html');
     expect(res.body).toContain('BG Stats');
     expect(res.body).toContain(`href="${link.url}"`);
+
+    // Pauses on the page, then auto-forwards — not a silent instant redirect.
+    expect(res.body).toContain(`<meta http-equiv="refresh" content="3;url=${link.url}">`);
   });
 
   it('HTML-escapes the destination URL to avoid injecting markup', async () => {
@@ -72,6 +75,7 @@ describe('shortLinkServer', () => {
     expect(res.status).toBe(404);
     expect(res.contentType).toContain('text/html');
     expect(res.body).toContain('not found');
+    expect(res.body).not.toContain('http-equiv="refresh"');
   });
 
   it('returns 404 for any path that is not /s/<code>', async () => {
