@@ -1,5 +1,6 @@
 import { ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import QRCode from 'qrcode';
+import { createShortLink } from './shortLinkStorage';
 
 const BG_STATS_CREATE_PLAY_URL = 'https://app.bgstatsapp.com/createPlay.html';
 
@@ -82,6 +83,23 @@ export function buildBgStatsPlayUrl(opts: BgStatsPlayUrlOptions): string {
 
 export function fitsDiscordButton(url: string): boolean {
   return url.length <= DISCORD_BUTTON_URL_MAX_LENGTH;
+}
+
+/**
+ * Resolves the URL to actually put on the "Log in BG Stats" button, or null
+ * if no button should be shown. When SHORT_LINK_BASE_URL is configured (see
+ * .env.example / src/utils/shortLinkServer.ts), always shortens the link so
+ * the button works regardless of player count. Otherwise falls back to the
+ * original length-check behavior — a button only when the full URL already
+ * fits Discord's limit.
+ */
+export async function buildBgStatsButtonUrl(fullUrl: string): Promise<string | null> {
+  const baseUrl = process.env.SHORT_LINK_BASE_URL;
+  if (baseUrl) {
+    const link = await createShortLink(fullUrl);
+    return `${baseUrl.replace(/\/+$/, '')}/s/${link.code}`;
+  }
+  return fitsDiscordButton(fullUrl) ? fullUrl : null;
 }
 
 export function buildBgStatsButton(url: string): ActionRowBuilder<ButtonBuilder> {

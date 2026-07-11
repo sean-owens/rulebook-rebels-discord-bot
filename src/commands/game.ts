@@ -60,8 +60,8 @@ import { getGuildConfig } from '../utils/config';
 import {
   buildBgStatsPlayUrl,
   buildBgStatsButton,
+  buildBgStatsButtonUrl,
   buildBgStatsQrAttachment,
-  fitsDiscordButton,
 } from '../utils/bgStats';
 import { resolvePlayerNames } from '../utils/playerNames';
 
@@ -753,15 +753,15 @@ async function handleGameBgStats(interaction: ChatInputCommandInteraction): Prom
 
   const qrFilename = `bgstats-${match.id}.png`;
   const qrAttachment = await buildBgStatsQrAttachment(url, qrFilename);
-  // BG Stats' link grows with player count and Discord caps button URLs at
-  // 512 chars — the button only fits for small tables. The QR code has no
-  // such limit and always works, so it's the primary path either way.
-  const canUseButton = fitsDiscordButton(url);
+  // With SHORT_LINK_BASE_URL configured this always fits (see bgStats.ts);
+  // otherwise it falls back to the same length-check as before. The QR
+  // code has no length limit either way, so it's the reliable fallback.
+  const buttonUrl = await buildBgStatsButtonUrl(url);
 
   const embed = new EmbedBuilder()
     .setTitle(`📊 ${match.title}`)
     .setDescription(
-      canUseButton
+      buttonUrl
         ? 'Tap the button or scan the QR code to log this play in BG Stats.'
         : 'Scan the QR code to log this play in BG Stats (too many players for a tappable link).',
     )
@@ -774,7 +774,7 @@ async function handleGameBgStats(interaction: ChatInputCommandInteraction): Prom
 
   await interaction.editReply({
     embeds: [embed],
-    components: canUseButton ? [buildBgStatsButton(url)] : [],
+    components: buttonUrl ? [buildBgStatsButton(buttonUrl)] : [],
     files: [qrAttachment],
   });
 }

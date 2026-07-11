@@ -243,6 +243,7 @@ describe('lockAndScheduleEvent', () => {
   afterEach(() => {
     cwdSpy.mockRestore();
     fs.rmSync(tmpDir, { recursive: true, force: true });
+    vi.unstubAllEnvs();
   });
 
   function makeGameNight(overrides: Partial<Record<string, unknown>> = {}) {
@@ -391,6 +392,27 @@ describe('lockAndScheduleEvent', () => {
     expect(bgStatsCall.components).toEqual([]);
     expect(bgStatsCall.files).toHaveLength(1);
     expect(bgStatsCall.files[0].toJSON().name).toBe('bgstats-game1.png');
+  });
+
+  it('includes a working short-link button for a multi-player game when SHORT_LINK_BASE_URL is configured', async () => {
+    vi.stubEnv('SHORT_LINK_BASE_URL', 'https://bot.example.com');
+    const { upsertGameNight } = await import('../src/utils/storage');
+    const { upsertGame } = await import('../src/utils/gameStorage');
+    const gn = makeGameNight({ location: 'The Rec Room' });
+    await upsertGameNight(gn as any);
+    await upsertGame({
+      id: 'game1', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm1', guildId: 'guild-1',
+      bggId: '266192', title: 'Wingspan', bggLink: '', minPlayers: 1, maxPlayers: 6, suggestedPlayers: null,
+      minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: ['p1', 'p2', 'p3', 'p4', 'p5'], waitlist: [],
+      createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Light',
+    } as any);
+    const client = makeClient();
+
+    await lockAndScheduleEvent(client as any, gn as any, { ...BUFFER_CONFIG, postBgStatsLinks: true });
+
+    const bgStatsCall = (client._channel.send as any).mock.calls[1][0];
+    const button = bgStatsCall.components[0].toJSON().components[0];
+    expect(button.url).toMatch(/^https:\/\/bot\.example\.com\/s\/[A-Za-z0-9_-]+$/);
   });
 
   it('does not post BG Stats buttons when postBgStatsLinks is disabled (default)', async () => {
