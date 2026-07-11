@@ -26,6 +26,10 @@ export interface GuildConfig {
   lightBufferMinutes: number;
   mediumBufferMinutes: number;
   heavyBufferMinutes: number;
+  // Post a "Log in BG Stats" button per scheduled game when the lineup locks
+  // (see src/utils/bgStats.ts). Off by default — opt-in like the rest of the
+  // scheduler behavior, since it posts extra messages existing servers didn't ask for.
+  postBgStatsLinks: boolean;
   // /room private channels (see src/commands/room.ts).
   privateRoomCategoryName: string;
 }
@@ -51,6 +55,7 @@ const DEFAULT_CONFIG: GuildConfig = {
   lightBufferMinutes: 20,
   mediumBufferMinutes: 30,
   heavyBufferMinutes: 40,
+  postBgStatsLinks: false,
   privateRoomCategoryName: 'Private Rooms',
 };
 

@@ -132,6 +132,14 @@ export const data = new SlashCommandBuilder()
               .setDescription('Minutes added to Heavy games\' playtime for teach/overflow when scheduling (default: 40)')
               .setRequired(false)
               .setMinValue(0),
+          )
+          .addBooleanOption((opt) =>
+            opt
+              .setName('post_bgstats_links')
+              .setDescription(
+                'Post a "Log in BG Stats" button per scheduled game when the lineup locks (default: false)',
+              )
+              .setRequired(false),
           ),
       ),
   )

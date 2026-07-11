@@ -32,6 +32,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
           '`suggest` — Suggest a game to play at an event',
           '`list` — See the game lineup for an event (use inside an event channel)',
           '`cancel` — Remove your own game suggestion',
+          '`bgstats` — Generate a "Log in BG Stats" button + QR code for one of this channel\'s suggested games',
         ].join('\n'),
       },
       {
