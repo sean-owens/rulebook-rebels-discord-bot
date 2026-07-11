@@ -1143,7 +1143,7 @@ Admins retain full Regular Member and Host access, so this part fully repeats Pa
 
 **What it does:** Displays an ephemeral embed listing all available commands, tier-filtered to the invoking user's permissions.
 
-- [ ] Run `/help` as an admin — confirm all three sections appear: user commands, **🎙️ /host**, and **🔧 /admin**
+- [ ] Run `/help` as an admin — confirm all three sections appear: user commands, **🎙️ /host**, and **🔧 /admin**, now split across **🔧 /admin — Server & library configuration** and **🔧 /admin — Welcome, marketplace & rooms** (regression check: this used to be one field that silently exceeded Discord's 1024-character field limit and made `/help` fail with no response at all for every admin)
 - [ ] Confirm `/game cancel` description says "Remove your own game suggestion"
 - [ ] Confirm `/library clear` description says "Remove all your own games at once"
 - [ ] Confirm the response is ephemeral
