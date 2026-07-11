@@ -1965,12 +1965,12 @@ These features are triggered by Discord events and scheduled timers rather than 
 
 ### 4.7a BG Stats short-link redirect service
 
-**What it does:** Backs the "Log in BG Stats" button with a short `https://<domain>/s/<code>` URL instead of the full BG Stats deep link, so the button stays under Discord's 512-character link limit no matter how many players are seated. Requires `SHORT_LINK_BASE_URL` to be set to a public domain generated for this Railway service (Settings → Networking → Generate Domain); the bot listens on Railway's injected `$PORT`. If unset, this feature no-ops entirely — buttons fall back to the old "only if the raw link is short enough" behavior (see 4.7 above).
+**What it does:** Backs the "Log in BG Stats" button with a short `https://<domain>/s/<code>` URL instead of the full BG Stats deep link, so the button stays under Discord's 512-character link limit no matter how many players are seated. Visiting the short link serves a small landing page ("Log this play in BG Stats") with an "Open BG Stats" link, rather than redirecting silently — this gives the user context on what's about to happen, and a real tap tends to open universal links more reliably on mobile than an automatic redirect. Requires `SHORT_LINK_BASE_URL` to be set to a public domain generated for this Railway service (Settings → Networking → Generate Domain); the bot listens on Railway's injected `$PORT`. If unset, this feature no-ops entirely — buttons fall back to the old "only if the raw link is short enough" behavior (see 4.7 above).
 
 - [ ] With `SHORT_LINK_BASE_URL` set and the service redeployed, confirm the button's link is a short `<domain>/s/<code>` URL (not the raw `bgstatsapp.com` link) even for a large table
 - [ ] Confirm the QR code image also encodes that same short link rather than the raw `bgstatsapp.com` URL — visually it should look noticeably simpler/less dense than before this was added, and should scan quickly with a phone camera
-- [ ] Visit that short link directly in a browser — confirm it 302-redirects straight to the full BG Stats deep link
-- [ ] Visit `<domain>/s/<made-up-code>` — confirm a 404 rather than a crash or an open redirect to an arbitrary URL
+- [ ] Visit that short link directly in a browser — confirm it shows the "Log this play in BG Stats" landing page (not a silent redirect), and tapping/clicking the "Open BG Stats" link takes you to the pre-filled play screen
+- [ ] Visit `<domain>/s/<made-up-code>` — confirm a "Link not found" landing page (404) rather than a crash or an open redirect to an arbitrary URL
 - [ ] Confirm `/game bgstats` (1.3g) also produces a short-link button under the same configuration
 - [ ] With `post_bgstats_links:false` (the default), confirm no BG Stats messages are posted at all — only the existing "🔒 Lineup Locked" schedule embed
 
