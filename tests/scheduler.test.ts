@@ -361,7 +361,7 @@ describe('lockAndScheduleEvent', () => {
     expect(typeof data.playDate).toBe('string');
     expect(data.game.name).toBe('Wingspan');
     expect(data.location).toBe('The Rec Room');
-    expect(data.players).toEqual([{ name: 'Display-p1', sourcePlayerId: 'p1', winner: false }]);
+    expect(data.players).toEqual([{ name: 'Display-p1', sourcePlayerId: 'p1', winner: false, startPlayer: false }]);
 
     // A QR code encoding the same URL is attached alongside the button.
     expect(bgStatsCall.files).toHaveLength(1);
@@ -453,7 +453,7 @@ describe('lockAndScheduleEvent', () => {
     const bgStatsCall = (client._channel.send as any).mock.calls[1][0];
     const button = bgStatsCall.components[0].toJSON().components[0];
     const data = JSON.parse(decodeURIComponent(button.url.split('?data=')[1]));
-    expect(data.players).toEqual([{ name: 'sean_o', sourcePlayerId: 'p1', winner: false }]);
+    expect(data.players).toEqual([{ name: 'sean_o', sourcePlayerId: 'p1', winner: false, startPlayer: false }]);
   });
 });
 
