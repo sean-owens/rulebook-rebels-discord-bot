@@ -3,7 +3,12 @@ import { GameSuggestion, findGamesByChannel, upsertGame } from './gameStorage';
 import { GuildConfig, getGuildConfig } from './config';
 import { GameNight, loadGameNights, upsertGameNight } from './storage';
 import { resolvePlayerNames } from './playerNames';
-import { buildBgStatsPlayUrl, buildBgStatsButton, buildBgStatsQrAttachment } from './bgStats';
+import {
+  buildBgStatsPlayUrl,
+  buildBgStatsButton,
+  buildBgStatsQrAttachment,
+  fitsDiscordButton,
+} from './bgStats';
 
 export const LOCK_MESSAGE =
   "This event's lineup is locked ahead of the scheduled start — suggestions and seats can no longer change.";
@@ -238,10 +243,19 @@ async function postBgStatsButtons(
       });
       const qrFilename = `bgstats-${game.id}.png`;
       const qrAttachment = await buildBgStatsQrAttachment(url, qrFilename);
+      // BG Stats' link grows with player count and Discord caps button URLs at
+      // 512 chars — the button only fits for small tables. The QR code has no
+      // such limit and always works, so it's the primary path either way.
+      const canUseButton = fitsDiscordButton(url);
 
       const embed = new EmbedBuilder()
         .setTitle(`📊 ${game.title}`)
-        .setDescription(`Round ${assignment.round}, Table ${assignment.table}`)
+        .setDescription(
+          `Round ${assignment.round}, Table ${assignment.table}\n` +
+            (canUseButton
+              ? 'Tap the button or scan the QR code to log this play in BG Stats.'
+              : 'Scan the QR code to log this play in BG Stats (too many players for a tappable link).'),
+        )
         .addFields({
           name: 'Players',
           value: game.seats.map((id) => nameMap[id] ?? id).join('\n') || '*(no seats defined)*',
@@ -251,7 +265,7 @@ async function postBgStatsButtons(
 
       await channel.send({
         embeds: [embed],
-        components: [buildBgStatsButton(url)],
+        components: canUseButton ? [buildBgStatsButton(url)] : [],
         files: [qrAttachment],
       });
     }

@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { ButtonStyle } from 'discord.js';
-import { buildBgStatsPlayUrl, buildBgStatsButton, buildBgStatsQrAttachment } from '../src/utils/bgStats';
+import {
+  buildBgStatsPlayUrl,
+  buildBgStatsButton,
+  buildBgStatsQrAttachment,
+  fitsDiscordButton,
+  DISCORD_BUTTON_URL_MAX_LENGTH,
+} from '../src/utils/bgStats';
 
 const PLAY_DATE = new Date('2026-07-11T19:30:00.000Z');
 
@@ -94,6 +100,47 @@ describe('buildBgStatsButton', () => {
     expect(button.style).toBe(ButtonStyle.Link);
     expect(button.url).toBe(url);
     expect(button.label).toBe('Log in BG Stats');
+  });
+});
+
+describe('fitsDiscordButton', () => {
+  it('returns true at or under the limit and false just past it', () => {
+    expect(fitsDiscordButton('a'.repeat(DISCORD_BUTTON_URL_MAX_LENGTH))).toBe(true);
+    expect(fitsDiscordButton('a'.repeat(DISCORD_BUTTON_URL_MAX_LENGTH + 1))).toBe(false);
+  });
+
+  // Regression case: BG Stats' link grows with player count, and Discord's
+  // /game bgstats command crashed in production the moment a game had more
+  // than a couple of seated players, because the button URL exceeded
+  // Discord's 512-char limit and Discord rejected the whole interaction.
+  it('flags a realistic multi-player game as too long for a Discord button', () => {
+    const players = Array.from({ length: 4 }, (_, i) => ({
+      name: `player_name_${i}`,
+      sourcePlayerId: `12345678901234567${i}`,
+    }));
+    const url = buildBgStatsPlayUrl({
+      gameName: 'Wingspan',
+      bggId: '266192',
+      location: 'The Rec Room',
+      players,
+      sourcePlayId: 'game-1',
+      playDate: PLAY_DATE,
+    });
+
+    expect(fitsDiscordButton(url)).toBe(false);
+  });
+
+  it('allows a solo play through, which typically fits', () => {
+    const url = buildBgStatsPlayUrl({
+      gameName: 'Wingspan',
+      bggId: '266192',
+      location: 'The Rec Room',
+      players: [{ name: 'sean_o', sourcePlayerId: '123456789012345678' }],
+      sourcePlayId: 'game-1',
+      playDate: PLAY_DATE,
+    });
+
+    expect(fitsDiscordButton(url)).toBe(true);
   });
 });
 
