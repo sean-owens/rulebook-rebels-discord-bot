@@ -751,12 +751,13 @@ async function handleGameBgStats(interaction: ChatInputCommandInteraction): Prom
     playDate: new Date(),
   });
 
-  const qrFilename = `bgstats-${match.id}.png`;
-  const qrAttachment = await buildBgStatsQrAttachment(url, qrFilename);
   // With SHORT_LINK_BASE_URL configured this always fits (see bgStats.ts);
-  // otherwise it falls back to the same length-check as before. The QR
-  // code has no length limit either way, so it's the reliable fallback.
+  // otherwise it falls back to the same length-check as before. The QR code
+  // has no length limit either way, so it's the reliable fallback — but it
+  // still scans more easily off the short link when one exists.
   const buttonUrl = await buildBgStatsButtonUrl(url);
+  const qrFilename = `bgstats-${match.id}.png`;
+  const qrAttachment = await buildBgStatsQrAttachment(buttonUrl ?? url, qrFilename);
 
   const embed = new EmbedBuilder()
     .setTitle(`📊 ${match.title}`)

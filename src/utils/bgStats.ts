@@ -65,6 +65,14 @@ export function buildBgStatsPlayUrl(opts: BgStatsPlayUrlOptions): string {
       name: opts.gameName,
       sourceGameId,
       ...(bggId ? { bggId } : {}),
+      // BG Stats' docs list `highestWins`/`noPoints` as optional, but the same
+      // "No value for <field>" crash we hit for winner/startPlayer applies to
+      // every boolean field in this schema (the Android app's JSON parser
+      // reads booleans non-optionally) — highestWins defaults to true since
+      // most games score that way, and noPoints to false since we do pass
+      // per-player fields expecting a score to be filled in.
+      highestWins: true,
+      noPoints: false,
     },
     location: opts.location,
     players: opts.players.map((p) => ({
@@ -125,12 +133,21 @@ export function buildBgStatsButton(url: string): ActionRowBuilder<ButtonBuilder>
 
 /**
  * Renders `url` as a QR code PNG attachment, for players at a desktop/laptop
- * to scan with their phone instead of clicking the link button.
+ * to scan with their phone instead of clicking the link button. Callers
+ * should pass the shortest URL available (e.g. the short-link button URL,
+ * falling back to the full BG Stats link only when no short link exists) —
+ * fewer characters means fewer QR modules, which scans more reliably from
+ * a phone camera at typical distances. Low error correction (fewer redundant
+ * modules) and a generous fixed size help the same way.
  */
 export async function buildBgStatsQrAttachment(
   url: string,
   filename: string,
 ): Promise<AttachmentBuilder> {
-  const buffer = await QRCode.toBuffer(url, { type: 'png' });
+  const buffer = await QRCode.toBuffer(url, {
+    type: 'png',
+    errorCorrectionLevel: 'L',
+    width: 300,
+  });
   return new AttachmentBuilder(buffer, { name: filename });
 }
