@@ -44,13 +44,13 @@ describe('buildBgStatsPlayUrl', () => {
       game: { name: 'Wingspan', sourceGameId: '266192', bggId: '266192' },
       location: "Sean's place",
       players: [
-        { name: 'sean_o', sourcePlayerId: 'user-1', winner: false },
-        { name: 'user-2', sourcePlayerId: 'user-2', winner: false },
+        { name: 'sean_o', sourcePlayerId: 'user-1', winner: false, startPlayer: false },
+        { name: 'user-2', sourcePlayerId: 'user-2', winner: false, startPlayer: false },
       ],
     });
   });
 
-  it('includes an explicit winner:false per player — BG Stats\' Android app throws "No value for winner" if the key is omitted, even though it\'s documented as optional', () => {
+  it('includes explicit winner:false and startPlayer:false per player — BG Stats\' Android app throws "No value for <field>" if either key is omitted, even though both are documented as optional', () => {
     const url = buildBgStatsPlayUrl({
       gameName: 'Wingspan',
       location: 'TBD',
@@ -61,6 +61,7 @@ describe('buildBgStatsPlayUrl', () => {
 
     const data = decodeDataParam(url);
     expect(data.players[0].winner).toBe(false);
+    expect(data.players[0].startPlayer).toBe(false);
   });
 
   it('falls back to a slugified sourceGameId when bggId is blank (manually-added games)', () => {
