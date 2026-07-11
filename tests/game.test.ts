@@ -614,7 +614,7 @@ describe('/game bgstats', () => {
     const data = JSON.parse(decodeURIComponent(button.url.split('?data=')[1]));
     expect(data.game.name).toBe('Wingspan');
     expect(data.location).toBe('The Rec Room');
-    expect(data.players).toEqual([{ name: 'Display-p1', sourcePlayerId: 'p1' }]);
+    expect(data.players).toEqual([{ name: 'Display-p1', sourcePlayerId: 'p1', winner: false }]);
   });
 
   // Regression: BG Stats' link grows with player count and Discord caps button

@@ -69,6 +69,10 @@ export function buildBgStatsPlayUrl(opts: BgStatsPlayUrlOptions): string {
     players: opts.players.map((p) => ({
       name: p.name,
       sourcePlayerId: p.sourcePlayerId,
+      // BG Stats' docs list `winner` as optional, but the Android app's JSON
+      // parser throws ("No value for winner") if it's omitted entirely — send
+      // an explicit default the user can correct in-app once the play is over.
+      winner: false,
     })),
   };
 

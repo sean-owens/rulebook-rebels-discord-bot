@@ -174,6 +174,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Confirm the button opens BG Stats (or, pasted/decoded, contains) the correct game, the event's configured location, and the seated players
 - [ ] Run against a game with several seated players (roughly 3+) — confirm the button is **omitted** (Discord caps button links at 512 characters and BG Stats' link grows with player count) but the QR code is still present, and the reply text explains why there's no button
 - [ ] Confirm the QR code decodes to the exact same link the button would have used, regardless of player count
+- [ ] Scan the QR code (or tap the button) and confirm BG Stats opens the pre-filled play screen without an "Invalid data" JSON error (regression: BG Stats' Android app requires an explicit `winner` value per player, even though it's documented as optional)
 - [ ] For a seated player with a linked BGG account (`/bgg link`), confirm their BGG username appears instead of their Discord display name
 - [ ] Run `/game bgstats title:Wingspan location:Sean's place` — confirm the supplied location overrides the event's default
 - [ ] Run the same command inside a `/room`-created private room with a suggested game — confirm it works identically, and that location is blank unless the `location` option is given (rooms have no location of their own)
@@ -1958,6 +1959,7 @@ These features are triggered by Discord events and scheduled timers rather than 
 - [ ] For a game with only 1-2 seated players, confirm a "📊 Log in BG Stats" button is also present, and tapping it on mobile with the BG Stats app installed opens directly to a new-play screen pre-filled with the correct game, location (the event's configured location), and the full seated roster for that table
 - [ ] For a game with several seated players (roughly 3+, depending on name lengths), confirm the button is **omitted** — Discord caps a button's link at 512 characters, and BG Stats' link grows with player count, so larger tables only get the QR code. The message text should say so ("too many players for a tappable link") rather than the button silently vanishing with no explanation
 - [ ] Scan the QR code with a phone camera — confirm it decodes to the exact same link the button would have used, regardless of player count (the QR has no length limit)
+- [ ] Scan the QR code (or tap the button) and confirm BG Stats opens the pre-filled play screen **without** an "Invalid data" JSON error (regression: BG Stats' Android app requires an explicit `winner` value per player even though it's documented as optional — omitting it entirely threw `JSONException: No value for winner`)
 - [ ] For a seated player with a linked BGG account (`/bgg link`), confirm their BGG username is used as their player name in BG Stats rather than their Discord display name
 - [ ] For a seated player without a linked BGG account, confirm their Discord display name is used instead
 - [ ] With `post_bgstats_links:false` (the default), confirm no BG Stats messages are posted at all — only the existing "🔒 Lineup Locked" schedule embed
