@@ -85,6 +85,15 @@ export function fitsDiscordButton(url: string): boolean {
   return url.length <= DISCORD_BUTTON_URL_MAX_LENGTH;
 }
 
+// Railway's dashboard displays generated domains without a scheme (e.g.
+// "my-app.up.railway.app"), so SHORT_LINK_BASE_URL commonly gets set that way
+// even though Discord requires a full http(s) URL for a link button — default
+// to https rather than fail when the scheme was left off.
+function normalizeBaseUrl(url: string): string {
+  const withScheme = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+  return withScheme.replace(/\/+$/, '');
+}
+
 /**
  * Resolves the URL to actually put on the "Log in BG Stats" button, or null
  * if no button should be shown. When SHORT_LINK_BASE_URL is configured (see
@@ -97,7 +106,7 @@ export async function buildBgStatsButtonUrl(fullUrl: string): Promise<string | n
   const baseUrl = process.env.SHORT_LINK_BASE_URL;
   if (baseUrl) {
     const link = await createShortLink(fullUrl);
-    return `${baseUrl.replace(/\/+$/, '')}/s/${link.code}`;
+    return `${normalizeBaseUrl(baseUrl)}/s/${link.code}`;
   }
   return fitsDiscordButton(fullUrl) ? fullUrl : null;
 }
