@@ -1,7 +1,8 @@
-import { Client, ChannelType, TextChannel } from 'discord.js';
+import { Client, ChannelType, ForumChannel, TextChannel } from 'discord.js';
 import { GameNight } from '../utils/storage';
 import { findGamesByEvent, removeGamesByEvent } from '../utils/gameStorage';
 import { removeAllRequestsForEvent } from '../utils/libraryStorage';
+import { ensureGameNightTags, resolvedGameNightTag } from '../utils/gameNightTags';
 
 export async function cleanupCancelledNight(client: Client, gn: GameNight): Promise<void> {
   // Delete individual game card messages first (they may be in channels other than eventChannelId)
@@ -38,6 +39,12 @@ export async function cleanupCancelledNight(client: Client, gn: GameNight): Prom
       if (ch?.type === ChannelType.GuildForum) {
         const thread = await client.channels.fetch(gn.messageId);
         if (thread?.isThread()) {
+          try {
+            const tagIds = await ensureGameNightTags(ch as ForumChannel, gn.guildId);
+            await thread.setAppliedTags(resolvedGameNightTag(tagIds, 'cancelled'));
+          } catch {
+            /* tag update is best-effort */
+          }
           await thread.send('*This event has been cancelled. The thread is now archived.*');
           await thread.setLocked(true);
           await thread.setArchived(true);

@@ -132,11 +132,13 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.3c `/game cancel`
 
-**What it does:** Removes your own game suggestion from the lineup. Only the person who suggested the game can remove it via this command; hosts can remove any game via `/host game cancel`.
+**What it does:** Removes your own game suggestion from the lineup. Only the person who suggested the game can remove it via this command; hosts can remove any game via `/host game cancel`. If the given title isn't an exact match, falls back to a fuzzy match against the current lineup (e.g. `catan` matches "Settlers of Catan").
 
 - [ ] Remove your own game suggestion: `/game cancel title:Wingspan` — confirm card is deleted
+- [ ] Remove your own game suggestion using a partial/fuzzy title, e.g. `/game cancel title:catan` when "Settlers of Catan" is in the lineup — confirm it's found and removed
+- [ ] With two similarly-named games in the lineup (e.g. "Wingspan" and "Wingspan: Asia"), run `/game cancel title:wing` — confirm the bot asks you to be more specific instead of guessing, and neither game is removed
 - [ ] Attempt to remove another user's suggestion as a regular member — confirm "Only the person who suggested... can remove it. Ask a host or admin if you need it removed." error
-- [ ] Attempt to cancel a game not in the lineup — confirm "No game called X found" error
+- [ ] Attempt to cancel a game not in the lineup (no exact or fuzzy match) — confirm "No game called X found" error
 
 ### 1.3d Game Card Buttons — Join / Leave
 
@@ -255,10 +257,12 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.4f `/library edit`
 
-**What it does:** Lets you update the details of a game you own (player count, play time, tags, expansions, and complexity).
+**What it does:** Lets you update the details of a game you own (player count, play time, tags, expansions, and complexity). Every field in the modal is pre-filled with its current value, so deleting a field's text and saving clears that field rather than leaving the old value in place.
 
-- [ ] `/library edit game:Wingspan` — confirm the edit modal appears
+- [ ] `/library edit game:Wingspan` — confirm the edit modal appears, pre-filled with the game's current values
 - [ ] Update player range, save — confirm updated values appear in `/library view`
+- [ ] Set an expansion you own (e.g. `Prelude`), save, then re-open `/library edit` and clear the Expansions field entirely — confirm `/library view` no longer lists any expansions
+- [ ] Clear the player range, play time, tags, and complexity fields (leave every field blank), save — confirm `/library view` shows none of those values set, rather than the previous ones
 - [ ] Set Complexity to `Medium` — confirm 🟡 icon appears in `/library list`
 - [ ] Set Complexity to `light` (lowercase) — confirm it is accepted and normalized to `Light`
 - [ ] Set Complexity to an invalid value (e.g. `Extreme`) — confirm a warning is shown and the previous value is kept
@@ -664,11 +668,13 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.3c `/game cancel`
 
-**What it does:** Removes your own game suggestion from the lineup. Only the person who suggested the game can remove it via this command; hosts can remove any game via `/host game cancel`.
+**What it does:** Removes your own game suggestion from the lineup. Only the person who suggested the game can remove it via this command; hosts can remove any game via `/host game cancel`. If the given title isn't an exact match, falls back to a fuzzy match against the current lineup (e.g. `catan` matches "Settlers of Catan").
 
 - [ ] Remove your own game suggestion: `/game cancel title:Wingspan` — confirm card is deleted
+- [ ] Remove your own game suggestion using a partial/fuzzy title, e.g. `/game cancel title:catan` when "Settlers of Catan" is in the lineup — confirm it's found and removed
+- [ ] With two similarly-named games in the lineup (e.g. "Wingspan" and "Wingspan: Asia"), run `/game cancel title:wing` — confirm the bot asks you to be more specific instead of guessing, and neither game is removed
 - [ ] Attempt to remove another user's suggestion via this command (not `/host game cancel`) — confirm "Only the person who suggested... can remove it. Ask a host or admin if you need it removed." error
-- [ ] Attempt to cancel a game not in the lineup — confirm "No game called X found" error
+- [ ] Attempt to cancel a game not in the lineup (no exact or fuzzy match) — confirm "No game called X found" error
 
 ### 2.3d Game Card Buttons — Join / Leave
 
@@ -773,10 +779,12 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.4f `/library edit`
 
-**What it does:** Lets you update the details of a game you own (player count, play time, tags, expansions, and complexity).
+**What it does:** Lets you update the details of a game you own (player count, play time, tags, expansions, and complexity). Every field in the modal is pre-filled with its current value, so deleting a field's text and saving clears that field rather than leaving the old value in place.
 
-- [ ] `/library edit game:Wingspan` — confirm the edit modal appears
+- [ ] `/library edit game:Wingspan` — confirm the edit modal appears, pre-filled with the game's current values
 - [ ] Update player range, save — confirm updated values appear in `/library view`
+- [ ] Set an expansion you own (e.g. `Prelude`), save, then re-open `/library edit` and clear the Expansions field entirely — confirm `/library view` no longer lists any expansions
+- [ ] Clear the player range, play time, tags, and complexity fields (leave every field blank), save — confirm `/library view` shows none of those values set, rather than the previous ones
 - [ ] Set Complexity to `Medium` — confirm 🟡 icon appears in `/library list`
 - [ ] Set Complexity to `light` (lowercase) — confirm it is accepted and normalized to `Light`
 - [ ] Set Complexity to an invalid value (e.g. `Extreme`) — confirm a warning is shown and the previous value is kept
@@ -1016,13 +1024,14 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.8a `/host event create`
 
-**What it does:** Creates a Discord scheduled event, a text channel, and posts an RSVP embed in the configured announcements channel.
+**What it does:** Creates a Discord scheduled event, a text channel, and posts an RSVP embed in the configured announcements channel. If the announcements channel is a **Forum Channel**, the event becomes a forum thread instead of a plain message, tagged "Upcoming" (see 3.9a for eager tag creation).
 
 - [ ] Create an event with required fields only: `/host event create title:Board Game Bash date:August 22 time:7pm` — confirm:
   - Discord scheduled event is created, named `Board Game Bash — <full date>`
   - A channel named `august-22-board-game-bash` appears under "Game Nights"
   - Channel topic and welcome message both reference "Board Game Bash"
   - RSVP embed is posted in the announcements channel, titled `Board Game Bash — <full date>`
+- [ ] With the announcements channel set to a Forum Channel (3.9a), create an event — confirm a new forum thread is posted with the "Upcoming" tag applied
 - [ ] Attempt to create an event without `title` — confirm Discord rejects it as a missing required option
 - [ ] Create an event with all fields (end_time, location, link, description) — confirm all appear in the embed
 - [ ] Confirm date formats work: `aug 22`, `August 22`, `august 22, 2026`
@@ -1047,26 +1056,30 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.8c `/host event cancel`
 
-**What it does:** Cancels a game night, deletes the Discord scheduled event, removes the RSVP embed, and cleans up the event channel.
+**What it does:** Cancels a game night, deletes the Discord scheduled event, removes the RSVP embed, and cleans up the event channel. If the RSVP was a forum thread, it's tagged "Cancelled" and locked/archived instead of deleted.
 
 - [ ] Cancel an event as the creator: `/host event cancel id:<event-id>` — confirm event is removed
 - [ ] Cancel an event as a host (non-creator) — confirm it works
+- [ ] With a forum announcements channel, cancel an event — confirm the forum thread is tagged "Cancelled", gets a "this event has been cancelled" message, and is locked/archived
 - [ ] Attempt to cancel with an invalid ID — confirm "No event found" error
 - [ ] Attempt to cancel an already-cancelled event — confirm "already cancelled" error
 
 ### 2.8d `/host event archive`
 
-**What it does:** Manually archives channels for all past events that haven't been archived yet.
+**What it does:** Manually archives channels for all past events that haven't been archived yet. If the RSVP was a forum thread, it's tagged "Concluded" and locked/archived.
 
 - [ ] Run `/host event archive` with no past events — confirm "No past event channels to archive"
 - [ ] Run with a past event — confirm channel moves to "Archive" category and a lock-date message is posted
+- [ ] With a forum announcements channel, archive a past event — confirm the forum thread is tagged "Concluded", gets a "this event has concluded" message, and is locked/archived
 
 ### 2.8e `/host game cancel`
 
-**What it does:** Removes any game from the event lineup regardless of who suggested it.
+**What it does:** Removes any game from the event lineup regardless of who suggested it. If the given title isn't an exact match, falls back to a fuzzy match against the current lineup (e.g. `catan` matches "Settlers of Catan").
 
 - [ ] Remove another user's game: `/host game cancel title:Wingspan` — confirm card is deleted
-- [ ] Attempt to cancel a game not in the lineup — confirm "No game called X found" error
+- [ ] Remove a game using a partial/fuzzy title, e.g. `/host game cancel title:catan` — confirm it's found and removed
+- [ ] With two similarly-named games in the lineup, run `/host game cancel` with an ambiguous partial title — confirm the bot asks you to be more specific instead of guessing
+- [ ] Attempt to cancel a game not in the lineup (no exact or fuzzy match) — confirm "No game called X found" error
 
 ### 2.8f `/host library unrequest`
 
@@ -1245,11 +1258,13 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.3c `/game cancel`
 
-**What it does:** Removes your own game suggestion from the lineup. Only the person who suggested the game can remove it via this command; hosts/admins can remove any game via `/host game cancel`.
+**What it does:** Removes your own game suggestion from the lineup. Only the person who suggested the game can remove it via this command; hosts/admins can remove any game via `/host game cancel`. If the given title isn't an exact match, falls back to a fuzzy match against the current lineup (e.g. `catan` matches "Settlers of Catan").
 
 - [ ] Remove your own game suggestion: `/game cancel title:Wingspan` — confirm card is deleted
+- [ ] Remove your own game suggestion using a partial/fuzzy title, e.g. `/game cancel title:catan` when "Settlers of Catan" is in the lineup — confirm it's found and removed
+- [ ] With two similarly-named games in the lineup (e.g. "Wingspan" and "Wingspan: Asia"), run `/game cancel title:wing` — confirm the bot asks you to be more specific instead of guessing, and neither game is removed
 - [ ] Attempt to remove another user's suggestion via this command (not `/host game cancel`) — confirm "Only the person who suggested... can remove it. Ask a host or admin if you need it removed." error
-- [ ] Attempt to cancel a game not in the lineup — confirm "No game called X found" error
+- [ ] Attempt to cancel a game not in the lineup (no exact or fuzzy match) — confirm "No game called X found" error
 
 ### 3.3d Game Card Buttons — Join / Leave
 
@@ -1354,10 +1369,12 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.4f `/library edit`
 
-**What it does:** Lets you update the details of a game you own (player count, play time, tags, expansions, and complexity).
+**What it does:** Lets you update the details of a game you own (player count, play time, tags, expansions, and complexity). Every field in the modal is pre-filled with its current value, so deleting a field's text and saving clears that field rather than leaving the old value in place.
 
-- [ ] `/library edit game:Wingspan` — confirm the edit modal appears
+- [ ] `/library edit game:Wingspan` — confirm the edit modal appears, pre-filled with the game's current values
 - [ ] Update player range, save — confirm updated values appear in `/library view`
+- [ ] Set an expansion you own (e.g. `Prelude`), save, then re-open `/library edit` and clear the Expansions field entirely — confirm `/library view` no longer lists any expansions
+- [ ] Clear the player range, play time, tags, and complexity fields (leave every field blank), save — confirm `/library view` shows none of those values set, rather than the previous ones
 - [ ] Set Complexity to `Medium` — confirm 🟡 icon appears in `/library list`
 - [ ] Set Complexity to `light` (lowercase) — confirm it is accepted and normalized to `Light`
 - [ ] Set Complexity to an invalid value (e.g. `Extreme`) — confirm a warning is shown and the previous value is kept
@@ -1590,13 +1607,14 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.8a `/host event create`
 
-**What it does:** Creates a Discord scheduled event, a text channel, and posts an RSVP embed in the configured announcements channel.
+**What it does:** Creates a Discord scheduled event, a text channel, and posts an RSVP embed in the configured announcements channel. If the announcements channel is a **Forum Channel**, the event becomes a forum thread instead of a plain message, tagged "Upcoming" (see 3.9a for eager tag creation).
 
 - [ ] Create an event with required fields only: `/host event create title:Board Game Bash date:August 22 time:7pm` — confirm:
   - Discord scheduled event is created, named `Board Game Bash — <full date>`
   - A channel named `august-22-board-game-bash` appears under "Game Nights"
   - Channel topic and welcome message both reference "Board Game Bash"
   - RSVP embed is posted in the announcements channel, titled `Board Game Bash — <full date>`
+- [ ] With the announcements channel set to a Forum Channel (3.9a), create an event — confirm a new forum thread is posted with the "Upcoming" tag applied
 - [ ] Attempt to create an event without `title` — confirm Discord rejects it as a missing required option
 - [ ] Create an event with all fields (end_time, location, link, description) — confirm all appear in the embed
 - [ ] Confirm date formats work: `aug 22`, `August 22`, `august 22, 2026`
@@ -1621,26 +1639,30 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.8c `/host event cancel`
 
-**What it does:** Cancels a game night, deletes the Discord scheduled event, removes the RSVP embed, and cleans up the event channel.
+**What it does:** Cancels a game night, deletes the Discord scheduled event, removes the RSVP embed, and cleans up the event channel. If the RSVP was a forum thread, it's tagged "Cancelled" and locked/archived instead of deleted.
 
 - [ ] Cancel an event as the creator: `/host event cancel id:<event-id>` — confirm event is removed
 - [ ] Cancel an event created by someone else — confirm it works (Admin can cancel any event)
+- [ ] With a forum announcements channel, cancel an event — confirm the forum thread is tagged "Cancelled", gets a "this event has been cancelled" message, and is locked/archived
 - [ ] Attempt to cancel with an invalid ID — confirm "No event found" error
 - [ ] Attempt to cancel an already-cancelled event — confirm "already cancelled" error
 
 ### 3.8d `/host event archive`
 
-**What it does:** Manually archives channels for all past events that haven't been archived yet.
+**What it does:** Manually archives channels for all past events that haven't been archived yet. If the RSVP was a forum thread, it's tagged "Concluded" and locked/archived.
 
 - [ ] Run `/host event archive` with no past events — confirm "No past event channels to archive"
 - [ ] Run with a past event — confirm channel moves to "Archive" category and a lock-date message is posted
+- [ ] With a forum announcements channel, archive a past event — confirm the forum thread is tagged "Concluded", gets a "this event has concluded" message, and is locked/archived
 
 ### 3.8e `/host game cancel`
 
-**What it does:** Removes any game from the event lineup regardless of who suggested it.
+**What it does:** Removes any game from the event lineup regardless of who suggested it. If the given title isn't an exact match, falls back to a fuzzy match against the current lineup (e.g. `catan` matches "Settlers of Catan").
 
 - [ ] Remove another user's game: `/host game cancel title:Wingspan` — confirm card is deleted
-- [ ] Attempt to cancel a game not in the lineup — confirm "No game called X found" error
+- [ ] Remove a game using a partial/fuzzy title, e.g. `/host game cancel title:catan` — confirm it's found and removed
+- [ ] With two similarly-named games in the lineup, run `/host game cancel` with an ambiguous partial title — confirm the bot asks you to be more specific instead of guessing
+- [ ] Attempt to cancel a game not in the lineup (no exact or fuzzy match) — confirm "No game called X found" error
 
 ### 3.8f `/host library unrequest`
 
@@ -1666,6 +1688,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Set a default location: `/admin event config location:Library Room 1` — confirm it saves
 - [ ] Set a default start time: `/admin event config time:7:00 PM` — confirm it saves
 - [ ] Set an announcements channel: `/admin event config announcements:#announcements` — confirm it saves
+- [ ] Set the announcements channel to a **Forum Channel** — confirm it saves and the forum channel's tag list is eagerly populated with "Upcoming", "Cancelled", and "Concluded" tags (check the forum channel's tag settings in Discord) before any event is created
 - [ ] Set open channels to true/false — confirm it saves and new events respect the setting
 - [ ] Set event category and archive category — confirm new events and archives use the correct category
 - [ ] Set `archive_retention_days:14` — confirm it saves and the config summary shows "14 days"
@@ -1751,19 +1774,22 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.9j `/admin welcome config`
 
-**What it does:** Sets the welcome channel, rules channel, and Facebook group URL for the automatic welcome message.
+**What it does:** Sets the welcome channel, rules channel, Facebook group URL, and BGG group URL for the automatic welcome message.
 
 - [ ] Run with no options — confirm current config is displayed
 - [ ] Set channel: `/admin welcome config channel:#welcome`
 - [ ] Set rules channel: `/admin welcome config rules_channel:#rules`
 - [ ] Set Facebook URL: `/admin welcome config facebook_url:https://facebook.com/groups/...`
-- [ ] Confirm all three values persist after setting them
+- [ ] Set BGG URL: `/admin welcome config bgg_url:https://boardgamegeek.com/guild/...`
+- [ ] Confirm all four values persist after setting them
 
 ### 3.9k `/admin welcome test`
 
 **What it does:** Sends the welcome message to yourself as a preview.
 
 - [ ] Run `/admin welcome test` — confirm welcome message appears in the welcome channel and a DM is sent
+- [ ] With a BGG group URL configured (3.9j), confirm the welcome embed includes a "🎲 BoardGameGeek" field linking to it
+- [ ] With no BGG group URL configured, confirm the welcome embed omits the BoardGameGeek field entirely
 
 ### 3.9l `/admin welcome greet`
 
@@ -1879,12 +1905,13 @@ These features are triggered by Discord events and scheduled timers rather than 
 
 ## 4.1 Automatic Archiving (Event Completion)
 
-**What it does:** When a Discord scheduled event is marked as "Completed" by the server, the bot automatically archives the associated channel.
+**What it does:** When a Discord scheduled event is marked as "Completed" by the server, the bot automatically archives the associated channel. If the RSVP was a forum thread, it's tagged "Concluded" and locked/archived.
 
 - [ ] Mark a test event as completed in Discord — confirm:
   - Event channel moves to Archive category
   - Lock-date message is posted in the channel
   - Channel remains writable for 7 days
+- [ ] With a forum announcements channel, let an event auto-archive — confirm the forum thread is tagged "Concluded" and locked/archived
 
 ## 4.2 Delayed Channel Lock
 
@@ -2080,10 +2107,10 @@ These test cases involve genuine back-and-forth between two distinct Discord ide
 **What it does:** When a new member joins the server, the bot sends a welcome DM and posts a message in the configured welcome channel.
 
 - [ ] Have a second account join the server (a fresh account, or an existing test account you first kick and then re-invite) — confirm the welcome message is automatically sent to the welcome channel and to the new member via DM
-- [ ] Confirm the message includes a link to the rules channel and Facebook group (if configured via `/admin welcome config`)
+- [ ] Confirm the message includes a link to the rules channel, Facebook group, and BGG group (if configured via `/admin welcome config`)
 
 **Edge cases:**
-- [ ] Trigger a join with `/admin welcome config` left at defaults (no rules channel or Facebook URL set) — confirm the welcome message still sends cleanly without a broken link or placeholder text
+- [ ] Trigger a join with `/admin welcome config` left at defaults (no rules channel, Facebook URL, or BGG URL set) — confirm the welcome message still sends cleanly without a broken link or placeholder text
 - [ ] Disable DMs on the joining account beforehand — confirm the channel post still happens even if the DM can't be delivered
 
 ---

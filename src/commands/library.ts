@@ -2478,8 +2478,10 @@ export async function handleEditModal(interaction: ModalSubmitInteraction): Prom
 
   const existing = await getGameInfo(gameName);
 
-  let minPlayers: number | undefined = existing?.minPlayers;
-  let maxPlayers: number | undefined = existing?.maxPlayers;
+  // The modal always pre-fills each field with its current value, so a blank
+  // field here means the user deliberately cleared it, not "leave unchanged".
+  let minPlayers: number | undefined;
+  let maxPlayers: number | undefined;
   if (playersRaw) {
     const parts = playersRaw.split('-').map((p) => parseInt(p.trim(), 10));
     if (!isNaN(parts[0])) minPlayers = parts[0];
@@ -2487,9 +2489,7 @@ export async function handleEditModal(interaction: ModalSubmitInteraction): Prom
     else if (!isNaN(parts[0])) maxPlayers = parts[0];
   }
 
-  const playTime = playtimeRaw
-    ? parseInt(playtimeRaw, 10) || existing?.playTime
-    : existing?.playTime;
+  const playTime = playtimeRaw ? parseInt(playtimeRaw, 10) || existing?.playTime : undefined;
 
   // Fuzzy-match each tag; collect unrecognized inputs for follow-up
   const unmatchedTagInputs: string[] = [];
@@ -2505,19 +2505,19 @@ export async function handleEditModal(interaction: ModalSubmitInteraction): Prom
           } else unmatchedTagInputs.push(raw);
           return acc;
         }, [])
-    : (existing?.tags ?? []);
+    : [];
 
   const expansions = expansionsRaw
     ? expansionsRaw
         .split(',')
         .map((e) => e.trim())
         .filter(Boolean)
-    : existing?.expansions;
+    : undefined;
 
   // Fuzzy-match complexity; fall back to existing if input unrecognized
   const resolvedComplexity: Complexity | null | undefined = complexityRaw
     ? (fuzzyMatchComplexity(complexityRaw) ?? existing?.complexity)
-    : existing?.complexity;
+    : undefined;
   const complexityNeedsPrompt = !!(complexityRaw && !fuzzyMatchComplexity(complexityRaw));
 
   const info: GameInfo = {

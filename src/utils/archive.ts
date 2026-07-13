@@ -1,6 +1,7 @@
-import { Client, ChannelType, TextChannel } from 'discord.js';
+import { Client, ChannelType, ForumChannel, TextChannel } from 'discord.js';
 import { GameNight, loadGameNights, upsertGameNight } from './storage';
 import { getGuildConfig } from './config';
+import { ensureGameNightTags, resolvedGameNightTag } from './gameNightTags';
 
 const LOCK_DELAY_DAYS = 7;
 
@@ -52,6 +53,12 @@ export async function archiveEventChannel(client: Client, gn: GameNight): Promis
       if (announcementChannel?.type === ChannelType.GuildForum) {
         const thread = await client.channels.fetch(gn.messageId);
         if (thread?.isThread()) {
+          try {
+            const tagIds = await ensureGameNightTags(announcementChannel as ForumChannel, gn.guildId);
+            await thread.setAppliedTags(resolvedGameNightTag(tagIds, 'concluded'));
+          } catch {
+            /* tag update is best-effort */
+          }
           await thread.send('*This event has concluded. The thread is now archived.*');
           await thread.setLocked(true);
           await thread.setArchived(true);
@@ -118,6 +125,12 @@ export async function archiveExpiredEvents(client: Client): Promise<void> {
           if (announcementChannel?.type === ChannelType.GuildForum) {
             const thread = await client.channels.fetch(gn.messageId);
             if (thread?.isThread()) {
+              try {
+                const tagIds = await ensureGameNightTags(announcementChannel as ForumChannel, gn.guildId);
+                await thread.setAppliedTags(resolvedGameNightTag(tagIds, 'concluded'));
+              } catch {
+                /* tag update is best-effort */
+              }
               await thread.send('*This event has concluded. The thread is now archived.*');
               await thread.setLocked(true);
               await thread.setArchived(true);

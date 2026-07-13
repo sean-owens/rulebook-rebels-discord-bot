@@ -223,6 +223,209 @@ describe('handleCreate', () => {
   });
 });
 
+// ── handleCreate — forum channel status tags ────────────────────────────────
+
+describe('handleCreate — forum announcements channel', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-gamenight-forum-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeForumChannel() {
+    const channel: any = {
+      type: 15, // ChannelType.GuildForum
+      availableTags: [] as { id: string; name: string; moderated: boolean }[],
+      threads: { create: vi.fn(async (opts: any) => ({ id: 'thread-1', ...opts })) },
+    };
+    channel.setAvailableTags = vi.fn(async (tags: { id?: string; name: string; moderated: boolean }[]) => {
+      channel.availableTags = tags.map((t, i) => ({ id: t.id ?? `tag-${i}`, name: t.name, moderated: t.moderated }));
+      return { availableTags: channel.availableTags };
+    });
+    return channel;
+  }
+
+  function makeGuildWithForum(forumChannel: ReturnType<typeof makeForumChannel>) {
+    const eventChannel = {
+      id: 'event-channel-1',
+      permissionOverwrites: { create: vi.fn(async () => {}) },
+      send: vi.fn(async () => {}),
+    };
+    const channelsCreate = vi.fn(async (opts: { type: number; name: string }) =>
+      opts.type === 4 ? { id: 'category-1' } : eventChannel,
+    );
+    return {
+      id: 'guild-1',
+      client: {},
+      roles: { everyone: { id: 'everyone-role' } },
+      members: { fetchMe: vi.fn(async () => ({ id: 'bot-member' })) },
+      scheduledEvents: { create: vi.fn(async (opts: { name: string }) => ({ id: 'sched-1', ...opts })) },
+      channels: {
+        cache: { find: vi.fn(() => undefined) },
+        create: channelsCreate,
+        fetch: vi.fn(async () => forumChannel),
+      },
+      _eventChannel: eventChannel,
+    };
+  }
+
+  function makeCreateInteraction(title: string, guild: ReturnType<typeof makeGuildWithForum>) {
+    const options: Record<string, string | null> = {
+      title,
+      date: 'August 22',
+      time: '7pm',
+      end_time: null,
+      location: null,
+      link: null,
+      description: null,
+    };
+    return {
+      guild,
+      guildId: guild.id,
+      client: {},
+      channelId: 'command-channel-1',
+      user: { id: 'host-1' },
+      memberPermissions: { has: () => true },
+      options: {
+        getString: (name: string) => options[name] ?? null,
+      },
+      deferReply: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
+    } as any;
+  }
+
+  it('creates status tags on the forum channel and applies "Upcoming" to the new thread', async () => {
+    const { handleCreate } = await import('../src/commands/gamenight');
+    const forumChannel = makeForumChannel();
+    const guild = makeGuildWithForum(forumChannel);
+    const interaction = makeCreateInteraction('Board Game Bash', guild);
+
+    await handleCreate(interaction);
+
+    expect(forumChannel.setAvailableTags).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'Upcoming' }),
+        expect.objectContaining({ name: 'Cancelled' }),
+        expect.objectContaining({ name: 'Concluded' }),
+      ]),
+    );
+    const upcomingTagId = forumChannel.availableTags.find((t: any) => t.name === 'Upcoming')!.id;
+    expect(forumChannel.threads.create).toHaveBeenCalledWith(
+      expect.objectContaining({ appliedTags: [upcomingTagId] }),
+    );
+  });
+
+  it('reuses previously-created tag IDs from guild config instead of recreating them', async () => {
+    const { handleCreate } = await import('../src/commands/gamenight');
+    const { updateGuildConfig } = await import('../src/utils/config');
+    await updateGuildConfig('guild-1', {
+      gameNightTagIds: { upcoming: 'existing-upcoming-id', cancelled: 'existing-cancelled-id', concluded: 'existing-concluded-id' },
+    } as any);
+
+    const forumChannel = makeForumChannel();
+    const guild = makeGuildWithForum(forumChannel);
+    const interaction = makeCreateInteraction('Board Game Bash', guild);
+
+    await handleCreate(interaction);
+
+    expect(forumChannel.setAvailableTags).not.toHaveBeenCalled();
+    expect(forumChannel.threads.create).toHaveBeenCalledWith(
+      expect.objectContaining({ appliedTags: ['existing-upcoming-id'] }),
+    );
+  });
+});
+
+// ── handleCancel — forum thread status tag ──────────────────────────────────
+
+describe('handleCancel — forum announcements channel', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-gamenight-cancel-forum-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('applies the "Cancelled" tag to the thread before locking/archiving it', async () => {
+    const { handleCancel } = await import('../src/commands/gamenight');
+    const { upsertGameNight } = await import('../src/utils/storage');
+    const { updateGuildConfig } = await import('../src/utils/config');
+
+    await updateGuildConfig('guild-1', {
+      gameNightTagIds: { upcoming: 'up-id', cancelled: 'cancel-id', concluded: 'concl-id' },
+    } as any);
+
+    const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    await upsertGameNight({
+      id: 'gn-cancel-1',
+      title: 'Board Game Bash',
+      date: 'August 22',
+      time: '7pm',
+      location: 'TBD',
+      link: '',
+      description: '',
+      messageId: 'thread-1',
+      channelId: 'announcements',
+      guildId: 'guild-1',
+      discordEventId: null,
+      eventChannelId: null,
+      startTimeISO: future,
+      endTimeISO: null,
+      rsvps: { yes: [], maybe: [], no: [] },
+      createdBy: 'host-1',
+      cancelled: false,
+      archived: false,
+      createdAt: new Date().toISOString(),
+    } as any);
+
+    const forumChannel: any = { type: 15, availableTags: [{ id: 'up-id', name: 'Upcoming', moderated: false }] };
+    const thread = {
+      isThread: () => true,
+      setAppliedTags: vi.fn(async () => {}),
+      send: vi.fn(async () => {}),
+      setLocked: vi.fn(async () => {}),
+      setArchived: vi.fn(async () => {}),
+    };
+    const client = {
+      channels: {
+        fetch: vi.fn(async (id: string) => (id === 'announcements' ? forumChannel : thread)),
+      },
+    };
+
+    const interaction = {
+      options: { getString: (name: string) => (name === 'id' ? 'gn-cancel-1' : null) },
+      user: { id: 'host-1' },
+      memberPermissions: { has: () => true },
+      guild: { scheduledEvents: { fetch: vi.fn() } },
+      guildId: 'guild-1',
+      client,
+      reply: vi.fn(async () => {}),
+      deferReply: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
+    } as any;
+
+    await handleCancel(interaction);
+
+    expect(thread.setAppliedTags).toHaveBeenCalledWith(['cancel-id']);
+    // Tag update happens before the thread is locked/archived.
+    const tagCallOrder = thread.setAppliedTags.mock.invocationCallOrder[0];
+    const lockCallOrder = thread.setLocked.mock.invocationCallOrder[0];
+    expect(tagCallOrder).toBeLessThan(lockCallOrder);
+  });
+});
+
 // ── handleEdit ────────────────────────────────────────────────────────────
 
 describe('handleEdit', () => {
