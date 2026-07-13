@@ -52,7 +52,9 @@ describe('shortLinkServer', () => {
     expect(res.contentType).toContain('text/html');
     expect(res.body).toContain('BG Stats');
     expect(res.body).toContain(`href="${link.url}"`);
-    expect(res.body).not.toContain('http-equiv="refresh"');
+
+    // Pauses briefly, then auto-forwards — not a silent instant redirect.
+    expect(res.body).toContain(`<meta http-equiv="refresh" content="2;url=${link.url}">`);
   });
 
   it('HTML-escapes the destination URL to avoid injecting markup', async () => {
