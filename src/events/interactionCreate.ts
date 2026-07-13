@@ -83,6 +83,7 @@ import {
 import { findGameNight, upsertGameNight } from '../utils/storage';
 import { buildGameNightEmbed, buildGameNightButtons } from '../utils/embeds';
 import { execute as executeRoom } from '../commands/room';
+import { extractCommandUsage, recordCommandUsage } from '../utils/commandUsageStorage';
 
 export async function handleInteraction(interaction: Interaction): Promise<void> {
   const label = interaction.isChatInputCommand()
@@ -97,6 +98,14 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
       if (interaction.commandName === 'admin') await handleAdminAutocomplete(interaction);
       else if (interaction.commandName === 'marketplace') await handleMarketplaceAutocomplete(interaction);
     } else if (interaction.isChatInputCommand()) {
+      if (interaction.guildId) {
+        try {
+          const { commandPath, paramNames } = extractCommandUsage(interaction);
+          await recordCommandUsage(interaction.guildId, commandPath, paramNames);
+        } catch (err) {
+          console.error('[CommandUsage] Failed to record usage:', err);
+        }
+      }
       if (interaction.commandName === 'help') await executeHelp(interaction);
       else if (interaction.commandName === 'event') await executeGameNight(interaction);
       else if (interaction.commandName === 'game') await executeGame(interaction);
