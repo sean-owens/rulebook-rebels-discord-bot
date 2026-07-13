@@ -1,9 +1,11 @@
 import {
   AutocompleteInteraction,
   ChatInputCommandInteraction,
+  MessageFlags,
   PermissionFlagsBits,
   SlashCommandBuilder,
 } from 'discord.js';
+import { loadCommandUsage } from '../utils/commandUsageStorage';
 import { handleConfig as handleEventConfig } from './gamenight';
 import { handleAdminLibraryClear, handleSync as handleLibrarySync, handleSyncAll as handleLibrarySyncAll } from './library';
 import { findGameNamesByPartial, loadLibraryForGuild } from '../utils/libraryStorage';
@@ -30,6 +32,12 @@ export const data = new SlashCommandBuilder()
   .setName('admin')
   .setDescription('Admin-only server management commands')
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  // ── usage ─────────────────────────────────────────────────────────────────────
+  .addSubcommand((sub) =>
+    sub
+      .setName('usage')
+      .setDescription('Show which commands are used on this server, and how often'),
+  )
   // ── event group ──────────────────────────────────────────────────────────────
   .addSubcommandGroup((group) =>
     group
@@ -354,10 +362,12 @@ export async function handleAutocomplete(interaction: AutocompleteInteraction): 
 }
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
-  const group = interaction.options.getSubcommandGroup(true);
+  const group = interaction.options.getSubcommandGroup(false);
   const sub = interaction.options.getSubcommand();
 
-  if (group === 'event') {
+  if (!group && sub === 'usage') {
+    await handleUsage(interaction);
+  } else if (group === 'event') {
     if (sub === 'config') await handleEventConfig(interaction);
   } else if (group === 'library') {
     if (sub === 'clear') await handleAdminLibraryClear(interaction);
@@ -379,4 +389,44 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   } else if (group === 'room') {
     if (sub === 'config') await handleRoomConfig(interaction);
   }
+}
+
+// Discord caps message content at 2000 chars — leave headroom and truncate
+// defensively rather than crash if a server accumulates enough distinct
+// command paths to blow past the limit.
+const USAGE_CONTENT_BUDGET = 1900;
+
+export async function handleUsage(interaction: ChatInputCommandInteraction): Promise<void> {
+  const stats = await loadCommandUsage(interaction.guildId!);
+  if (stats.length === 0) {
+    await interaction.reply({
+      content: 'No command usage recorded yet.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const sorted = [...stats].sort((a, b) => b.totalCalls - a.totalCalls);
+  const lines = sorted.map((entry) => {
+    const params = Object.entries(entry.paramCounts)
+      .sort(([, a], [, b]) => b - a)
+      .map(([name, count]) => `${name}: ${count}`)
+      .join(', ');
+    const callWord = entry.totalCalls === 1 ? 'call' : 'calls';
+    return `/${entry.commandPath} — ${entry.totalCalls} ${callWord}${params ? ` (${params})` : ''}`;
+  });
+
+  let body = '';
+  let shown = 0;
+  for (const line of lines) {
+    if (body.length + line.length + 1 > USAGE_CONTENT_BUDGET) break;
+    body += (body ? '\n' : '') + line;
+    shown++;
+  }
+  const omittedNote = shown < lines.length ? `\n… and ${lines.length - shown} more` : '';
+
+  await interaction.reply({
+    content: `**Command usage (${sorted.length} command${sorted.length === 1 ? '' : 's'} tracked):**\n\`\`\`\n${body}${omittedNote}\n\`\`\``,
+    flags: MessageFlags.Ephemeral,
+  });
 }

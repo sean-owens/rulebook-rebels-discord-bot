@@ -1802,6 +1802,17 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run `/admin room config category:Secret Rooms` — confirm it saves and the reply reflects the new name
 - [ ] Create a room after changing the category — confirm it's placed under the newly configured category, creating it if it doesn't already exist
 
+### 3.9p `/admin usage`
+
+**What it does:** Shows, per this server, which slash commands (and subcommands) have been called and how many times, plus a count of how often each optional parameter was supplied — never the parameter values themselves. Tracking starts from whenever this feature was deployed; nothing is backfilled.
+
+- [ ] 👑 Run as non-admin — confirm "requires Manage Server permission"
+- [ ] On a server with no prior command activity since this feature was deployed, run `/admin usage` — confirm "No command usage recorded yet."
+- [ ] Run a few different commands and subcommands (e.g. `/help`, `/library add`, `/admin event config location:...`), then run `/admin usage` — confirm each shows up as its full path (e.g. `/library add`, `/admin event config`) with an accurate call count, sorted most-used first
+- [ ] For a command run with an optional parameter (e.g. `/admin event config location:...`), confirm the reply shows that parameter name and count (e.g. `location: 1`) — and confirm the actual value typed (e.g. the location text) never appears anywhere in the reply
+- [ ] Run the same command again without that optional parameter — confirm the total call count increases but the parameter's count does not
+- [ ] Confirm this is per-server: running commands on a different server the bot is in does not affect this server's counts
+
 ## 3.10 `/room` — Private Rooms
 
 ### 3.10a `/room create`
