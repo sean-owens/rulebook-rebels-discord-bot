@@ -16,6 +16,7 @@ import { buildGameNightEmbed, buildGameNightButtons } from '../utils/embeds';
 import { cleanupCancelledNight } from './cancelHelper';
 import { getGuildConfig, updateGuildConfig, GuildConfig } from '../utils/config';
 import { archiveEventChannel } from '../utils/archive';
+import { ensureGameNightTags, resolvedGameNightTag } from '../utils/gameNightTags';
 import { updateAnnouncementPin } from '../utils/pins';
 import { updateGameListPin, updateRequestPin } from '../utils/requestPin';
 
@@ -259,8 +260,10 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
       // Forum channel: each event becomes a thread post members can comment on
       const forumChannel = targetChannel as ForumChannel;
       const threadName = `${title} · ${date} · ${time}`.slice(0, 100);
+      const tagIds = await ensureGameNightTags(forumChannel, guild.id);
       const thread = await forumChannel.threads.create({
         name: threadName,
+        appliedTags: resolvedGameNightTag(tagIds, 'upcoming'),
         message: {
           content: '@everyone',
           embeds: [buildGameNightEmbed(gn, {})],
@@ -545,6 +548,19 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
     content: formatConfig(updated).replace('**Event defaults:**', '**Event defaults updated:**'),
     flags: MessageFlags.Ephemeral,
   });
+
+  // Eagerly create forum status tags so they're ready before the first event post
+  // (only applies when the announcements channel is a forum channel; best-effort).
+  if (patch.announcementsChannelId) {
+    try {
+      const forumChannel = await interaction.client.channels.fetch(patch.announcementsChannelId);
+      if (forumChannel?.type === ChannelType.GuildForum) {
+        await ensureGameNightTags(forumChannel as ForumChannel, interaction.guildId!);
+      }
+    } catch {
+      // non-fatal — tags will be created lazily on the first event post
+    }
+  }
 }
 
 async function handleList(interaction: ChatInputCommandInteraction): Promise<void> {

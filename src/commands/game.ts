@@ -26,7 +26,7 @@ import {
   BGGSearchResult,
   weightTag,
 } from '../utils/bgg';
-import { searchCatalog, isCatalogLoaded } from '../utils/bggCatalog';
+import { searchCatalog, isCatalogLoaded, matchesFuzzy } from '../utils/bggCatalog';
 import {
   loadGames,
   saveGames,
@@ -666,7 +666,22 @@ async function handleGameList(interaction: ChatInputCommandInteraction): Promise
 async function handleGameCancel(interaction: ChatInputCommandInteraction): Promise<void> {
   const title = interaction.options.getString('title', true).trim();
   const games = await findGamesByChannel(interaction.channelId!);
-  const match = games.find((g) => g.title.toLowerCase() === title.toLowerCase());
+  let match = games.find((g) => g.title.toLowerCase() === title.toLowerCase());
+
+  // Fall back to a fuzzy match against the current lineup (e.g. "catan" for
+  // "Settlers of Catan", or a minor typo) when there's no exact title match.
+  if (!match) {
+    const fuzzyMatches = games.filter((g) => matchesFuzzy(title, g.title));
+    if (fuzzyMatches.length === 1) match = fuzzyMatches[0];
+    else if (fuzzyMatches.length > 1) {
+      const titles = fuzzyMatches.map((g) => `**${g.title}**`).join(', ');
+      await interaction.reply({
+        content: `**"${title}"** matches more than one game in the lineup: ${titles}. Run \`/game cancel\` again with the exact title.`,
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+  }
 
   if (!match) {
     const titles = games.map((g) => `**${g.title}**`).join(', ');
@@ -785,7 +800,22 @@ export async function handleHostGameCancel(
 ): Promise<void> {
   const title = interaction.options.getString('title', true).trim();
   const games = await findGamesByChannel(interaction.channelId!);
-  const match = games.find((g) => g.title.toLowerCase() === title.toLowerCase());
+  let match = games.find((g) => g.title.toLowerCase() === title.toLowerCase());
+
+  // Fall back to a fuzzy match against the current lineup (e.g. "catan" for
+  // "Settlers of Catan", or a minor typo) when there's no exact title match.
+  if (!match) {
+    const fuzzyMatches = games.filter((g) => matchesFuzzy(title, g.title));
+    if (fuzzyMatches.length === 1) match = fuzzyMatches[0];
+    else if (fuzzyMatches.length > 1) {
+      const titles = fuzzyMatches.map((g) => `**${g.title}**`).join(', ');
+      await interaction.reply({
+        content: `**"${title}"** matches more than one game in the lineup: ${titles}. Run \`/host game cancel\` again with the exact title.`,
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+  }
 
   if (!match) {
     const titles = games.map((g) => `**${g.title}**`).join(', ');

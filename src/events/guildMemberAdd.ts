@@ -35,6 +35,13 @@ export async function handleGuildMemberAdd(member: GuildMember): Promise<void> {
         });
       }
 
+      if (config.bggGroupUrl) {
+        fields.push({
+          name: '🎲 BoardGameGeek',
+          value: `Check out our [BGG Group](${config.bggGroupUrl}) to see the games we're playing and connect with other members.`,
+        });
+      }
+
       fields.push({
         name: '👋 Introduce Yourself',
         value: `Tell us a bit about yourself right here! We'd love to know how you heard about the group and what games you enjoy.`,

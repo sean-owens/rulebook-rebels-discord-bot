@@ -11,6 +11,7 @@ export interface GuildConfig {
   welcomeChannelId: string;
   rulesChannelId: string;
   facebookGroupUrl: string;
+  bggGroupUrl: string;
   openEventChannels: boolean;
   eventCategoryName: string;
   archiveCategoryName: string;
@@ -18,6 +19,7 @@ export interface GuildConfig {
   marketplaceChannelId: string;
   marketplaceNegotiationMode: 'public' | 'private';
   marketplaceTagIds: Record<string, string>;
+  gameNightTagIds: Record<string, string>;
   // Lineup lock + scheduler (see src/utils/scheduler.ts). 0 = disabled — this is
   // a new behavior that adds a restriction to /game suggest, so it's opt-in
   // rather than on by default for existing servers.
@@ -43,6 +45,7 @@ const DEFAULT_CONFIG: GuildConfig = {
   welcomeChannelId: '',
   rulesChannelId: '',
   facebookGroupUrl: '',
+  bggGroupUrl: '',
   openEventChannels: false,
   eventCategoryName: 'Game Nights',
   archiveCategoryName: 'Archive',
@@ -50,6 +53,7 @@ const DEFAULT_CONFIG: GuildConfig = {
   marketplaceChannelId: '',
   marketplaceNegotiationMode: 'public',
   marketplaceTagIds: {},
+  gameNightTagIds: {},
   lockHoursBeforeEvent: 0,
   scheduleTableCount: 1,
   lightBufferMinutes: 20,

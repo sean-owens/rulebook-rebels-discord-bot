@@ -264,6 +264,9 @@ export const data = new SlashCommandBuilder()
           )
           .addStringOption((opt) =>
             opt.setName('facebook_url').setDescription('Facebook group URL').setRequired(false),
+          )
+          .addStringOption((opt) =>
+            opt.setName('bgg_url').setDescription('BoardGameGeek group/guild page URL').setRequired(false),
           ),
       )
       .addSubcommand((sub) =>

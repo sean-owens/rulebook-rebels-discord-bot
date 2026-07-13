@@ -711,3 +711,111 @@ describe('/game bgstats', () => {
     );
   });
 });
+
+describe('/game cancel — fuzzy title matching', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-game-cancel-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeCancelInteraction(title: string, channelId: string, guildId = 'g1', userId = 'u1') {
+    return {
+      options: {
+        getString: (name: string) => (name === 'title' ? title : null),
+        getSubcommand: () => 'cancel',
+      },
+      reply: vi.fn(async () => {}),
+      channelId,
+      guildId,
+      user: { id: userId },
+      isChatInputCommand: () => true,
+      client: {
+        channels: {
+          fetch: vi.fn(async () => {
+            throw new Error('not accessible in test');
+          }),
+        },
+      },
+    } as any;
+  }
+
+  async function seedSuggestion(overrides: Partial<Record<string, unknown>> = {}) {
+    const { upsertGame } = await import('../src/utils/gameStorage');
+    const game = {
+      id: 'game1',
+      eventId: 'gn1',
+      channelId: 'event-channel-1',
+      messageId: 'm1',
+      guildId: 'g1',
+      bggId: '266192',
+      title: 'Settlers of Catan',
+      bggLink: '',
+      minPlayers: 3,
+      maxPlayers: 4,
+      suggestedPlayers: null,
+      minPlaytime: 60,
+      maxPlaytime: 90,
+      suggestedStartTime: null,
+      expansions: [],
+      seats: ['u1'],
+      waitlist: [],
+      createdAt: new Date().toISOString(),
+      createdBy: 'u1',
+      ...overrides,
+    };
+    await upsertGame(game as any);
+    return game;
+  }
+
+  it('cancels via a fuzzy (non-exact) title match when there is exactly one candidate', async () => {
+    await seedSuggestion();
+
+    const interaction = makeCancelInteraction('catan', 'event-channel-1');
+    await execute(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('Settlers of Catan** has been removed'),
+      }),
+    );
+    const { findGamesByChannel } = await import('../src/utils/gameStorage');
+    expect(await findGamesByChannel('event-channel-1')).toHaveLength(0);
+  });
+
+  it('asks the user to be more specific when a fuzzy title matches multiple lineup games', async () => {
+    await seedSuggestion({ id: 'game1', title: 'Wingspan' });
+    await seedSuggestion({ id: 'game2', title: 'Wingspan: Asia' });
+
+    const interaction = makeCancelInteraction('wing', 'event-channel-1');
+    await execute(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('matches more than one game'),
+      }),
+    );
+    const { findGamesByChannel } = await import('../src/utils/gameStorage');
+    expect(await findGamesByChannel('event-channel-1')).toHaveLength(2);
+  });
+
+  it('still reports no match when the title has no fuzzy match either', async () => {
+    await seedSuggestion();
+
+    const interaction = makeCancelInteraction('Not A Real Game', 'event-channel-1');
+    await execute(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('No game called'),
+      }),
+    );
+  });
+});
