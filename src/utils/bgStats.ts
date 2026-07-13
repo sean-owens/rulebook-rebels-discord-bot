@@ -56,6 +56,11 @@ function formatPlayDate(date: Date): string {
 export function buildBgStatsPlayUrl(opts: BgStatsPlayUrlOptions): string {
   const bggId = opts.bggId?.trim() || undefined;
   const sourceGameId = bggId ?? `manual-${slugify(opts.gameName)}`;
+  // BG Stats' schema types `bggId` as a JSON number, not a string — sending
+  // it quoted throws a CoreData type-coercion exception in the app (crashed
+  // outright on macOS/Mac Catalyst; silently closed on iOS) when it tried to
+  // set the game's bggId attribute from our payload.
+  const bggIdNumber = bggId !== undefined ? Number(bggId) : undefined;
 
   const payload = {
     sourceName: SOURCE_NAME,
@@ -64,7 +69,7 @@ export function buildBgStatsPlayUrl(opts: BgStatsPlayUrlOptions): string {
     game: {
       name: opts.gameName,
       sourceGameId,
-      ...(bggId ? { bggId } : {}),
+      ...(bggIdNumber !== undefined && !Number.isNaN(bggIdNumber) ? { bggId: bggIdNumber } : {}),
       // BG Stats' docs list `highestWins`/`noPoints` as optional, but the same
       // "No value for <field>" crash we hit for winner/startPlayer applies to
       // every boolean field in this schema (the Android app's JSON parser

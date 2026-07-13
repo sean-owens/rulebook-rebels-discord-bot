@@ -44,7 +44,7 @@ describe('buildBgStatsPlayUrl', () => {
       game: {
         name: 'Wingspan',
         sourceGameId: '266192',
-        bggId: '266192',
+        bggId: 266192,
         highestWins: true,
         noPoints: false,
       },
@@ -84,6 +84,40 @@ describe('buildBgStatsPlayUrl', () => {
     const data = decodeDataParam(url);
     expect(data.game.highestWins).toBe(true);
     expect(data.game.noPoints).toBe(false);
+  });
+
+  // Regression case: BG Stats' schema types game.bggId as a JSON number, not
+  // a string. We stored bggId as a string internally (GameSuggestion.bggId),
+  // and previously passed it through verbatim — sending a quoted string threw
+  // a CoreData type-coercion exception in the app, crashing outright on
+  // macOS/Mac Catalyst and silently closing on iOS.
+  it('sends game.bggId as a JSON number, not a string', () => {
+    const url = buildBgStatsPlayUrl({
+      gameName: 'Wingspan',
+      bggId: '266192',
+      location: 'TBD',
+      players: [],
+      sourcePlayId: 'game-7',
+      playDate: PLAY_DATE,
+    });
+
+    const data = decodeDataParam(url);
+    expect(data.game.bggId).toBe(266192);
+    expect(typeof data.game.bggId).toBe('number');
+  });
+
+  it('omits bggId rather than sending NaN when it is non-numeric', () => {
+    const url = buildBgStatsPlayUrl({
+      gameName: 'Weird Game',
+      bggId: 'not-a-number',
+      location: 'TBD',
+      players: [],
+      sourcePlayId: 'game-8',
+      playDate: PLAY_DATE,
+    });
+
+    const data = decodeDataParam(url);
+    expect(data.game.bggId).toBeUndefined();
   });
 
   it('falls back to a slugified sourceGameId when bggId is blank (manually-added games)', () => {
