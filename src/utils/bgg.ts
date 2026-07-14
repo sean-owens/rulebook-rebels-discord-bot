@@ -131,7 +131,7 @@ export async function searchBGG(query: string): Promise<BGGSearchResult[]> {
     const primary = names.find((n) => n['@_type'] === 'primary');
     return {
       id: String(item['@_id']),
-      name: primary?.['@_value'] ?? names[0]?.['@_value'] ?? 'Unknown',
+      name: decodeEntities(primary?.['@_value'] ?? names[0]?.['@_value'] ?? 'Unknown'),
       yearPublished: item.yearpublished?.['@_value'] ? Number(item.yearpublished['@_value']) : null,
     };
   });
@@ -359,7 +359,7 @@ export async function validateBggUser(username: string): Promise<BGGUser | null>
 
 function parseBGGItem(item: any, id: string): Omit<BGGGame, 'howToPlayUrl'> {
   const names: any[] = Array.isArray(item.name) ? item.name : [item.name];
-  const primaryName = names.find((n) => n['@_type'] === 'primary')?.['@_value'] ?? 'Unknown';
+  const primaryName = decodeEntities(names.find((n) => n['@_type'] === 'primary')?.['@_value'] ?? 'Unknown');
 
   const polls: any[] = Array.isArray(item.poll) ? item.poll : item.poll ? [item.poll] : [];
   const numPlayersPoll = polls.find((p) => p['@_name'] === 'suggested_numplayers');
@@ -390,12 +390,12 @@ function parseBGGItem(item: any, id: string): Omit<BGGGame, 'howToPlayUrl'> {
   const links: any[] = Array.isArray(item.link) ? item.link : item.link ? [item.link] : [];
   const expansions: BGGExpansion[] = links
     .filter((l) => l['@_type'] === 'boardgameexpansion' && !l['@_inbound'])
-    .map((l) => ({ id: String(l['@_id']), name: String(l['@_value']) }))
+    .map((l) => ({ id: String(l['@_id']), name: decodeEntities(String(l['@_value'])) }))
     .slice(0, 25);
 
   const parentGame: BGGExpansion | undefined = links
     .filter((l) => l['@_type'] === 'boardgameexpansion' && l['@_inbound'])
-    .map((l) => ({ id: String(l['@_id']), name: String(l['@_value']) }))[0];
+    .map((l) => ({ id: String(l['@_id']), name: decodeEntities(String(l['@_value'])) }))[0];
 
   const seen = new Set<string>();
   const tags: string[] = [];

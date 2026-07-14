@@ -48,6 +48,12 @@ export const data = new SlashCommandBuilder()
           .setName('config')
           .setDescription('Set server-wide defaults for new events')
           .addStringOption((opt) =>
+            opt
+              .setName('timezone')
+              .setDescription('IANA timezone for event date/time input and display (e.g. "America/New_York", default: UTC)')
+              .setRequired(false),
+          )
+          .addStringOption((opt) =>
             opt.setName('location').setDescription('Default location').setRequired(false),
           )
           .addStringOption((opt) =>

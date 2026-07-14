@@ -108,6 +108,13 @@ export async function updateGameListPin(client: Client, eventId: string): Promis
     try {
       const msg = await channel.messages.fetch(gameNight.gameListPinMessageId);
       await msg.edit({ embeds: [embed] });
+      if (!msg.pinned) {
+        try {
+          await msg.pin();
+        } catch (err) {
+          console.warn(`Could not re-pin game list message in channel ${gameNight.eventChannelId}:`, err);
+        }
+      }
       return;
     } catch {
       /* message was deleted — fall through and repost */
@@ -172,6 +179,13 @@ export async function updateRequestPin(client: Client, eventId: string): Promise
     try {
       const msg = await channel.messages.fetch(gameNight.requestPinMessageId);
       await msg.edit({ embeds: [embed] });
+      if (!msg.pinned) {
+        try {
+          await msg.pin();
+        } catch (err) {
+          console.warn(`Could not re-pin request message in channel ${gameNight.eventChannelId}:`, err);
+        }
+      }
       return;
     } catch {
       /* message was deleted — fall through and repost */

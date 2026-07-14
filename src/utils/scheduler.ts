@@ -221,7 +221,12 @@ async function postBgStatsButtons(
 
   const scheduledGameIds = new Set(result.assignments.map((a) => a.gameId));
   const scheduledGames = games.filter((g) => scheduledGameIds.has(g.id));
-  if (scheduledGames.length === 0) return;
+  if (scheduledGames.length === 0) {
+    console.log(
+      `[BG Stats] Skipping post for game night ${gn.id} — no games were scheduled at lock time (${games.length} suggested, 0 met the minimum-player threshold).`,
+    );
+    return;
+  }
 
   const assignmentByGame = new Map(result.assignments.map((a) => [a.gameId, a]));
   const allPlayerIds = [...new Set(scheduledGames.flatMap((g) => g.seats))];

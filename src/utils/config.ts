@@ -34,6 +34,11 @@ export interface GuildConfig {
   postBgStatsLinks: boolean;
   // /room private channels (see src/commands/room.ts).
   privateRoomCategoryName: string;
+  // IANA timezone (e.g. "America/New_York") used to interpret /event
+  // date/time input and display it back consistently. Defaults to UTC rather
+  // than the host process's local zone, which has no relation to where the
+  // community actually is.
+  timezone: string;
 }
 
 const DEFAULT_CONFIG: GuildConfig = {
@@ -61,6 +66,7 @@ const DEFAULT_CONFIG: GuildConfig = {
   heavyBufferMinutes: 40,
   postBgStatsLinks: false,
   privateRoomCategoryName: 'Private Rooms',
+  timezone: 'UTC',
 };
 
 type ConfigStore = Record<string, GuildConfig>;

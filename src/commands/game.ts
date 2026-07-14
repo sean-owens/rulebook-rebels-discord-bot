@@ -101,9 +101,6 @@ const pendingLibraryGame = new Map<
   { gameName: string; info: GameInfo | null; ownerIds: string[] }
 >();
 
-// Stores suggest intent while the user picks which event to add to
-const pendingEventSuggest = new Map<string, { title: string; withExpansions: boolean }>();
-
 export const data = new SlashCommandBuilder()
   .setName('game')
   .setDescription('Suggest a game to play at a game night event')
@@ -413,7 +410,12 @@ async function handleSuggest(interaction: ChatInputCommandInteraction): Promise<
     // Selecting an option is what records pendingEventContext (see handleEventSelect); skipping
     // this step for the single-event case left later steps (tag picker, expansion select, bring
     // confirm) unable to resolve the event, since they look it up by channel or pendingEventContext.
-    pendingEventSuggest.set(interaction.user.id, { title, withExpansions });
+    //
+    // The title/withExpansions the user just typed are encoded directly into this select menu's
+    // customId (rather than an in-memory Map keyed by userId) so the flow survives a bot
+    // redeploy/restart between "pick a game" and "pick an event" — a plain in-process map has no
+    // persisted backing and silently loses the pending suggestion if the process restarts, or if
+    // the same user starts a second /game suggest before finishing the first.
     const options = await Promise.all(
       upcoming.map(async (gn) => {
         const alreadySuggested = (await findGamesByEvent(gn.id)).some(
@@ -427,7 +429,7 @@ async function handleSuggest(interaction: ChatInputCommandInteraction): Promise<
       }),
     );
     const select = new StringSelectMenuBuilder()
-      .setCustomId('game_event_select')
+      .setCustomId(encodeEventSelectCustomId(title, withExpansions))
       .setPlaceholder('Choose an event...')
       .addOptions(options);
     await interaction.reply({
@@ -513,10 +515,28 @@ async function resolveSuggestFlow(
 
 // ── Event picker: continues suggest flow after user picks which event ─────────
 
+export const EVENT_SELECT_PREFIX = 'game_event_select';
+
+// Encodes the in-progress suggestion directly into the select menu's customId
+// instead of a server-side Map, so nothing is lost if the bot restarts between
+// interaction steps. Discord customIds cap out at 100 chars; realistic game
+// titles fit comfortably, and in the rare case one doesn't, it's truncated the
+// same way titles already are elsewhere (e.g. embed labels sliced to 100).
+export function encodeEventSelectCustomId(title: string, withExpansions: boolean): string {
+  return `${EVENT_SELECT_PREFIX}|${withExpansions ? 1 : 0}|${title}`.slice(0, 100);
+}
+
+export function decodeEventSelectCustomId(customId: string): {
+  title: string;
+  withExpansions: boolean;
+} {
+  const [, flag, ...titleParts] = customId.split('|');
+  return { title: titleParts.join('|'), withExpansions: flag === '1' };
+}
+
 export async function handleEventSelect(interaction: StringSelectMenuInteraction): Promise<void> {
   const eventId = interaction.values[0];
-  const pending = pendingEventSuggest.get(interaction.user.id);
-  pendingEventSuggest.delete(interaction.user.id);
+  const { title, withExpansions } = decodeEventSelectCustomId(interaction.customId);
 
   const gameNight = (await loadGameNights()).find(
     (gn) => gn.id === eventId && !gn.cancelled && !gn.archived,
@@ -525,11 +545,12 @@ export async function handleEventSelect(interaction: StringSelectMenuInteraction
     await interaction.update({ content: 'That event is no longer available.', components: [] });
     return;
   }
+  if (isLineupLocked(gameNight)) {
+    await interaction.update({ content: LOCK_MESSAGE, components: [] });
+    return;
+  }
 
   pendingEventContext.set(interaction.user.id, eventId);
-
-  const title = pending?.title ?? '';
-  const withExpansions = pending?.withExpansions ?? false;
 
   const libraryMatches = await findGamesByName(interaction.guildId!, title);
   if (libraryMatches.length > 0) {
