@@ -27,7 +27,12 @@ vi.mock('../src/utils/config', () => ({
   getGuildConfig: vi.fn(() => ({})),
 }));
 
-import { execute, handleEventSelect, handleBGGSearchPage } from '../src/commands/game';
+import {
+  execute,
+  handleEventSelect,
+  handleBGGSearchPage,
+  encodeEventSelectCustomId,
+} from '../src/commands/game';
 import { upsertGameNight, GameNight } from '../src/utils/storage';
 import { searchBGG } from '../src/utils/bgg';
 import { updateRequestPin, updateGameListPin } from '../src/utils/requestPin';
@@ -168,11 +173,14 @@ describe('/game suggest — event resolution outside an event channel', () => {
   it('handleEventSelect records pendingEventContext so follow-up interactions can resolve the event', async () => {
     await upsertGameNight(makeGameNight({ id: 'gn1', eventChannelId: 'event-channel-1' }));
 
-    // Trigger the picker first so pendingEventSuggest is populated for this user.
+    // Trigger the picker first to get the real customId the select menu was built with.
     const suggestInteraction = makeSuggestInteraction('Wingspan', 'general-channel', 'g1', 'u42');
     await execute(suggestInteraction);
+    const replyCall = suggestInteraction.reply.mock.calls[0][0];
+    const customId = replyCall.components[0].components[0].data.custom_id;
 
     const selectInteraction = {
+      customId,
       values: ['gn1'],
       guildId: 'g1',
       user: { id: 'u42' },
@@ -186,6 +194,50 @@ describe('/game suggest — event resolution outside an event channel', () => {
     // Should not report the event as unavailable — confirms it resolved gn1 correctly.
     expect(selectInteraction.update).not.toHaveBeenCalledWith(
       expect.objectContaining({ content: expect.stringContaining('no longer available') }),
+    );
+  });
+
+  it('handleEventSelect recovers the title/withExpansions purely from the customId, with no server-side state', async () => {
+    await upsertGameNight(makeGameNight({ id: 'gn1', eventChannelId: 'event-channel-1' }));
+
+    const selectInteraction = {
+      customId: encodeEventSelectCustomId('Wingspan', false),
+      values: ['gn1'],
+      guildId: 'g1',
+      user: { id: 'someone-new' },
+      update: vi.fn(async () => {}),
+      deferUpdate: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
+    } as any;
+
+    // No prior /game suggest call for this user — simulates a bot restart between
+    // "pick a game" and "pick an event" (the regression this fix addresses).
+    await handleEventSelect(selectInteraction);
+
+    expect(selectInteraction.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('no longer available') }),
+    );
+  });
+
+  it('rejects an event select for an event whose lineup is already locked', async () => {
+    await upsertGameNight(
+      makeGameNight({ id: 'gn1', eventChannelId: 'event-channel-1', suggestionsLocked: true } as any),
+    );
+
+    const selectInteraction = {
+      customId: encodeEventSelectCustomId('Wingspan', false),
+      values: ['gn1'],
+      guildId: 'g1',
+      user: { id: 'u42' },
+      update: vi.fn(async () => {}),
+      deferUpdate: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
+    } as any;
+
+    await handleEventSelect(selectInteraction);
+
+    expect(selectInteraction.update).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('locked') }),
     );
   });
 });

@@ -32,11 +32,19 @@ function makeGameNight(overrides: Partial<GameNight> = {}): GameNight {
 
 function makeClient(pinImpl: () => Promise<void> = async () => {}) {
   let nextId = 1;
-  const sentMessages = new Map<string, { edit: ReturnType<typeof vi.fn> }>();
+  const sentMessages = new Map<string, { edit: ReturnType<typeof vi.fn>; pinned: boolean }>();
   const channel = {
     send: vi.fn(async () => {
       const id = `msg-${nextId++}`;
-      const msg = { id, pin: vi.fn(pinImpl), edit: vi.fn(async () => {}) };
+      const msg = {
+        id,
+        pinned: false,
+        pin: vi.fn(async () => {
+          await pinImpl();
+          msg.pinned = true;
+        }),
+        edit: vi.fn(async () => {}),
+      };
       sentMessages.set(id, msg as any);
       return msg;
     }),
@@ -109,6 +117,31 @@ describe('updateGameListPin', () => {
       expect.any(Error),
     );
   });
+
+  it('does not re-pin an already-pinned message on a later update', async () => {
+    await upsertGameNight(makeGameNight());
+    const client = makeClient();
+
+    await updateGameListPin(client as any, 'gn1');
+    const msg = await client._channel.messages.fetch('msg-1');
+    expect(msg.pin).toHaveBeenCalledTimes(1);
+
+    await updateGameListPin(client as any, 'gn1');
+    expect(msg.pin).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-pins a message that was unpinned since the last update', async () => {
+    await upsertGameNight(makeGameNight());
+    const client = makeClient();
+
+    await updateGameListPin(client as any, 'gn1');
+    const msg = await client._channel.messages.fetch('msg-1');
+    msg.pinned = false; // simulates a mod/host manually unpinning it
+
+    await updateGameListPin(client as any, 'gn1');
+    expect(msg.pin).toHaveBeenCalledTimes(2);
+    expect(msg.pinned).toBe(true);
+  });
 });
 
 describe('updateRequestPin', () => {
@@ -153,5 +186,18 @@ describe('updateRequestPin', () => {
       expect.stringContaining('Could not pin request message'),
       expect.any(Error),
     );
+  });
+
+  it('re-pins a message that was unpinned since the last update', async () => {
+    await upsertGameNight(makeGameNight());
+    const client = makeClient();
+
+    await updateRequestPin(client as any, 'gn1');
+    const msg = await client._channel.messages.fetch('msg-1');
+    msg.pinned = false; // simulates a mod/host manually unpinning it
+
+    await updateRequestPin(client as any, 'gn1');
+    expect(msg.pin).toHaveBeenCalledTimes(2);
+    expect(msg.pinned).toBe(true);
   });
 });

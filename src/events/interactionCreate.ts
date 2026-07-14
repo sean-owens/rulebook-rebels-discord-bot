@@ -79,6 +79,7 @@ import {
   handleEventSelect,
   handleGameTagSelect,
   handleGameTagSkip,
+  EVENT_SELECT_PREFIX,
 } from '../commands/game';
 import { findGameNight, upsertGameNight } from '../utils/storage';
 import { buildGameNightEmbed, buildGameNightButtons } from '../utils/embeds';
@@ -118,7 +119,7 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
       else if (interaction.commandName === 'room') await executeRoom(interaction);
     } else if (interaction.isStringSelectMenu()) {
       const id = interaction.customId;
-      if (id === 'game_event_select') await handleEventSelect(interaction);
+      if (id.startsWith(EVENT_SELECT_PREFIX)) await handleEventSelect(interaction);
       else if (id === 'library_suggest_select') await handleLibrarySuggestSelect(interaction);
       else if (id === 'library_add_bgg_select') await handleAddBggSelect(interaction);
       else if (id === 'library_add_partial_select')

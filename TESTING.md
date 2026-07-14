@@ -2,16 +2,24 @@
 
 This document describes every feature in the bot and provides a checklist of test cases to verify correct behavior. All tests are performed in Discord using slash commands unless otherwise noted.
 
-The guide is organized by **permission tier** so a single tester can be handed one part and complete it end-to-end without flipping between sections:
+The guide has two top-level groups, so you know at a glance whether you can run a test alone or need to wait until a second person is around:
 
+- **🧍 Single-Tester Tests** — every one of these can be completed solo by one person with the right role. Sub-grouped by permission tier (Member → Host → Admin), plus system/automated behavior and role-agnostic edge cases.
+- **👥 Multi-Person Tests** — these genuinely cannot be completed alone, even with several test accounts on hand, because they involve live back-and-forth between two distinct Discord identities (marketplace DM negotiation) or a real join event (new member welcome). All of them live together in one place so you can knock them all out in a single sitting whenever a second tester is available. Also sub-grouped by which tier's flow needed the second person (Member-tier marketplace flows, then a System/Automated flow).
+
+**A note on the numbering:** each test still carries its original **Part N** label (Part 1 = Member, Part 2 = Host, Part 3 = Admin, Part 4 = System & Automated, Part 5 = Multi-Person, Part 6 = General Edge Cases) — that numbering is also used throughout the doc for cross-references (e.g. `(2.8a)`, `(4.7)`, `5.1a`). Those numbers reflect *what* a test is, not the order it appears in — Part 5 (multi-person) is physically placed at the very end of the document, after Part 6, so all solo-testable parts (1–4, 6) come first and stay together.
+
+Within **🧍 Single-Tester Tests**:
 - **Part 1 — Regular Member Tests**: no elevated role required.
 - **Part 2 — Host Tests**: requires the Host role (or Manage Events permission). Fully repeats Part 1 plus Host-only commands, since Hosts must retain full member-level access.
 - **Part 3 — Admin Tests**: requires the Admin role (or Manage Guild permission). Fully repeats Parts 1 and 2 plus Admin-only commands, since Admins must retain full member- and Host-level access.
 - **Part 4 — System & Automated Behavior**: features triggered by Discord events/timers rather than a slash command permission check (bot join/leave, scheduled event completion, new member join). Requires server ownership or Admin-level Discord permissions to exercise (adding/removing the bot, editing scheduled events), even though it isn't part of the slash-command tier model.
-- **Part 5 — Multi-Person Tests**: test cases that cannot be completed by a single tester alone, even with several test accounts, because they involve genuine back-and-forth between two distinct Discord identities (marketplace DM negotiation) or a real join event (new member welcome). These are pulled out of Parts 1–4 so they're not scattered through solo-testable checklists — a short pointer note is left where each one used to live.
 - **Part 6 — General Edge Cases**: role-agnostic sanity checks. Run once, regardless of which tier you're testing.
 
-Because Parts 2 and 3 repeat the tests from the tier(s) below them, the same test case appears more than once in this document — that's intentional, not a copy/paste error. It lets a tester assigned to a single tier work from one self-contained part. Where a test case was moved to Part 5 instead, the original spot has a one-line pointer rather than the checklist itself.
+Because Parts 2 and 3 repeat the tests from the tier(s) below them, the same test case appears more than once in this document — that's intentional, not a copy/paste error. It lets a tester assigned to a single tier work from one self-contained part. Where a test case needed a second person instead, the original spot (in Parts 1–4) has a one-line pointer into **👥 Multi-Person Tests** rather than the checklist itself.
+
+Within **👥 Multi-Person Tests**:
+- **Part 5 — Multi-Person Tests**: pulled out of Parts 1–4 so they're not scattered through solo-testable checklists. Grouped first by tier (5.1 is a Member-tier flow — marketplace negotiation only ever needs two regular members, no elevated role on either side; 5.2 is a System/Automated flow — a new member joining), then by which pairing you need to recruit within that.
 
 ---
 
@@ -24,6 +32,12 @@ Because Parts 2 and 3 repeat the tests from the tier(s) below them, the same tes
 - A BGG account should be linked via `/bgg link` before testing `/library import bgg`.
 - **For Part 5:** you'll need a second, distinct Discord account you can act as concurrently with your primary tester account — reusing one of the three test accounts above is fine. Discord does not allow an account to DM itself, so marketplace negotiation genuinely cannot be exercised with only one identity. For the "new member joins" case, you don't need a never-before-seen account — kicking an existing test account from the server and re-inviting it fires the same join event the welcome flow listens for.
 - 👑 marks a check that will behave differently — usually silently pass when it should fail — if run from the Discord **server owner's** account. This bot enforces its Host/Admin tiers entirely through Discord's native `Manage Events`/`Manage Server` permission bits (no custom role lookup), and Discord grants the server owner every permission implicitly and permanently, regardless of what role (if any) they're assigned. An owner account can never be used to validate a "this should be denied to non-hosts/non-admins" case — use a genuinely separate, non-owner account for anything marked 👑.
+
+---
+
+# 🧍 Single-Tester Tests
+
+Everything in this group (Parts 1–4, 6) can be completed solo by one tester holding the appropriate role — no second Discord identity needed.
 
 ---
 
@@ -121,6 +135,10 @@ All `/game` commands should be used inside an active event channel unless otherw
 #### From outside an event channel
 - [ ] Run `/game suggest title:Catan` from a non-event channel — confirm an event picker dropdown appears
 - [ ] Select an event — confirm the suggest flow continues normally
+- [ ] With multiple upcoming events, run `/game suggest` for a title that has no library match, select an event from the picker — confirm the BGG search dropdown appears next (regression: the event picker used to lose track of the typed title if it wasn't resolved as part of the same interaction, making it look like nothing happened after picking an event)
+- [ ] Same as above but with a title that **is** an exact library match — confirm the game card posts directly (with the owner listed) right after picking the event, no extra step
+- [ ] Restart/redeploy the bot between running `/game suggest` (before picking an event) and selecting an event from the picker — confirm the picker still resolves the original title correctly afterward (the title/expansion choice now travels with the dropdown itself rather than living in the bot process's memory)
+- [ ] Select an event from the picker for a lineup that has already locked (4.7) — confirm the same "lineup is locked" message you'd get from suggesting directly in that event's channel
 
 ### 1.3b `/game list`
 
@@ -658,6 +676,10 @@ All `/game` commands should be used inside an active event channel unless otherw
 #### From outside an event channel
 - [ ] Run `/game suggest title:Catan` from a non-event channel — confirm an event picker dropdown appears
 - [ ] Select an event — confirm the suggest flow continues normally
+- [ ] With multiple upcoming events, run `/game suggest` for a title that has no library match, select an event from the picker — confirm the BGG search dropdown appears next (regression: the event picker used to lose track of the typed title if it wasn't resolved as part of the same interaction, making it look like nothing happened after picking an event)
+- [ ] Same as above but with a title that **is** an exact library match — confirm the game card posts directly (with the owner listed) right after picking the event, no extra step
+- [ ] Restart/redeploy the bot between running `/game suggest` (before picking an event) and selecting an event from the picker — confirm the picker still resolves the original title correctly afterward (the title/expansion choice now travels with the dropdown itself rather than living in the bot process's memory)
+- [ ] Select an event from the picker for a lineup that has already locked (4.7) — confirm the same "lineup is locked" message you'd get from suggesting directly in that event's channel
 
 ### 2.3b `/game list`
 
@@ -1073,7 +1095,19 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run with a past event — confirm channel moves to "Archive" category and a lock-date message is posted
 - [ ] With a forum announcements channel, archive a past event — confirm the forum thread is tagged "Concluded", gets a "this event has concluded" message, and is locked/archived
 
-### 2.8e `/host game cancel`
+### 2.8e `/host event privacy`
+
+**What it does:** Opens or restricts a single event's channel, overriding the server-wide `open_channels` default (3.9a) for just that event — e.g. to open up a channel that was created RSVP-only, or lock down one that was created open, without changing the default for future events.
+
+- [ ] With an event created RSVP-only, run `/host event privacy id:<event-id> open:true` — confirm the channel becomes visible to everyone (no longer hidden from `@everyone`)
+- [ ] With an event created open, run `/host event privacy id:<event-id> open:false` — confirm the channel is hidden from `@everyone`, and that the event creator plus everyone currently RSVP'd Going/Maybe still has access
+- [ ] After closing an open event via `open:false`, have a new member RSVP Going — confirm they gain channel access same as any RSVP-only event (2.2b)
+- [ ] Run the same `open:true`/`open:false` value the channel is already set to — confirm a "already open to everyone"/"already RSVP-only" message and no channel changes
+- [ ] Attempt on an invalid event ID — confirm "No event found" error
+- [ ] Attempt on a cancelled or archived event — confirm the same "already cancelled"/"already concluded" errors as `/host event edit` (2.8b)
+- [ ] 👑 Attempt as a non-host — confirm "Only hosts can change an event's channel visibility" error
+
+### 2.8f `/host game cancel`
 
 **What it does:** Removes any game from the event lineup regardless of who suggested it. If the given title isn't an exact match, falls back to a fuzzy match against the current lineup (e.g. `catan` matches "Settlers of Catan").
 
@@ -1082,7 +1116,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] With two similarly-named games in the lineup, run `/host game cancel` with an ambiguous partial title — confirm the bot asks you to be more specific instead of guessing
 - [ ] Attempt to cancel a game not in the lineup (no exact or fuzzy match) — confirm "No game called X found" error
 
-### 2.8f `/host library unrequest`
+### 2.8g `/host library unrequest`
 
 **What it does:** Shows all game requests for an event (not just the host's own) and allows removing any of them.
 
@@ -1248,6 +1282,10 @@ All `/game` commands should be used inside an active event channel unless otherw
 #### From outside an event channel
 - [ ] Run `/game suggest title:Catan` from a non-event channel — confirm an event picker dropdown appears
 - [ ] Select an event — confirm the suggest flow continues normally
+- [ ] With multiple upcoming events, run `/game suggest` for a title that has no library match, select an event from the picker — confirm the BGG search dropdown appears next (regression: the event picker used to lose track of the typed title if it wasn't resolved as part of the same interaction, making it look like nothing happened after picking an event)
+- [ ] Same as above but with a title that **is** an exact library match — confirm the game card posts directly (with the owner listed) right after picking the event, no extra step
+- [ ] Restart/redeploy the bot between running `/game suggest` (before picking an event) and selecting an event from the picker — confirm the picker still resolves the original title correctly afterward (the title/expansion choice now travels with the dropdown itself rather than living in the bot process's memory)
+- [ ] Select an event from the picker for a lineup that has already locked (4.7) — confirm the same "lineup is locked" message you'd get from suggesting directly in that event's channel
 
 ### 3.3b `/game list`
 
@@ -1656,7 +1694,19 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run with a past event — confirm channel moves to "Archive" category and a lock-date message is posted
 - [ ] With a forum announcements channel, archive a past event — confirm the forum thread is tagged "Concluded", gets a "this event has concluded" message, and is locked/archived
 
-### 3.8e `/host game cancel`
+### 3.8e `/host event privacy`
+
+**What it does:** Opens or restricts a single event's channel, overriding the server-wide `open_channels` default (3.9a) for just that event — e.g. to open up a channel that was created RSVP-only, or lock down one that was created open, without changing the default for future events.
+
+- [ ] With an event created RSVP-only, run `/host event privacy id:<event-id> open:true` — confirm the channel becomes visible to everyone (no longer hidden from `@everyone`)
+- [ ] With an event created open, run `/host event privacy id:<event-id> open:false` — confirm the channel is hidden from `@everyone`, and that the event creator plus everyone currently RSVP'd Going/Maybe still has access
+- [ ] After closing an open event via `open:false`, have a new member RSVP Going — confirm they gain channel access same as any RSVP-only event (2.2b)
+- [ ] Run the same `open:true`/`open:false` value the channel is already set to — confirm a "already open to everyone"/"already RSVP-only" message and no channel changes
+- [ ] Attempt on an invalid event ID — confirm "No event found" error
+- [ ] Attempt on a cancelled or archived event — confirm the same "already cancelled"/"already concluded" errors as `/host event edit` (3.8b)
+- [ ] 👑 Attempt as a non-host — confirm "Only hosts can change an event's channel visibility" error
+
+### 3.8f `/host game cancel`
 
 **What it does:** Removes any game from the event lineup regardless of who suggested it. If the given title isn't an exact match, falls back to a fuzzy match against the current lineup (e.g. `catan` matches "Settlers of Catan").
 
@@ -1665,7 +1715,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] With two similarly-named games in the lineup, run `/host game cancel` with an ambiguous partial title — confirm the bot asks you to be more specific instead of guessing
 - [ ] Attempt to cancel a game not in the lineup (no exact or fuzzy match) — confirm "No game called X found" error
 
-### 3.8f `/host library unrequest`
+### 3.8g `/host library unrequest`
 
 **What it does:** Shows all game requests for an event (not just the caller's own) and allows removing any of them.
 
@@ -1700,6 +1750,11 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Set `table_count:2` — confirm it saves and the config summary reflects it (see 4.7 for the scheduler behavior this feeds)
 - [ ] Set `light_buffer_minutes`, `medium_buffer_minutes`, `heavy_buffer_minutes` — confirm all three save independently and appear in the config summary
 - [ ] Set `post_bgstats_links:true` — confirm the config summary shows "Enabled" (see 4.7 for the behavior this feeds); set back to `false` — confirm it shows "Disabled" (the default)
+- [ ] Run `/admin event config` with no options — confirm the config summary shows "Timezone: UTC" when never configured
+- [ ] Set `timezone:America/New_York` — confirm it saves and the config summary shows "Timezone: America/New_York"
+- [ ] Set an invalid value, e.g. `timezone:Not/A_Zone` — confirm a clear ephemeral error naming the bad value and suggesting the IANA format (e.g. `America/New_York`), and that the config is **not** changed
+- [ ] With `timezone` set to a non-UTC zone (e.g. `America/New_York`), create an event (2.8a) with a date/time — confirm the RSVP embed's Date/Time and the native Discord scheduled event ("Interested" tab) show the **same** time to you as the viewer (regression: previously the announcement text was formatted in the host server's own local timezone rather than the configured one, so it could silently disagree with the native event depending on where the bot process happened to be running)
+- [ ] Confirm the RSVP embed's Date/Time fields render as Discord's own auto-localizing timestamp (hover/click behavior, or compare against a teammate in a different timezone if available) rather than fixed text
 
 ### 3.9b `/admin library clear`
 
@@ -2030,16 +2085,39 @@ These features are triggered by Discord events and scheduled timers rather than 
 
 ---
 
+# Part 6 — General Edge Cases (Any Role)
+
+Run through this section once, regardless of which tier you're testing.
+
+- [ ] Run any command in a DM (outside a server) — confirm graceful failure
+- [ ] Run `/game suggest` in a channel with no active event and no upcoming events — confirm "There are no upcoming events" message
+- [ ] Attempt to RSVP to a cancelled event — confirm the embed is removed or no longer responds
+- [ ] Suggest a game when the event's channel has been archived — confirm "no longer active" message
+- [ ] Verify bot handles BGG being unreachable — confirm graceful fallback to local catalog or manual entry
+- [ ] Confirm all ephemeral responses are only visible to the invoking user
+- [ ] Search BGG for a game with an apostrophe or ampersand in its name (e.g. "Star Trek: Captain's Chair") — confirm it displays with a real apostrophe/ampersand, not raw HTML entities (`&#039;`, `&amp;`), in the search dropdown, the game lineup list, and the "Games to Bring" list
+- [ ] Manually un-pin the game lineup or "Games to Bring" message in an event channel, then trigger any update to it (e.g. suggest/cancel a game) — confirm the bot re-pins it automatically rather than leaving it unpinned
+- [ ] Run `/event list` — confirm each event's date/time renders as a Discord timestamp (shows in your local time, updates live rather than being frozen text)
+- [ ] Start `/marketplace post sell` up to the price-selection step (a "Set Custom Price" button visible), restart/redeploy the bot, then click the button — confirm it still works instead of saying the session expired (regression: in-progress sell/trade drafts previously lived only in memory and were lost on any bot restart)
+
+---
+
+# 👥 Multi-Person Tests
+
+This is the entire group of tests that need a second, distinct Discord identity — save this section for a session when a second tester is actually around, and knock it all out in one sitting. Grouped by tier first (which permission level the flow needs), then by which pairing you need to recruit within that tier.
+
+---
+
 # Part 5 — Multi-Person Tests
 
-These test cases involve genuine back-and-forth between two distinct Discord identities, or a real join event — they can't be completed by one tester working alone, even with several test accounts on hand. Grouped by which pairing you need to recruit, so you can knock out everything for one pairing in a single sitting.
+These test cases involve genuine back-and-forth between two distinct Discord identities, or a real join event — they can't be completed by one tester working alone, even with several test accounts on hand. Grouped by tier (5.1 is a Member-tier flow; 5.2 is a System/Automated flow), then by which pairing you need to recruit within that.
 
 **Prerequisites:**
 - A second, distinct Discord account (see the global Prerequisites section above — reusing one of your three test accounts is fine).
 - For 5.1: a marketplace forum channel configured (`/admin marketplace config`, 3.9m), and one account with an active sell or trade listing posted (`/marketplace post sell`/`post trade`, 1.7a/1.7b).
 - For 5.2: a welcome channel configured (`/admin welcome config`, 3.9j).
 
-## 5.1 Buyer + Seller — Marketplace Negotiation
+## 5.1 Buyer + Seller — Marketplace Negotiation *(Member-tier flow — neither side needs an elevated role)*
 
 ### 5.1a "I'm Interested" button flow
 
@@ -2105,7 +2183,7 @@ These test cases involve genuine back-and-forth between two distinct Discord ide
 **Edge cases:**
 - [ ] 👑 In private mode, have a third account (neither buyer nor seller) try to view or join the private negotiation thread — confirm they cannot see it (a server owner can typically still see private threads via Discord's own `Manage Threads` permission, which owners always have — this isn't a bot bug, it's Discord's platform behavior)
 
-## 5.2 New Member Join — Welcome Flow
+## 5.2 New Member Join — Welcome Flow *(System/Automated flow — triggered by a real `guildMemberAdd` join event, not a slash command permission tier)*
 
 **What it does:** When a new member joins the server, the bot sends a welcome DM and posts a message in the configured welcome channel.
 
@@ -2115,16 +2193,3 @@ These test cases involve genuine back-and-forth between two distinct Discord ide
 **Edge cases:**
 - [ ] Trigger a join with `/admin welcome config` left at defaults (no rules channel, Facebook URL, or BGG URL set) — confirm the welcome message still sends cleanly without a broken link or placeholder text
 - [ ] Disable DMs on the joining account beforehand — confirm the channel post still happens even if the DM can't be delivered
-
----
-
-# Part 6 — General Edge Cases (Any Role)
-
-Run through this section once, regardless of which tier you're testing.
-
-- [ ] Run any command in a DM (outside a server) — confirm graceful failure
-- [ ] Run `/game suggest` in a channel with no active event and no upcoming events — confirm "There are no upcoming events" message
-- [ ] Attempt to RSVP to a cancelled event — confirm the embed is removed or no longer responds
-- [ ] Suggest a game when the event's channel has been archived — confirm "no longer active" message
-- [ ] Verify bot handles BGG being unreachable — confirm graceful fallback to local catalog or manual entry
-- [ ] Confirm all ephemeral responses are only visible to the invoking user

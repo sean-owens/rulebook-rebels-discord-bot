@@ -15,6 +15,7 @@ import { loadGameNights, findGameNight, upsertGameNight, GameNight } from '../ut
 import { buildGameNightEmbed, buildGameNightButtons } from '../utils/embeds';
 import { cleanupCancelledNight } from './cancelHelper';
 import { getGuildConfig, updateGuildConfig, GuildConfig } from '../utils/config';
+import { isValidTimeZone, zonedTimeToUtc } from '../utils/timezone';
 import { archiveEventChannel } from '../utils/archive';
 import { ensureGameNightTags, resolvedGameNightTag } from '../utils/gameNightTags';
 import { updateAnnouncementPin } from '../utils/pins';
@@ -63,7 +64,12 @@ const MONTH_NAMES: Record<string, number> = {
   december: 11,
 };
 
-export function parseDateTime(dateStr: string, timeStr: string): Date {
+// `timeZone` is the IANA zone (e.g. "America/New_York") the date/time input
+// should be interpreted in — normally the guild's configured `timezone`
+// (see src/utils/config.ts). Defaults to UTC so callers that don't have a
+// guild config on hand (tests, one-off scripts) get deterministic, explicit
+// behavior instead of the host process's local zone.
+export function parseDateTime(dateStr: string, timeStr: string, timeZone = 'UTC'): Date {
   // Parse time without regex — strip am/pm, split on colon
   const t = timeStr.trim().toLowerCase().replace(/\s/g, '');
   const isPM = t.endsWith('pm');
@@ -88,20 +94,26 @@ export function parseDateTime(dateStr: string, timeStr: string): Date {
   }
   if (month === -1 || day === -1) throw new Error(`Invalid date: "${dateStr}"`);
 
-  return new Date(year, month, day, hours, minutes, 0, 0);
+  return zonedTimeToUtc(year, month, day, hours, minutes, timeZone);
 }
 
-function formatDate(date: Date): string {
+function formatDate(date: Date, timeZone = 'UTC'): string {
   return date.toLocaleDateString('en-US', {
     weekday: 'long',
     month: 'long',
     day: 'numeric',
     year: 'numeric',
+    timeZone,
   });
 }
 
-function formatTime(date: Date): string {
-  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+function formatTime(date: Date, timeZone = 'UTC'): string {
+  return date.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZone,
+  });
 }
 
 export async function handleCreate(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -124,9 +136,11 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
   const link = interaction.options.getString('link') ?? '';
   const description = interaction.options.getString('description') ?? defaults.defaultDescription;
 
+  const timeZone = defaults.timezone;
+
   let startTime: Date;
   try {
-    startTime = parseDateTime(rawDate, rawTime);
+    startTime = parseDateTime(rawDate, rawTime, timeZone);
   } catch {
     await interaction.editReply(
       `Could not parse "${rawDate} ${rawTime}". Try something like "August 22" and "7:00 PM".`,
@@ -137,7 +151,7 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
   let endTime: Date;
   if (rawEndTime) {
     try {
-      endTime = parseDateTime(rawDate, rawEndTime);
+      endTime = parseDateTime(rawDate, rawEndTime, timeZone);
     } catch {
       await interaction.editReply(
         `Could not parse end time "${rawEndTime}". Try something like "10:00 PM".`,
@@ -148,8 +162,8 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
     endTime = new Date(startTime.getTime() + 4 * 60 * 60 * 1000);
   }
 
-  const date = formatDate(startTime);
-  const time = `${formatTime(startTime)} – ${formatTime(endTime)}`;
+  const date = formatDate(startTime, timeZone);
+  const time = `${formatTime(startTime, timeZone)} – ${formatTime(endTime, timeZone)}`;
 
   // Create Discord scheduled event
   let discordEventId: string | null = null;
@@ -190,7 +204,7 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
   // Create event channel, then lock it down in a separate step
   let eventChannelId: string | null = null;
   try {
-    const shortDate = startTime.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+    const shortDate = startTime.toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone });
     const eventChannel = (await guild.channels.create({
       name: `${slugify(shortDate)}-${slugify(title)}`.slice(0, 100),
       type: ChannelType.GuildText,
@@ -361,19 +375,27 @@ export async function handleEdit(interaction: ChatInputCommandInteraction): Prom
     return;
   }
 
+  const timeZone = (await getGuildConfig(gn.guildId)).timezone;
+
   const currentStart = new Date(gn.startTimeISO);
   const currentEnd = gn.endTimeISO ? new Date(gn.endTimeISO) : new Date(currentStart.getTime() + 4 * 60 * 60 * 1000);
   const currentDateStr = currentStart.toLocaleDateString('en-US', {
     month: 'long',
     day: 'numeric',
     year: 'numeric',
+    timeZone,
   });
-  const currentTimeStr = currentStart.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  const currentTimeStr = currentStart.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZone,
+  });
 
   let startTime = currentStart;
   if (newRawDate || newRawTime) {
     try {
-      startTime = parseDateTime(newRawDate ?? currentDateStr, newRawTime ?? currentTimeStr);
+      startTime = parseDateTime(newRawDate ?? currentDateStr, newRawTime ?? currentTimeStr, timeZone);
     } catch {
       await interaction.reply({
         content: `Could not parse "${newRawDate ?? currentDateStr} ${newRawTime ?? currentTimeStr}". Try something like "August 22" and "7:00 PM".`,
@@ -386,7 +408,7 @@ export async function handleEdit(interaction: ChatInputCommandInteraction): Prom
   let endTime = currentEnd;
   if (newRawEndTime) {
     try {
-      endTime = parseDateTime(newRawDate ?? currentDateStr, newRawEndTime);
+      endTime = parseDateTime(newRawDate ?? currentDateStr, newRawEndTime, timeZone);
     } catch {
       await interaction.reply({
         content: `Could not parse end time "${newRawEndTime}". Try something like "10:00 PM".`,
@@ -402,8 +424,8 @@ export async function handleEdit(interaction: ChatInputCommandInteraction): Prom
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const title = newTitle?.trim() ?? gn.title ?? 'Game Night';
-  const date = formatDate(startTime);
-  const time = `${formatTime(startTime)} – ${formatTime(endTime)}`;
+  const date = formatDate(startTime, timeZone);
+  const time = `${formatTime(startTime, timeZone)} – ${formatTime(endTime, timeZone)}`;
   const location = newLocation ?? gn.location;
   const link = newLink ?? gn.link;
   const description = newDescription ?? gn.description;
@@ -443,7 +465,7 @@ export async function handleEdit(interaction: ChatInputCommandInteraction): Prom
     try {
       const eventChannel = (await interaction.client.channels.fetch(gn.eventChannelId)) as TextChannel;
       if (eventChannel) {
-        const shortDate = startTime.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+        const shortDate = startTime.toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone });
         await eventChannel.setName(`${slugify(shortDate)}-${slugify(title)}`.slice(0, 100));
         await eventChannel.setTopic(`${title} — ${date} | ${time} | ${location}`);
       }
@@ -478,6 +500,94 @@ export async function handleEdit(interaction: ChatInputCommandInteraction): Prom
   await interaction.editReply(`Event \`${id}\` updated.`);
 }
 
+// Guild-wide `openEventChannels` (see handleConfig below) only sets the default for *new*
+// events — it can't flip an event that already exists between open/RSVP-only. This lets a
+// host override that per event, e.g. to open up a channel that started RSVP-only once it's
+// no longer at capacity, without touching the server-wide default.
+export async function handlePrivacy(interaction: ChatInputCommandInteraction): Promise<void> {
+  if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageEvents)) {
+    await interaction.reply({
+      content: "Only hosts can change an event's channel visibility.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const id = interaction.options.getString('id', true);
+  const open = interaction.options.getBoolean('open', true);
+  const gn = await findGameNight(id);
+
+  if (!gn) {
+    await interaction.reply({ content: `No event found with ID \`${id}\`.`, flags: MessageFlags.Ephemeral });
+    return;
+  }
+  if (gn.cancelled) {
+    await interaction.reply({
+      content: 'That event is already cancelled.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  if (gn.archived) {
+    await interaction.reply({
+      content: 'That event has already concluded.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  if (!gn.eventChannelId) {
+    await interaction.reply({
+      content: 'This event has no channel to update.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const current = gn.openChannel ?? false;
+  if (open === current) {
+    await interaction.reply({
+      content: `This event's channel is already ${open ? 'open to everyone' : 'RSVP-only'}.`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const guild = interaction.guild!;
+  try {
+    const eventChannel = (await interaction.client.channels.fetch(gn.eventChannelId)) as TextChannel;
+    if (open) {
+      // Remove the deny-view overwrite so the channel inherits normal visibility. The
+      // per-user grants made while it was RSVP-only are left in place — harmless once
+      // @everyone can see the channel anyway.
+      await eventChannel.permissionOverwrites.delete(guild.roles.everyone);
+    } else {
+      await eventChannel.permissionOverwrites.create(guild.roles.everyone, { ViewChannel: false });
+      // Re-grant access to whoever should already be able to see it — the creator, plus
+      // everyone currently RSVP'd Going/Maybe — since none of them got an individual
+      // overwrite while the channel was open.
+      const attendees = new Set([gn.createdBy, ...gn.rsvps.yes, ...gn.rsvps.maybe]);
+      for (const userId of attendees) {
+        await eventChannel.permissionOverwrites.create(userId, { ViewChannel: true }).catch(() => null);
+      }
+    }
+  } catch (err) {
+    console.warn(`Could not update channel visibility for game night ${id}:`, err);
+    await interaction.editReply(
+      'Could not update the channel permissions — check the bot has Manage Roles access there.',
+    );
+    return;
+  }
+
+  gn.openChannel = open;
+  await upsertGameNight(gn);
+
+  await interaction.editReply(
+    `Event \`${id}\`'s channel is now ${open ? '**open to everyone**' : '**RSVP-only**'}.`,
+  );
+}
+
 export async function handleConfig(interaction: ChatInputCommandInteraction): Promise<void> {
   const patch: Partial<GuildConfig> = {};
   const location = interaction.options.getString('location');
@@ -495,6 +605,15 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
   const mediumBufferMinutes = interaction.options.getInteger('medium_buffer_minutes');
   const heavyBufferMinutes = interaction.options.getInteger('heavy_buffer_minutes');
   const postBgStatsLinks = interaction.options.getBoolean('post_bgstats_links');
+  const timezone = interaction.options.getString('timezone');
+
+  if (timezone !== null && !isValidTimeZone(timezone)) {
+    await interaction.reply({
+      content: `"${timezone}" isn't a recognized timezone. Use an IANA name like \`America/New_York\`, \`Europe/London\`, \`Australia/Sydney\`, or \`UTC\`.`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
 
   if (location !== null) patch.defaultLocation = location;
   if (time !== null) patch.defaultTime = time;
@@ -514,11 +633,13 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
   if (mediumBufferMinutes !== null) patch.mediumBufferMinutes = mediumBufferMinutes;
   if (heavyBufferMinutes !== null) patch.heavyBufferMinutes = heavyBufferMinutes;
   if (postBgStatsLinks !== null) patch.postBgStatsLinks = postBgStatsLinks;
+  if (timezone !== null) patch.timezone = timezone;
 
   function formatConfig(c: GuildConfig): string {
     const retentionDays = c.archivedChannelRetentionDays ?? 0;
     return [
       '**Event defaults:**',
+      `> Timezone: ${c.timezone}`,
       `> Start time: ${c.defaultTime || '*not set*'}`,
       `> End time: ${c.defaultEndTime || '*not set*'}`,
       `> Location: ${c.defaultLocation || '*not set*'}`,
@@ -579,8 +700,9 @@ async function handleList(interaction: ChatInputCommandInteraction): Promise<voi
       ? `[RSVP](https://discord.com/channels/${guildId}/${g.channelId}/${g.messageId})`
       : null;
     const channelRef = g.eventChannelId ? `<#${g.eventChannelId}>` : null;
+    const startUnix = Math.floor(new Date(g.startTimeISO).getTime() / 1000);
     const parts = [
-      `**${g.date}** at **${g.time}** @ ${g.location}`,
+      `**<t:${startUnix}:F>** @ ${g.location}`,
       `${g.rsvps.yes.length} going`,
       channelRef,
       rsvpLink,

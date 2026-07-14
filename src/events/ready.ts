@@ -3,6 +3,7 @@ import { checkPendingLocks, deleteArchivedChannels, archiveExpiredEvents } from 
 import { checkPendingSchedules } from '../utils/scheduler';
 import { checkExpiredRooms } from '../commands/room';
 import { cleanupExpiredShortLinks } from '../utils/shortLinkStorage';
+import { hydrateSellDrafts } from '../commands/marketplace';
 
 const LOCK_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
@@ -15,6 +16,7 @@ export function handleReady(client: Client): void {
   checkPendingSchedules(client).catch((err) => console.warn('Lineup lock/schedule check failed on startup:', err));
   checkExpiredRooms(client).catch((err) => console.warn('Private room expiry check failed on startup:', err));
   cleanupExpiredShortLinks().catch((err) => console.warn('Short link cleanup failed on startup:', err));
+  hydrateSellDrafts().catch((err) => console.warn('Sell draft recovery failed on startup:', err));
 
   setInterval(() => {
     checkPendingLocks(client).catch((err) => console.warn('Lock check failed:', err));

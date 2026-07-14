@@ -45,42 +45,58 @@ import { getGuildConfig, updateGuildConfig } from '../utils/config';
 import { removeGame, getGamesByUser } from '../utils/libraryStorage';
 import { searchCatalog } from '../utils/bggCatalog';
 import { fetchBGGMarketplacePrices, getBGGGame } from '../utils/bgg';
+import {
+  SellDraft,
+  saveDraft as persistDraft,
+  deleteDraft as persistDeleteDraft,
+  loadUnexpiredDrafts,
+} from '../utils/marketplaceDraftStorage';
 
 // ── Sell draft store (in-memory, expires after 15 min) ──────────────────────
-
-interface SellDraft {
-  listingType: 'sell' | 'trade';
-  guildId: string;
-  userId: string;
-  username: string;
-  itemName: string;
-  bggId?: string;
-  thumbnail?: string;
-  isExpansion?: boolean;
-  availableExpansions?: { bggId: string; name: string }[];
-  expansions?: { bggId: string; name: string }[];
-  parentItem?: { bggId: string; name: string };
-  condition: Condition;
-  notes?: string;
-  referenceLink?: string;
-  bidsAllowed: boolean;
-  lookingFor?: string;
-  suggestedPrice?: number;
-  priceCheckOnly?: boolean;
-  expiresAt: number;
-}
+//
+// Reads (`sellDrafts.get`) go straight to the in-memory cache for speed, since
+// they happen on every button/select interaction in the flow. Writes go
+// through storeDraft/updateDraft/takeDraft below, which mirror the change to
+// persistent storage (see src/utils/marketplaceDraftStorage.ts) best-effort —
+// so a redeploy between two steps of a long sell flow doesn't strand the user
+// with dead buttons pointing at a draft that no longer exists anywhere.
 
 const sellDrafts = new Map<string, SellDraft>();
+
+// Called once on bot startup to recover drafts that were in-progress when the
+// process last stopped.
+export async function hydrateSellDrafts(): Promise<void> {
+  const stored = await loadUnexpiredDrafts();
+  for (const [id, draft] of Object.entries(stored)) {
+    sellDrafts.set(id, draft);
+  }
+}
 
 function storeDraft(draft: Omit<SellDraft, 'expiresAt'>): string {
   const { randomUUID } = require('crypto') as typeof import('crypto');
   const id = randomUUID();
-  sellDrafts.set(id, { ...draft, expiresAt: Date.now() + 15 * 60 * 1000 });
+  const full: SellDraft = { ...draft, expiresAt: Date.now() + 15 * 60 * 1000 };
+  sellDrafts.set(id, full);
+  void persistDraft(id, full).catch((err) => console.warn(`Could not persist sell draft ${id}:`, err));
   // prune expired drafts opportunistically
   for (const [k, v] of sellDrafts) {
-    if (v.expiresAt < Date.now()) sellDrafts.delete(k);
+    if (v.expiresAt < Date.now()) {
+      sellDrafts.delete(k);
+      void persistDeleteDraft(k).catch(() => {});
+    }
   }
   return id;
+}
+
+function updateDraft(draftId: string, patch: Partial<SellDraft>): SellDraft | undefined {
+  const draft = sellDrafts.get(draftId);
+  if (!draft) return undefined;
+  const updated = { ...draft, ...patch };
+  sellDrafts.set(draftId, updated);
+  void persistDraft(draftId, updated).catch((err) =>
+    console.warn(`Could not persist sell draft ${draftId}:`, err),
+  );
+  return updated;
 }
 
 
@@ -133,6 +149,9 @@ function takeDraft(draftId: string): SellDraft | undefined {
   const draft = sellDrafts.get(draftId);
   if (!draft) return undefined;
   sellDrafts.delete(draftId);
+  void persistDeleteDraft(draftId).catch((err) =>
+    console.warn(`Could not delete persisted sell draft ${draftId}:`, err),
+  );
   if (draft.expiresAt < Date.now()) return undefined;
   return draft;
 }
@@ -751,8 +770,7 @@ export async function handleExpansionSelect(
     return { bggId, name: found?.name ?? bggId };
   });
 
-  sellDrafts.set(draftId, { ...draft, expansions: selectedExpansions });
-  const updated = sellDrafts.get(draftId)!;
+  const updated = updateDraft(draftId, { expansions: selectedExpansions })!;
 
   if (draft.listingType === 'sell') {
     await showPriceScreen(interaction, updated, draftId);
@@ -875,7 +893,7 @@ async function showPriceScreen(
   }
 
   // Store the suggested price back into the draft so button handlers can read it
-  sellDrafts.set(draftId, { ...draft, suggestedPrice });
+  updateDraft(draftId, { suggestedPrice });
 
   if (priceCheckOnly) {
     const bggAttachment = new AttachmentBuilder('BGG/images/powered_by_BGG_01_SM.png');
@@ -1824,8 +1842,7 @@ export async function handleRefModal(interaction: ModalSubmitInteraction, draftI
   }
 
   const refLink = interaction.fields.getTextInputValue('ref_link').trim() || undefined;
-  const updated = { ...draft, referenceLink: refLink ?? draft.referenceLink };
-  sellDrafts.set(draftId, updated);
+  const updated = updateDraft(draftId, { referenceLink: refLink ?? draft.referenceLink })!;
 
   if (draft.listingType === 'sell') {
     await showPriceScreen(interaction, updated, draftId);

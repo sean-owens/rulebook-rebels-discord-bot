@@ -16,85 +16,91 @@ vi.mock('../src/utils/pins', () => ({
 }));
 
 describe('parseDateTime', () => {
+  // Default timezone is UTC (see src/utils/timezone.ts), so assertions use the
+  // UTC getters — this makes the tests deterministic regardless of the host
+  // machine's own local timezone, and reflects the fixed contract: the
+  // returned Date's absolute instant corresponds to the given wall-clock time
+  // in the requested (or default UTC) zone, not whatever zone the process happens to run in.
+
   // ── Time parsing ───────────────────────────────────────────────────────────
 
   it('parses "7pm" as 19:00', () => {
     const d = parseDateTime('August 22', '7pm');
-    expect(d.getHours()).toBe(19);
-    expect(d.getMinutes()).toBe(0);
+    expect(d.getUTCHours()).toBe(19);
+    expect(d.getUTCMinutes()).toBe(0);
   });
 
   it('parses "7:30 PM" as 19:30', () => {
     const d = parseDateTime('August 22', '7:30 PM');
-    expect(d.getHours()).toBe(19);
-    expect(d.getMinutes()).toBe(30);
+    expect(d.getUTCHours()).toBe(19);
+    expect(d.getUTCMinutes()).toBe(30);
   });
 
   it('parses "12pm" as noon (12:00)', () => {
     const d = parseDateTime('August 22', '12pm');
-    expect(d.getHours()).toBe(12);
-    expect(d.getMinutes()).toBe(0);
+    expect(d.getUTCHours()).toBe(12);
+    expect(d.getUTCMinutes()).toBe(0);
   });
 
   it('parses "12am" as midnight (0:00)', () => {
     const d = parseDateTime('August 22', '12am');
-    expect(d.getHours()).toBe(0);
-    expect(d.getMinutes()).toBe(0);
+    expect(d.getUTCHours()).toBe(0);
+    expect(d.getUTCMinutes()).toBe(0);
   });
 
   it('parses "10:00 PM" as 22:00', () => {
     const d = parseDateTime('August 22', '10:00 PM');
-    expect(d.getHours()).toBe(22);
-    expect(d.getMinutes()).toBe(0);
+    expect(d.getUTCHours()).toBe(22);
+    expect(d.getUTCMinutes()).toBe(0);
   });
 
   // ── Date parsing ───────────────────────────────────────────────────────────
 
   it('parses full month name', () => {
     const d = parseDateTime('August 22', '7pm');
-    expect(d.getMonth()).toBe(7); // 0-indexed
-    expect(d.getDate()).toBe(22);
-    expect(d.getFullYear()).toBe(YEAR);
+    expect(d.getUTCMonth()).toBe(7); // 0-indexed
+    expect(d.getUTCDate()).toBe(22);
+    expect(d.getUTCFullYear()).toBe(YEAR);
   });
 
   it('parses abbreviated month name', () => {
     const d = parseDateTime('aug 22', '7pm');
-    expect(d.getMonth()).toBe(7);
-    expect(d.getDate()).toBe(22);
+    expect(d.getUTCMonth()).toBe(7);
+    expect(d.getUTCDate()).toBe(22);
   });
 
   it('parses an explicit 4-digit year', () => {
     const d = parseDateTime('September 5 2027', '7pm');
-    expect(d.getFullYear()).toBe(2027);
-    expect(d.getMonth()).toBe(8);
-    expect(d.getDate()).toBe(5);
+    expect(d.getUTCFullYear()).toBe(2027);
+    expect(d.getUTCMonth()).toBe(8);
+    expect(d.getUTCDate()).toBe(5);
   });
 
   it('handles December correctly', () => {
     const d = parseDateTime('December 31', '11:59 PM');
-    expect(d.getMonth()).toBe(11);
-    expect(d.getDate()).toBe(31);
-    expect(d.getHours()).toBe(23);
-    expect(d.getMinutes()).toBe(59);
+    expect(d.getUTCMonth()).toBe(11);
+    expect(d.getUTCDate()).toBe(31);
+    expect(d.getUTCHours()).toBe(23);
+    expect(d.getUTCMinutes()).toBe(59);
   });
 
   it('handles January correctly', () => {
     const d = parseDateTime('January 1', '12am');
-    expect(d.getMonth()).toBe(0);
-    expect(d.getDate()).toBe(1);
+    expect(d.getUTCMonth()).toBe(0);
+    expect(d.getUTCDate()).toBe(1);
   });
 
   it('ignores extra commas in the date string', () => {
     const d = parseDateTime('August, 22', '7pm');
-    expect(d.getMonth()).toBe(7);
-    expect(d.getDate()).toBe(22);
+    expect(d.getUTCMonth()).toBe(7);
+    expect(d.getUTCDate()).toBe(22);
   });
 
   it('parses ordinal day suffixes (1st, 2nd, 3rd, 30th)', () => {
-    expect(parseDateTime('June 30th', '8am').getDate()).toBe(30);
-    expect(parseDateTime('July 1st', '7pm').getDate()).toBe(1);
-    expect(parseDateTime('August 2nd', '7pm').getDate()).toBe(2);
-    expect(parseDateTime('September 3rd', '7pm').getDate()).toBe(3);
+    expect(parseDateTime('June 30th', '8am').getUTCDate()).toBe(30);
+    expect(parseDateTime('July 1st', '7pm').getUTCDate()).toBe(1);
+    expect(parseDateTime('August 2nd', '7pm').getUTCDate()).toBe(2);
+    expect(parseDateTime('September 3rd', '7pm').getUTCDate()).toBe(3);
   });
 
   // ── Error cases ────────────────────────────────────────────────────────────
@@ -109,6 +115,27 @@ describe('parseDateTime', () => {
 
   it('throws when the time string is not parseable', () => {
     expect(() => parseDateTime('August 22', 'noon')).toThrow();
+  });
+
+  // ── Timezone handling (regression: native scheduled event time not matching
+  // the announcement embed, caused by parsing input in the host process's
+  // local zone instead of an explicit, configured one) ───────────────────────
+
+  it('defaults to UTC when no timezone is given', () => {
+    const d = parseDateTime('August 22', '7pm');
+    expect(d.toISOString()).toBe(`${YEAR}-08-22T19:00:00.000Z`);
+  });
+
+  it('interprets the wall-clock time in the given IANA timezone', () => {
+    // 7:00 PM EDT (UTC-4) in July.
+    const d = parseDateTime('July 14 2026', '7pm', 'America/New_York');
+    expect(d.toISOString()).toBe('2026-07-14T23:00:00.000Z');
+  });
+
+  it('produces a different UTC instant for the same wall-clock time in different timezones', () => {
+    const ny = parseDateTime('July 14 2026', '7pm', 'America/New_York');
+    const utc = parseDateTime('July 14 2026', '7pm', 'UTC');
+    expect(ny.getTime()).not.toBe(utc.getTime());
   });
 });
 
@@ -658,5 +685,166 @@ describe('handleEdit', () => {
     expect(interaction.reply).toHaveBeenCalledWith(
       expect.objectContaining({ content: expect.stringContaining('already concluded') }),
     );
+  });
+});
+
+describe('handlePrivacy', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-gamenight-privacy-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  async function seedGameNight(overrides: Partial<Record<string, unknown>> = {}) {
+    const { upsertGameNight } = await import('../src/utils/storage');
+    const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const gn = {
+      id: 'gn-privacy-1',
+      title: 'Board Game Bash',
+      date: 'Saturday',
+      time: '7:00 PM',
+      location: 'Library Room 1',
+      link: '',
+      description: '',
+      messageId: 'announcement-msg-1',
+      channelId: 'announcements',
+      guildId: 'guild-1',
+      discordEventId: null,
+      eventChannelId: 'event-channel-1',
+      startTimeISO: future,
+      endTimeISO: null,
+      rsvps: { yes: ['attendee-1'], maybe: ['attendee-2'], no: [] },
+      createdBy: 'host-1',
+      cancelled: false,
+      archived: false,
+      openChannel: false,
+      createdAt: new Date().toISOString(),
+      ...overrides,
+    };
+    await upsertGameNight(gn as any);
+    return gn;
+  }
+
+  function makeClientForPrivacy() {
+    const eventChannel = {
+      permissionOverwrites: {
+        create: vi.fn(async () => {}),
+        delete: vi.fn(async () => {}),
+      },
+    };
+    return {
+      channels: { fetch: vi.fn(async () => eventChannel) },
+      _eventChannel: eventChannel,
+    };
+  }
+
+  function makePrivacyInteraction(
+    id: string,
+    open: boolean,
+    client: ReturnType<typeof makeClientForPrivacy>,
+  ) {
+    return {
+      guild: { roles: { everyone: 'everyone-role' } },
+      guildId: 'guild-1',
+      client,
+      user: { id: 'host-2' },
+      memberPermissions: { has: () => true },
+      options: {
+        getString: () => id,
+        getBoolean: () => open,
+      },
+      reply: vi.fn(async () => {}),
+      deferReply: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
+    } as any;
+  }
+
+  it('refuses when the invoker lacks ManageEvents', async () => {
+    const { handlePrivacy } = await import('../src/commands/gamenight');
+    const interaction = {
+      memberPermissions: { has: () => false },
+      reply: vi.fn(async () => {}),
+    } as any;
+
+    await handlePrivacy(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('Only hosts') }),
+    );
+  });
+
+  it('opens an RSVP-only channel: removes the @everyone deny-view overwrite and persists openChannel', async () => {
+    const { handlePrivacy } = await import('../src/commands/gamenight');
+    const { findGameNight } = await import('../src/utils/storage');
+    await seedGameNight({ openChannel: false });
+    const client = makeClientForPrivacy();
+
+    await handlePrivacy(makePrivacyInteraction('gn-privacy-1', true, client));
+
+    expect(client._eventChannel.permissionOverwrites.delete).toHaveBeenCalledWith('everyone-role');
+    const gn = await findGameNight('gn-privacy-1');
+    expect(gn?.openChannel).toBe(true);
+  });
+
+  it('closes an open channel: hides it from @everyone and re-grants access to the creator and current attendees', async () => {
+    const { handlePrivacy } = await import('../src/commands/gamenight');
+    const { findGameNight } = await import('../src/utils/storage');
+    await seedGameNight({ openChannel: true });
+    const client = makeClientForPrivacy();
+
+    await handlePrivacy(makePrivacyInteraction('gn-privacy-1', false, client));
+
+    expect(client._eventChannel.permissionOverwrites.create).toHaveBeenCalledWith('everyone-role', {
+      ViewChannel: false,
+    });
+    expect(client._eventChannel.permissionOverwrites.create).toHaveBeenCalledWith('host-1', { ViewChannel: true });
+    expect(client._eventChannel.permissionOverwrites.create).toHaveBeenCalledWith('attendee-1', { ViewChannel: true });
+    expect(client._eventChannel.permissionOverwrites.create).toHaveBeenCalledWith('attendee-2', { ViewChannel: true });
+
+    const gn = await findGameNight('gn-privacy-1');
+    expect(gn?.openChannel).toBe(false);
+  });
+
+  it('is a no-op reply when the channel already matches the requested state', async () => {
+    const { handlePrivacy } = await import('../src/commands/gamenight');
+    await seedGameNight({ openChannel: true });
+    const client = makeClientForPrivacy();
+
+    await handlePrivacy(makePrivacyInteraction('gn-privacy-1', true, client));
+
+    expect(client._eventChannel.permissionOverwrites.create).not.toHaveBeenCalled();
+    expect(client._eventChannel.permissionOverwrites.delete).not.toHaveBeenCalled();
+  });
+
+  it('refuses for a cancelled event', async () => {
+    const { handlePrivacy } = await import('../src/commands/gamenight');
+    await seedGameNight({ cancelled: true });
+    const client = makeClientForPrivacy();
+
+    await handlePrivacy(makePrivacyInteraction('gn-privacy-1', true, client));
+
+    expect(client._eventChannel.permissionOverwrites.delete).not.toHaveBeenCalled();
+  });
+
+  it('reports an error and does not flip openChannel when Discord permission update fails', async () => {
+    const { handlePrivacy } = await import('../src/commands/gamenight');
+    const { findGameNight } = await import('../src/utils/storage');
+    await seedGameNight({ openChannel: false });
+    const client = makeClientForPrivacy();
+    client._eventChannel.permissionOverwrites.delete.mockRejectedValueOnce(new Error('Missing Access'));
+
+    const interaction = makePrivacyInteraction('gn-privacy-1', true, client);
+    await handlePrivacy(interaction);
+
+    expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining('Could not update'));
+    const gn = await findGameNight('gn-privacy-1');
+    expect(gn?.openChannel).toBe(false);
   });
 });

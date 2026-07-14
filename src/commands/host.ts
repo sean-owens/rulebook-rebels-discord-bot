@@ -4,6 +4,7 @@ import {
   handleEdit as handleEventEdit,
   handleCancel as handleEventCancel,
   handleArchiveOld as handleEventArchive,
+  handlePrivacy as handleEventPrivacy,
 } from './gamenight';
 import { handleHostGameCancel } from './game';
 import { handleUnrequest as handleLibraryUnrequest } from './library';
@@ -118,6 +119,23 @@ export const data = new SlashCommandBuilder()
       )
       .addSubcommand((sub) =>
         sub.setName('archive').setDescription('Archive channels for all past events'),
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('privacy')
+          .setDescription("Change one event's channel visibility, overriding the server default for it")
+          .addStringOption((opt) =>
+            opt
+              .setName('id')
+              .setDescription('Game night ID (shown in the event embed footer)')
+              .setRequired(true),
+          )
+          .addBooleanOption((opt) =>
+            opt
+              .setName('open')
+              .setDescription('true = open to everyone, false = RSVP only')
+              .setRequired(true),
+          ),
       ),
   )
   // ── game group ────────────────────────────────────────────────────────────────
@@ -155,6 +173,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     else if (sub === 'edit') await handleEventEdit(interaction);
     else if (sub === 'cancel') await handleEventCancel(interaction);
     else if (sub === 'archive') await handleEventArchive(interaction);
+    else if (sub === 'privacy') await handleEventPrivacy(interaction);
   } else if (group === 'game') {
     if (sub === 'cancel') await handleHostGameCancel(interaction);
   } else if (group === 'library') {

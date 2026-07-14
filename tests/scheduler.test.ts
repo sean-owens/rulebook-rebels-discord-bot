@@ -440,6 +440,30 @@ describe('lockAndScheduleEvent', () => {
     expect(client._channel.send).toHaveBeenCalledTimes(1);
   });
 
+  it('logs a clear reason instead of silently skipping when no game meets the scheduling threshold', async () => {
+    const { upsertGameNight } = await import('../src/utils/storage');
+    const { upsertGame } = await import('../src/utils/gameStorage');
+    const gn = makeGameNight();
+    await upsertGameNight(gn as any);
+    // 2 players seated but 3 required — never gets a schedule assignment.
+    await upsertGame({
+      id: 'game1', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm1', guildId: 'guild-1',
+      bggId: '1', title: 'Wingspan', bggLink: '', minPlayers: 3, maxPlayers: 4, suggestedPlayers: null,
+      minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: ['p1', 'p2'], waitlist: [],
+      createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Light',
+    } as any);
+    const client = makeClient();
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await lockAndScheduleEvent(client as any, gn as any, { ...BUFFER_CONFIG, postBgStatsLinks: true });
+
+    expect(client._channel.send).toHaveBeenCalledTimes(1); // schedule-summary embed only, no BG Stats post
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining(`Skipping post for game night ${gn.id}`),
+    );
+    logSpy.mockRestore();
+  });
+
   it("uses a player's linked BGG username instead of their Discord display name when available", async () => {
     vi.stubEnv('SHORT_LINK_BASE_URL', 'https://bot.example.com');
     const { upsertGameNight } = await import('../src/utils/storage');

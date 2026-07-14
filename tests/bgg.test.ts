@@ -136,6 +136,17 @@ describe('searchBGG', () => {
     mockFetch('', 429);
     await expect(searchBGG('test')).rejects.toThrow('429');
   });
+
+  it('decodes HTML entities in game names', async () => {
+    mockFetch(`<items total="1">
+  <item type="boardgame" id="313103">
+    <name type="primary" value="Star Trek: Captain&#039;s Chair"/>
+  </item>
+</items>`);
+
+    const results = await searchBGG("Star Trek Captain's Chair");
+    expect(results[0].name).toBe("Star Trek: Captain's Chair");
+  });
 });
 
 // ── getBGGGame ────────────────────────────────────────────────────────────────
@@ -226,6 +237,23 @@ describe('getBGGGame', () => {
   it('throws when the API returns a non-OK status', async () => {
     mockFetch('', 404);
     await expect(getBGGGame('0')).rejects.toThrow('404');
+  });
+
+  it('decodes HTML entities in the primary name and expansion names', async () => {
+    mockFetch(`<?xml version="1.0" encoding="utf-8"?>
+<items>
+  <item type="boardgame" id="313103">
+    <name type="primary" sortindex="1" value="Star Trek: Captain&#039;s Chair"/>
+    <minplayers value="2"/>
+    <maxplayers value="7"/>
+    <minplaytime value="30"/>
+    <maxplaytime value="60"/>
+    <link type="boardgameexpansion" id="1" value="Captain&#039;s Chair: Away Team &amp; Beyond"/>
+  </item>
+</items>`);
+    const game = await getBGGGame('313103');
+    expect(game.name).toBe("Star Trek: Captain's Chair");
+    expect(game.expansions[0].name).toBe("Captain's Chair: Away Team & Beyond");
   });
 });
 
