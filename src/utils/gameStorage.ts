@@ -34,6 +34,9 @@ export interface GameSuggestion {
   // Set once the scheduler (see src/utils/scheduler.ts) assigns this game a slot.
   scheduledRound?: number;
   scheduledTable?: number;
+  // How many times this game was scheduled to be played within its round's
+  // time slot (opportunistic repeat-fill for short games). 1 = played once.
+  scheduledPlayCount?: number;
 }
 
 export async function loadGames(): Promise<GameSuggestion[]> {

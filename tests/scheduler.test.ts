@@ -6,15 +6,21 @@ import {
   scheduleGames,
   complexityBufferMinutes,
   toSchedulableGame,
+  computeRoundClocks,
   buildScheduleEmbed,
   lockAndScheduleEvent,
   checkPendingSchedules,
+  previewSchedule,
   isLineupLocked,
   SchedulableGame,
 } from '../src/utils/scheduler';
 import { GameSuggestion } from '../src/utils/gameStorage';
 
 const BUFFER_CONFIG = { lightBufferMinutes: 20, mediumBufferMinutes: 30, heavyBufferMinutes: 40 };
+
+// Refinements config for tests that aren't exercising breaks/repeats — keeps
+// their assertions identical to pre-refinement behavior.
+const NO_REFINEMENTS = { heavyGameBreakMinutes: 0, maxGameRepeats: 1 };
 
 function makeGame(overrides: Partial<SchedulableGame> = {}): SchedulableGame {
   return {
@@ -23,6 +29,8 @@ function makeGame(overrides: Partial<SchedulableGame> = {}): SchedulableGame {
     minPlayers: overrides.minPlayers ?? 2,
     seatedPlayers: overrides.seatedPlayers ?? ['p1', 'p2'],
     effectiveDurationMinutes: overrides.effectiveDurationMinutes ?? 60,
+    rawMaxPlaytime: overrides.rawMaxPlaytime ?? 60,
+    complexity: overrides.complexity,
   };
 }
 
@@ -40,19 +48,22 @@ describe('complexityBufferMinutes', () => {
 });
 
 describe('toSchedulableGame', () => {
-  it('adds the complexity buffer to maxPlaytime', () => {
+  it('adds the complexity buffer to maxPlaytime and carries raw playtime/complexity through', () => {
     const game = { id: 'g1', title: 'Wingspan', minPlayers: 2, maxPlaytime: 70, complexity: 'Medium', seats: ['p1'] } as GameSuggestion;
     const result = toSchedulableGame(game, BUFFER_CONFIG);
     expect(result.effectiveDurationMinutes).toBe(100); // 70 + 30
     expect(result.seatedPlayers).toEqual(['p1']);
+    expect(result.rawMaxPlaytime).toBe(70);
+    expect(result.complexity).toBe('Medium');
   });
 });
 
 describe('scheduleGames', () => {
   it('schedules a single game onto round 1, table 1', () => {
-    const result = scheduleGames([makeGame({ id: 'g1' })], 2, 120);
-    expect(result.assignments).toEqual([{ gameId: 'g1', round: 1, table: 1 }]);
+    const result = scheduleGames([makeGame({ id: 'g1' })], 2, 120, NO_REFINEMENTS);
+    expect(result.assignments).toEqual([{ gameId: 'g1', round: 1, table: 1, playCount: 1 }]);
     expect(result.unscheduled).toEqual([]);
+    expect(result.lowInterest).toEqual([]);
     expect(result.totalDurationMinutes).toBe(60);
     expect(result.fitsInWindow).toBe(true);
   });
@@ -62,6 +73,7 @@ describe('scheduleGames', () => {
       [makeGame({ id: 'g1', minPlayers: 4, seatedPlayers: ['p1', 'p2'] })],
       2,
       120,
+      NO_REFINEMENTS,
     );
     expect(result.assignments).toEqual([]);
     expect(result.unscheduled).toEqual([
@@ -77,6 +89,7 @@ describe('scheduleGames', () => {
       ],
       2,
       120,
+      NO_REFINEMENTS,
     );
     const rounds = new Set(result.assignments.map((a) => a.round));
     expect(rounds.size).toBe(1);
@@ -92,6 +105,7 @@ describe('scheduleGames', () => {
       ],
       2, // two tables available — conflict is about the player, not table capacity
       240,
+      NO_REFINEMENTS,
     );
     const g1Round = result.assignments.find((a) => a.gameId === 'g1')!.round;
     const g2Round = result.assignments.find((a) => a.gameId === 'g2')!.round;
@@ -101,11 +115,12 @@ describe('scheduleGames', () => {
   it('queues a third game to round 2 when only one table is available', () => {
     const result = scheduleGames(
       [
-        makeGame({ id: 'g1', minPlayers: 1, seatedPlayers: ['p1'] }),
-        makeGame({ id: 'g2', minPlayers: 1, seatedPlayers: ['p2'] }),
+        makeGame({ id: 'g1', minPlayers: 1, seatedPlayers: ['p1', 'p2'] }),
+        makeGame({ id: 'g2', minPlayers: 1, seatedPlayers: ['p3', 'p4'] }),
       ],
       1, // single table
       240,
+      NO_REFINEMENTS,
     );
     const rounds = result.assignments.map((a) => a.round).sort();
     expect(rounds).toEqual([1, 2]);
@@ -114,11 +129,12 @@ describe('scheduleGames', () => {
   it('computes each round duration as the max effective duration among its games', () => {
     const result = scheduleGames(
       [
-        makeGame({ id: 'g1', minPlayers: 1, seatedPlayers: ['p1'], effectiveDurationMinutes: 90 }),
-        makeGame({ id: 'g2', minPlayers: 1, seatedPlayers: ['p2'], effectiveDurationMinutes: 45 }),
+        makeGame({ id: 'g1', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 90, rawMaxPlaytime: 90 }),
+        makeGame({ id: 'g2', minPlayers: 1, seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 45, rawMaxPlaytime: 45 }),
       ],
       2,
       120,
+      NO_REFINEMENTS,
     );
     expect(result.roundDurationsMinutes).toEqual([90]);
     expect(result.totalDurationMinutes).toBe(90);
@@ -127,20 +143,22 @@ describe('scheduleGames', () => {
   it('flags fitsInWindow as false when the schedule exceeds the event window', () => {
     const result = scheduleGames(
       [
-        makeGame({ id: 'g1', minPlayers: 1, seatedPlayers: ['p1'], effectiveDurationMinutes: 90 }),
-        makeGame({ id: 'g2', minPlayers: 1, seatedPlayers: ['p1'], effectiveDurationMinutes: 90 }), // conflicts with g1 -> forced to round 2
+        makeGame({ id: 'g1', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 90, rawMaxPlaytime: 90 }),
+        makeGame({ id: 'g2', minPlayers: 1, seatedPlayers: ['p1', 'p3'], effectiveDurationMinutes: 90, rawMaxPlaytime: 90 }), // conflicts with g1 -> forced to round 2
       ],
       1,
       120, // only enough time for one 90-minute round
+      NO_REFINEMENTS,
     );
     expect(result.totalDurationMinutes).toBe(180);
     expect(result.fitsInWindow).toBe(false);
   });
 
   it('handles an empty game list', () => {
-    const result = scheduleGames([], 2, 120);
+    const result = scheduleGames([], 2, 120, NO_REFINEMENTS);
     expect(result.assignments).toEqual([]);
     expect(result.unscheduled).toEqual([]);
+    expect(result.lowInterest).toEqual([]);
     expect(result.totalDurationMinutes).toBe(0);
     expect(result.fitsInWindow).toBe(true);
   });
@@ -154,7 +172,7 @@ describe('scheduleGames', () => {
         effectiveDurationMinutes: 60,
       }),
     );
-    const result = scheduleGames(games, 3, 600);
+    const result = scheduleGames(games, 3, 600, NO_REFINEMENTS);
 
     const byRound = new Map<number, string[]>();
     for (const a of result.assignments) {
@@ -165,6 +183,278 @@ describe('scheduleGames', () => {
       }
       byRound.set(a.round, [...existing, ...game.seatedPlayers]);
     }
+  });
+
+  describe('low-interest bucket', () => {
+    it('routes a game with exactly 1 seated player to lowInterest instead of unscheduled', () => {
+      const result = scheduleGames(
+        [makeGame({ id: 'g1', minPlayers: 2, seatedPlayers: ['p1'] })],
+        2,
+        120,
+        NO_REFINEMENTS,
+      );
+      expect(result.lowInterest).toEqual([
+        { gameId: 'g1', reason: 'only 1 player interested — may not get played' },
+      ]);
+      expect(result.unscheduled).toEqual([]);
+      expect(result.assignments).toEqual([]);
+    });
+
+    it('routes a 1-seated game to lowInterest even when its own minPlayers is 1 (would otherwise be schedulable)', () => {
+      const result = scheduleGames(
+        [makeGame({ id: 'g1', minPlayers: 1, seatedPlayers: ['p1'] })],
+        2,
+        120,
+        NO_REFINEMENTS,
+      );
+      expect(result.lowInterest).toEqual([
+        { gameId: 'g1', reason: 'only 1 player interested — may not get played' },
+      ]);
+      expect(result.assignments).toEqual([]);
+    });
+
+    it('leaves a 0-seated game in the unscheduled bucket, not lowInterest', () => {
+      const result = scheduleGames(
+        [makeGame({ id: 'g1', minPlayers: 2, seatedPlayers: [] })],
+        2,
+        120,
+        NO_REFINEMENTS,
+      );
+      expect(result.unscheduled).toEqual([
+        { gameId: 'g1', reason: 'only 0/2 minimum players seated' },
+      ]);
+      expect(result.lowInterest).toEqual([]);
+    });
+
+    it('only pulls out the 1-seated game when games are mixed', () => {
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'g1', minPlayers: 1, seatedPlayers: ['p1'] }),
+          makeGame({ id: 'g2', minPlayers: 2, seatedPlayers: ['p2', 'p3'] }),
+        ],
+        2,
+        120,
+        NO_REFINEMENTS,
+      );
+      expect(result.lowInterest.map((u) => u.gameId)).toEqual(['g1']);
+      expect(result.assignments.map((a) => a.gameId)).toEqual(['g2']);
+    });
+  });
+
+  describe('Heavy-adjacency break', () => {
+    it('inserts a break before the second round when one table plays Heavy games in consecutive rounds', () => {
+      // 1 table, disjoint players -> g1 forced to round 1, g2 forced to round 2, both Heavy.
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'g1', minPlayers: 1, seatedPlayers: ['p1', 'p2'], complexity: 'Heavy' }),
+          makeGame({ id: 'g2', minPlayers: 1, seatedPlayers: ['p3', 'p4'], complexity: 'Heavy' }),
+        ],
+        1,
+        600,
+        { heavyGameBreakMinutes: 20, maxGameRepeats: 1 },
+      );
+      expect(result.roundDurationsMinutes).toHaveLength(2);
+      expect(result.roundBreakMinutesBefore).toEqual([0, 20]);
+      expect(result.totalDurationMinutes).toBe(60 + 60 + 20);
+    });
+
+    it('inserts no break when heavyGameBreakMinutes is 0 (disabled)', () => {
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'g1', minPlayers: 1, seatedPlayers: ['p1', 'p2'], complexity: 'Heavy' }),
+          makeGame({ id: 'g2', minPlayers: 1, seatedPlayers: ['p3', 'p4'], complexity: 'Heavy' }),
+        ],
+        1,
+        600,
+        NO_REFINEMENTS,
+      );
+      expect(result.roundBreakMinutesBefore).toEqual([0, 0]);
+    });
+
+    it('inserts a global break even when only one of several tables has the Heavy-heavy adjacency', () => {
+      // 2 tables: table 1 gets Heavy->Heavy, table 2 gets Light->Light — the
+      // break is global, so table 2's round 2 also shifts even though it
+      // didn't strictly need a break itself.
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'g1', minPlayers: 1, seatedPlayers: ['a1', 'a2'], complexity: 'Heavy', effectiveDurationMinutes: 60, rawMaxPlaytime: 60 }),
+          makeGame({ id: 'g2', minPlayers: 1, seatedPlayers: ['b1', 'b2'], complexity: 'Light', effectiveDurationMinutes: 60, rawMaxPlaytime: 60 }),
+          makeGame({ id: 'g3', minPlayers: 1, seatedPlayers: ['c1', 'c2'], complexity: 'Heavy', effectiveDurationMinutes: 60, rawMaxPlaytime: 60 }),
+          makeGame({ id: 'g4', minPlayers: 1, seatedPlayers: ['d1', 'd2'], complexity: 'Light', effectiveDurationMinutes: 60, rawMaxPlaytime: 60 }),
+        ],
+        2,
+        600,
+        { heavyGameBreakMinutes: 20, maxGameRepeats: 1 },
+      );
+      expect(result.roundDurationsMinutes).toHaveLength(2);
+      expect(result.roundBreakMinutesBefore).toEqual([0, 20]);
+    });
+
+    it('does not trigger a break for Heavy followed by a non-Heavy game at the same table', () => {
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'g1', minPlayers: 1, seatedPlayers: ['p1', 'p2'], complexity: 'Heavy' }),
+          makeGame({ id: 'g2', minPlayers: 1, seatedPlayers: ['p3', 'p4'], complexity: 'Light' }),
+        ],
+        1,
+        600,
+        { heavyGameBreakMinutes: 20, maxGameRepeats: 1 },
+      );
+      expect(result.roundBreakMinutesBefore).toEqual([0, 0]);
+    });
+
+    it('does not detect Heavy games separated by a non-Heavy filler round at the same table (v1 limitation)', () => {
+      // Force 3 rounds at 1 table: Heavy (round1), non-Heavy (round2), Heavy (round3) —
+      // all players distinct so each is forced to its own new round in order.
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'g1', minPlayers: 1, seatedPlayers: ['p1', 'p2'], complexity: 'Heavy' }),
+          makeGame({ id: 'g2', minPlayers: 1, seatedPlayers: ['p3', 'p4'], complexity: 'Light' }),
+          makeGame({ id: 'g3', minPlayers: 1, seatedPlayers: ['p5', 'p6'], complexity: 'Heavy' }),
+        ],
+        1,
+        600,
+        { heavyGameBreakMinutes: 20, maxGameRepeats: 1 },
+      );
+      expect(result.roundDurationsMinutes).toHaveLength(3);
+      expect(result.roundBreakMinutesBefore).toEqual([0, 0, 0]);
+    });
+
+    it('can flip fitsInWindow from true to false once break minutes are counted', () => {
+      const withoutBreak = scheduleGames(
+        [
+          makeGame({ id: 'g1', minPlayers: 1, seatedPlayers: ['p1', 'p2'], complexity: 'Heavy' }),
+          makeGame({ id: 'g2', minPlayers: 1, seatedPlayers: ['p3', 'p4'], complexity: 'Heavy' }),
+        ],
+        1,
+        130,
+        NO_REFINEMENTS,
+      );
+      expect(withoutBreak.totalDurationMinutes).toBe(120);
+      expect(withoutBreak.fitsInWindow).toBe(true);
+
+      const withBreak = scheduleGames(
+        [
+          makeGame({ id: 'g1', minPlayers: 1, seatedPlayers: ['p1', 'p2'], complexity: 'Heavy' }),
+          makeGame({ id: 'g2', minPlayers: 1, seatedPlayers: ['p3', 'p4'], complexity: 'Heavy' }),
+        ],
+        1,
+        130,
+        { heavyGameBreakMinutes: 20, maxGameRepeats: 1 },
+      );
+      expect(withBreak.totalDurationMinutes).toBe(140);
+      expect(withBreak.fitsInWindow).toBe(false);
+    });
+  });
+
+  describe('opportunistic repeat-fill', () => {
+    it('repeats a short game to fill leftover time in a longer round, capped by maxGameRepeats', () => {
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'long', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 90, rawMaxPlaytime: 90 }),
+          makeGame({ id: 'short', minPlayers: 1, seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 40, rawMaxPlaytime: 20 }),
+        ],
+        2,
+        600,
+        { heavyGameBreakMinutes: 0, maxGameRepeats: 3 },
+      );
+      expect(result.roundDurationsMinutes).toEqual([90]);
+      const shortAssignment = result.assignments.find((a) => a.gameId === 'short')!;
+      // leftover = 90 - 40 = 50; floor(50/20) = 2 extra plays -> playCount 3
+      expect(shortAssignment.playCount).toBe(3);
+      const longAssignment = result.assignments.find((a) => a.gameId === 'long')!;
+      expect(longAssignment.playCount).toBe(1);
+    });
+
+    it('caps repeats at maxGameRepeats even when leftover time allows more', () => {
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'long', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 90, rawMaxPlaytime: 90 }),
+          makeGame({ id: 'short', minPlayers: 1, seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 40, rawMaxPlaytime: 20 }),
+        ],
+        2,
+        600,
+        { heavyGameBreakMinutes: 0, maxGameRepeats: 2 },
+      );
+      const shortAssignment = result.assignments.find((a) => a.gameId === 'short')!;
+      expect(shortAssignment.playCount).toBe(2);
+    });
+
+    it('does not repeat a short game that itself sets the round duration (no leftover)', () => {
+      const result = scheduleGames(
+        [makeGame({ id: 'short', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 40, rawMaxPlaytime: 20 })],
+        1,
+        600,
+        { heavyGameBreakMinutes: 0, maxGameRepeats: 3 },
+      );
+      const assignment = result.assignments.find((a) => a.gameId === 'short')!;
+      expect(assignment.playCount).toBe(1);
+    });
+
+    it('excludes a game at the 30-minute boundary (not eligible — must be strictly under 30)', () => {
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'long', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 90, rawMaxPlaytime: 90 }),
+          makeGame({ id: 'boundary', minPlayers: 1, seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 60, rawMaxPlaytime: 30 }),
+        ],
+        2,
+        600,
+        { heavyGameBreakMinutes: 0, maxGameRepeats: 3 },
+      );
+      const assignment = result.assignments.find((a) => a.gameId === 'boundary')!;
+      expect(assignment.playCount).toBe(1);
+    });
+
+    it('does not repeat when leftover time is not enough for even one more play', () => {
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'long', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 90, rawMaxPlaytime: 90 }),
+          makeGame({ id: 'short', minPlayers: 1, seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 62, rawMaxPlaytime: 29 }),
+        ],
+        2,
+        600,
+        { heavyGameBreakMinutes: 0, maxGameRepeats: 3 },
+      );
+      // leftover = 90 - 62 = 28, less than rawMaxPlaytime (29) -> no repeat
+      const assignment = result.assignments.find((a) => a.gameId === 'short')!;
+      expect(assignment.playCount).toBe(1);
+    });
+
+    it('never changes roundDurationsMinutes regardless of playCount', () => {
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'long', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 90, rawMaxPlaytime: 90 }),
+          makeGame({ id: 'short', minPlayers: 1, seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 40, rawMaxPlaytime: 20 }),
+        ],
+        2,
+        600,
+        { heavyGameBreakMinutes: 0, maxGameRepeats: 3 },
+      );
+      expect(result.roundDurationsMinutes).toEqual([90]);
+    });
+  });
+});
+
+describe('computeRoundClocks', () => {
+  it('cumulatively sums round durations and inserted breaks from the event start', () => {
+    const start = new Date('2026-01-01T18:00:00.000Z');
+    const clocks = computeRoundClocks(
+      { roundDurationsMinutes: [60, 90], roundBreakMinutesBefore: [0, 20] },
+      start.toISOString(),
+    );
+    const startUnix = Math.floor(start.getTime() / 1000);
+    expect(clocks).toEqual([
+      { round: 1, startUnix, endUnix: startUnix + 3600 },
+      { round: 2, startUnix: startUnix + 3600 + 1200, endUnix: startUnix + 3600 + 1200 + 5400 },
+    ]);
+  });
+
+  it('returns an empty array for an empty schedule', () => {
+    const clocks = computeRoundClocks(
+      { roundDurationsMinutes: [], roundBreakMinutesBefore: [] },
+      new Date().toISOString(),
+    );
+    expect(clocks).toEqual([]);
   });
 });
 
@@ -183,35 +473,106 @@ describe('buildScheduleEmbed', () => {
     { id: 'g1', title: 'Wingspan' },
     { id: 'g2', title: 'Catan' },
   ];
+  const gn = { title: 'Game Night', startTimeISO: new Date('2026-01-01T18:00:00.000Z').toISOString() };
 
-  it('lists each round with its table assignments', () => {
+  it('lists each round with real clock times and its table assignments', () => {
     const result = {
       assignments: [
-        { gameId: 'g1', round: 1, table: 1 },
-        { gameId: 'g2', round: 1, table: 2 },
+        { gameId: 'g1', round: 1, table: 1, playCount: 1 },
+        { gameId: 'g2', round: 1, table: 2, playCount: 1 },
       ],
       unscheduled: [],
+      lowInterest: [],
       roundDurationsMinutes: [90],
+      roundBreakMinutesBefore: [0],
       totalDurationMinutes: 90,
       fitsInWindow: true,
     };
-    const embed = buildScheduleEmbed({ title: 'Game Night' }, games, result);
+    const embed = buildScheduleEmbed(gn, games, result);
     const data = embed.toJSON();
     expect(data.fields).toHaveLength(1);
     expect(data.fields![0].name).toContain('Round 1');
+    expect(data.fields![0].name).toMatch(/<t:\d+:t>.*<t:\d+:t>/);
     expect(data.fields![0].value).toContain('Wingspan');
     expect(data.fields![0].value).toContain('Catan');
+  });
+
+  it('notes the play count on the table line when a game repeats', () => {
+    const result = {
+      assignments: [{ gameId: 'g1', round: 1, table: 1, playCount: 3 }],
+      unscheduled: [],
+      lowInterest: [],
+      roundDurationsMinutes: [90],
+      roundBreakMinutesBefore: [0],
+      totalDurationMinutes: 90,
+      fitsInWindow: true,
+    };
+    const embed = buildScheduleEmbed(gn, games, result);
+    const data = embed.toJSON();
+    expect(data.fields![0].value).toContain('Wingspan** (3x)');
+  });
+
+  it('omits the play-count suffix entirely when a game is only played once', () => {
+    const result = {
+      assignments: [{ gameId: 'g1', round: 1, table: 1, playCount: 1 }],
+      unscheduled: [],
+      lowInterest: [],
+      roundDurationsMinutes: [60],
+      roundBreakMinutesBefore: [0],
+      totalDurationMinutes: 60,
+      fitsInWindow: true,
+    };
+    const embed = buildScheduleEmbed(gn, games, result);
+    const data = embed.toJSON();
+    expect(data.fields![0].value).toBe('Table 1: **Wingspan**');
+  });
+
+  it('shows a break note before a round that has an inserted break', () => {
+    const result = {
+      assignments: [{ gameId: 'g1', round: 2, table: 1, playCount: 1 }],
+      unscheduled: [],
+      lowInterest: [],
+      roundDurationsMinutes: [60, 60],
+      roundBreakMinutesBefore: [0, 20],
+      totalDurationMinutes: 140,
+      fitsInWindow: true,
+    };
+    const embed = buildScheduleEmbed(gn, games, result);
+    const data = embed.toJSON();
+    const round2 = data.fields!.find((f) => f.name.startsWith('Round 2'))!;
+    expect(round2.value).toContain('20-minute break beforehand');
+  });
+
+  it('lists low-interest games in their own section, distinct from Not scheduled', () => {
+    const result = {
+      assignments: [],
+      unscheduled: [{ gameId: 'g2', reason: 'only 0/2 minimum players seated' }],
+      lowInterest: [{ gameId: 'g1', reason: 'only 1 player interested — may not get played' }],
+      roundDurationsMinutes: [],
+      roundBreakMinutesBefore: [],
+      totalDurationMinutes: 0,
+      fitsInWindow: true,
+    };
+    const embed = buildScheduleEmbed(gn, games, result);
+    const data = embed.toJSON();
+    const lowInterestField = data.fields!.find((f) => f.name === 'Needs more players');
+    expect(lowInterestField?.value).toContain('Wingspan');
+    expect(lowInterestField?.value).toContain('only 1 player interested');
+    const unscheduledField = data.fields!.find((f) => f.name === 'Not scheduled');
+    expect(unscheduledField?.value).toContain('Catan');
   });
 
   it('lists unscheduled games with their reason', () => {
     const result = {
       assignments: [],
       unscheduled: [{ gameId: 'g1', reason: 'only 1/3 minimum players seated' }],
+      lowInterest: [],
       roundDurationsMinutes: [],
+      roundBreakMinutesBefore: [],
       totalDurationMinutes: 0,
       fitsInWindow: true,
     };
-    const embed = buildScheduleEmbed({ title: 'Game Night' }, games, result);
+    const embed = buildScheduleEmbed(gn, games, result);
     const data = embed.toJSON();
     const unscheduledField = data.fields!.find((f) => f.name === 'Not scheduled');
     expect(unscheduledField?.value).toContain('Wingspan');
@@ -222,12 +583,38 @@ describe('buildScheduleEmbed', () => {
     const result = {
       assignments: [],
       unscheduled: [],
+      lowInterest: [],
       roundDurationsMinutes: [],
+      roundBreakMinutesBefore: [],
       totalDurationMinutes: 300,
       fitsInWindow: false,
     };
-    const embed = buildScheduleEmbed({ title: 'Game Night' }, [], result);
+    const embed = buildScheduleEmbed(gn, [], result);
     expect(embed.toJSON().footer?.text).toContain('may run past');
+  });
+
+  it('notes total break minutes in the footer only when a break was inserted', () => {
+    const withBreak = buildScheduleEmbed(gn, [], {
+      assignments: [],
+      unscheduled: [],
+      lowInterest: [],
+      roundDurationsMinutes: [60, 60],
+      roundBreakMinutesBefore: [0, 20],
+      totalDurationMinutes: 140,
+      fitsInWindow: true,
+    });
+    expect(withBreak.toJSON().footer?.text).toContain('includes 20 min of breaks');
+
+    const withoutBreak = buildScheduleEmbed(gn, [], {
+      assignments: [],
+      unscheduled: [],
+      lowInterest: [],
+      roundDurationsMinutes: [60],
+      roundBreakMinutesBefore: [0],
+      totalDurationMinutes: 60,
+      fitsInWindow: true,
+    });
+    expect(withoutBreak.toJSON().footer?.text).not.toContain('includes');
   });
 });
 
@@ -291,6 +678,8 @@ describe('lockAndScheduleEvent', () => {
     mediumBufferMinutes: 30,
     heavyBufferMinutes: 40,
     postBgStatsLinks: false,
+    heavyGameBreakMinutes: 0,
+    maxGameRepeats: 1,
   };
 
   it('marks the event locked and posts a schedule embed', async () => {
@@ -301,7 +690,7 @@ describe('lockAndScheduleEvent', () => {
     await upsertGame({
       id: 'game1', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm1', guildId: 'guild-1',
       bggId: '1', title: 'Wingspan', bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
-      minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: ['p1'], waitlist: [],
+      minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: ['p1', 'p2'], waitlist: [],
       createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Light',
     } as any);
     const client = makeClient();
@@ -314,7 +703,7 @@ describe('lockAndScheduleEvent', () => {
     expect(client._channel.send).toHaveBeenCalled();
   });
 
-  it('persists scheduledRound/scheduledTable on each scheduled game', async () => {
+  it('persists scheduledRound/scheduledTable/scheduledPlayCount on each scheduled game', async () => {
     const { upsertGameNight } = await import('../src/utils/storage');
     const { upsertGame, findGame } = await import('../src/utils/gameStorage');
     const gn = makeGameNight();
@@ -322,7 +711,7 @@ describe('lockAndScheduleEvent', () => {
     await upsertGame({
       id: 'game1', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm1', guildId: 'guild-1',
       bggId: '1', title: 'Wingspan', bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
-      minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: ['p1'], waitlist: [],
+      minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: ['p1', 'p2'], waitlist: [],
       createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Light',
     } as any);
     const client = makeClient();
@@ -332,6 +721,60 @@ describe('lockAndScheduleEvent', () => {
     const game = await findGame('game1');
     expect(game?.scheduledRound).toBe(1);
     expect(game?.scheduledTable).toBe(1);
+    expect(game?.scheduledPlayCount).toBe(1);
+  });
+
+  it('persists a higher scheduledPlayCount for a short game repeated into leftover round time', async () => {
+    const { upsertGameNight } = await import('../src/utils/storage');
+    const { upsertGame, findGame } = await import('../src/utils/gameStorage');
+    const gn = makeGameNight();
+    await upsertGameNight(gn as any);
+    await upsertGame({
+      id: 'long', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm1', guildId: 'guild-1',
+      bggId: '1', title: 'Twilight Imperium', bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
+      minPlaytime: 90, maxPlaytime: 90, suggestedStartTime: null, expansions: [], seats: ['p1', 'p2'], waitlist: [],
+      createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Heavy',
+    } as any);
+    await upsertGame({
+      id: 'short', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm2', guildId: 'guild-1',
+      bggId: '2', title: 'Love Letter', bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
+      minPlaytime: 15, maxPlaytime: 15, suggestedStartTime: null, expansions: [], seats: ['p3', 'p4'], waitlist: [],
+      createdAt: new Date().toISOString(), createdBy: 'p3', complexity: 'Light',
+    } as any);
+    const client = makeClient();
+
+    await lockAndScheduleEvent(client as any, gn as any, { ...BUFFER_CONFIG, maxGameRepeats: 3 });
+
+    const short = await findGame('short');
+    expect(short?.scheduledPlayCount).toBeGreaterThan(1);
+  });
+
+  it('inserts a break and shifts round 2 for both tables when one table has back-to-back Heavy games', async () => {
+    const { upsertGameNight } = await import('../src/utils/storage');
+    const { upsertGame } = await import('../src/utils/gameStorage');
+    const gn = makeGameNight();
+    await upsertGameNight(gn as any);
+    await upsertGame({
+      id: 'heavy1', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm1', guildId: 'guild-1',
+      bggId: '1', title: 'Heavy One', bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
+      minPlaytime: 60, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: ['p1', 'p2'], waitlist: [],
+      createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Heavy',
+    } as any);
+    await upsertGame({
+      id: 'heavy2', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm2', guildId: 'guild-1',
+      bggId: '2', title: 'Heavy Two', bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
+      minPlaytime: 60, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: ['p3', 'p4'], waitlist: [],
+      createdAt: new Date().toISOString(), createdBy: 'p3', complexity: 'Heavy',
+    } as any);
+    const client = makeClient();
+
+    await lockAndScheduleEvent(client as any, gn as any, { ...BUFFER_CONFIG, scheduleTableCount: 1, heavyGameBreakMinutes: 15 });
+
+    const embedCall = (client._channel.send as any).mock.calls[0][0];
+    const embed = embedCall.embeds[0].toJSON();
+    expect(embed.fields[1].name).toContain('Round 2');
+    expect(embed.fields[1].value).toContain('15-minute break beforehand');
+    expect(embed.footer.text).toContain('includes 15 min of breaks');
   });
 
   it('posts a BG Stats button per scheduled game when postBgStatsLinks is enabled', async () => {
@@ -348,7 +791,7 @@ describe('lockAndScheduleEvent', () => {
     await upsertGame({
       id: 'game1', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm1', guildId: 'guild-1',
       bggId: '266192', title: 'Wingspan', bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
-      minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: ['p1'], waitlist: [],
+      minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: ['p1', 'p2'], waitlist: [],
       createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Light',
     } as any);
     const client = makeClient();
@@ -368,7 +811,10 @@ describe('lockAndScheduleEvent', () => {
     expect(typeof data.playDate).toBe('string');
     expect(data.game.name).toBe('Wingspan');
     expect(data.location).toBe('The Rec Room');
-    expect(data.players).toEqual([{ name: 'Display-p1', sourcePlayerId: 'p1', winner: false, startPlayer: false }]);
+    expect(data.players).toEqual([
+      { name: 'Display-p1', sourcePlayerId: 'p1', winner: false, startPlayer: false },
+      { name: 'Display-p2', sourcePlayerId: 'p2', winner: false, startPlayer: false },
+    ]);
 
     // A QR code (encoding the same short link as the button, for easier scanning) is attached alongside it.
     expect(bgStatsCall.files).toHaveLength(1);
@@ -430,7 +876,7 @@ describe('lockAndScheduleEvent', () => {
     await upsertGame({
       id: 'game1', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm1', guildId: 'guild-1',
       bggId: '1', title: 'Wingspan', bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
-      minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: ['p1'], waitlist: [],
+      minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: ['p1', 'p2'], waitlist: [],
       createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Light',
     } as any);
     const client = makeClient();
@@ -475,7 +921,7 @@ describe('lockAndScheduleEvent', () => {
     await upsertGame({
       id: 'game1', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm1', guildId: 'guild-1',
       bggId: '1', title: 'Wingspan', bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
-      minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: ['p1'], waitlist: [],
+      minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: ['p1', 'p2'], waitlist: [],
       createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Light',
     } as any);
     await setBggAccount('guild-1', 'p1', 'sean_o');
@@ -487,7 +933,10 @@ describe('lockAndScheduleEvent', () => {
     const button = bgStatsCall.components[0].toJSON().components[0];
     const stored = await findShortLink(button.url.split('/s/')[1]);
     const data = JSON.parse(decodeURIComponent(stored!.url.split('?data=')[1]));
-    expect(data.players).toEqual([{ name: 'sean_o', sourcePlayerId: 'p1', winner: false, startPlayer: false }]);
+    expect(data.players).toEqual([
+      { name: 'sean_o', sourcePlayerId: 'p1', winner: false, startPlayer: false },
+      { name: 'Display-p2', sourcePlayerId: 'p2', winner: false, startPlayer: false },
+    ]);
   });
 });
 
@@ -593,5 +1042,93 @@ describe('checkPendingSchedules', () => {
     await checkPendingSchedules(client as any);
 
     expect(client._channel.send).not.toHaveBeenCalled();
+  });
+});
+
+describe('previewSchedule', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-scheduler-preview-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeGameNight(overrides: Partial<Record<string, unknown>> = {}) {
+    const start = new Date(Date.now() + 60 * 60 * 1000);
+    const end = new Date(start.getTime() + 3 * 60 * 60 * 1000);
+    return {
+      id: 'gn1',
+      title: 'Game Night',
+      date: 'Someday',
+      time: 'Sometime',
+      location: 'TBD',
+      link: '',
+      description: '',
+      messageId: '',
+      channelId: 'announcements',
+      guildId: 'guild-1',
+      discordEventId: null,
+      eventChannelId: 'event-channel-1',
+      startTimeISO: start.toISOString(),
+      endTimeISO: end.toISOString(),
+      rsvps: { yes: [], maybe: [], no: [] },
+      createdBy: 'host-1',
+      cancelled: false,
+      archived: false,
+      createdAt: new Date().toISOString(),
+      ...overrides,
+    };
+  }
+
+  function makeInteraction(channelId: string) {
+    return {
+      channelId,
+      guildId: 'guild-1',
+      deferReply: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
+    } as any;
+  }
+
+  it('shows a preview embed without locking, persisting, or posting anything', async () => {
+    const { upsertGameNight, findGameNight } = await import('../src/utils/storage');
+    const { upsertGame, findGame } = await import('../src/utils/gameStorage');
+    const gn = makeGameNight();
+    await upsertGameNight(gn as any);
+    await upsertGame({
+      id: 'game1', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm1', guildId: 'guild-1',
+      bggId: '1', title: 'Wingspan', bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
+      minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: ['p1', 'p2'], waitlist: [],
+      createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Light',
+    } as any);
+    const interaction = makeInteraction('event-channel-1');
+
+    await previewSchedule(interaction);
+
+    expect(interaction.deferReply).toHaveBeenCalledWith({ flags: expect.anything() });
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      expect.objectContaining({ embeds: expect.any(Array) }),
+    );
+
+    const updatedNight = await findGameNight('gn1');
+    expect(updatedNight?.suggestionsLocked).toBeFalsy();
+    const updatedGame = await findGame('game1');
+    expect(updatedGame?.scheduledRound).toBeUndefined();
+  });
+
+  it('replies with a clear error when run outside any event channel', async () => {
+    const { upsertGameNight } = await import('../src/utils/storage');
+    const gn = makeGameNight();
+    await upsertGameNight(gn as any);
+    const interaction = makeInteraction('some-other-channel');
+
+    await previewSchedule(interaction);
+
+    expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining("isn't an event channel"));
   });
 });

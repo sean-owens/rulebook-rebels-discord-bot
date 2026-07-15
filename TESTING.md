@@ -1749,6 +1749,8 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Set `lock_hours_before_event:0` (the default) — confirm the config summary shows "Disabled"
 - [ ] Set `table_count:2` — confirm it saves and the config summary reflects it (see 4.7 for the scheduler behavior this feeds)
 - [ ] Set `light_buffer_minutes`, `medium_buffer_minutes`, `heavy_buffer_minutes` — confirm all three save independently and appear in the config summary
+- [ ] Set `heavy_game_break_minutes:15` — confirm it saves and the config summary reflects it (see 4.7 for the scheduler behavior this feeds); set to `0` — confirm the config summary shows "Disabled"
+- [ ] Set `max_game_repeats:1` — confirm it saves and the config summary shows "1x" (see 4.7)
 - [ ] Set `post_bgstats_links:true` — confirm the config summary shows "Enabled" (see 4.7 for the behavior this feeds); set back to `false` — confirm it shows "Disabled" (the default)
 - [ ] Run `/admin event config` with no options — confirm the config summary shows "Timezone: UTC" when never configured
 - [ ] Set `timezone:America/New_York` — confirm it saves and the config summary shows "Timezone: America/New_York"
@@ -2030,23 +2032,39 @@ These features are triggered by Discord events and scheduled timers rather than 
 
 **What it does:** If `lock_hours_before_event` is set (via `/admin event config`, 3.9a — 0 disables this entirely, which is the default), the bot locks an event's game suggestions and seats that many hours before its start time, then posts a suggested schedule packing the suggested games into rounds across `table_count` parallel tables so no player is double-booked in the same round. Game durations use each game's stored playtime plus a teach/overflow buffer based on its complexity (Light/Medium/Heavy — also configurable via 3.9a). This runs on the same hourly check as archiving (4.1-4.3), plus once on bot startup.
 
+Round headers show real clock start/end times (Discord's auto-localizing `<t:...:t>` timestamp markup), computed by summing round durations from the event's start time — not just an estimated duration. A short game (under 30 minutes of raw playtime, before the complexity buffer) that shares a round with a longer game at another table opportunistically repeats to fill that table's leftover time, up to `max_game_repeats` total plays (3.9a); its table line notes the play count, e.g. "(3x)". If any one table would play two Heavy-complexity games in directly consecutive rounds, a `heavy_game_break_minutes`-long break (3.9a) is inserted before the second round — this break is global and delays every table's next round, not just the offending one. Games with exactly one seated player are pulled into a separate "Needs more players" section instead of being scheduled or counted as "Not scheduled" (this applies even if that game's own minimum player count is 1 — a behavior change from before this feature, when a 1-seated game with `minPlayers:1` would have been scheduled normally).
+
 **Prerequisites:**
 - `lock_hours_before_event` set to a non-zero value via `/admin event config` (3.9a).
-- An event with several suggested games (`/game suggest`, 1.3a), seated by more than one confirmed player each — use several test accounts so some games can be given overlapping players (to see round conflicts) and others distinct players (to see them land in the same round).
+- An event with several suggested games (`/game suggest`, 1.3a), seated by more than one confirmed player each — use several test accounts so some games can be given overlapping players (to see round conflicts) and others distinct players (to see them land in the same round). Include a mix: at least one Light/Medium/Heavy game, one game under 30 minutes playtime, two Heavy games that can land on the same table in consecutive rounds, and one game with exactly 1 seated player.
 - To trigger the lock without waiting for real time to pass, manually set a game night's `startTimeISO` in storage to fall within the configured lock window and wait for the next hourly check (or restart the bot).
 - To test the BG Stats buttons specifically, also set `post_bgstats_links:true` (3.9a), and link at least one seated test account's BGG account (`/bgg link`) so you can see the username-vs-display-name fallback in action.
 
 - [ ] With the lock threshold crossed, confirm the bot posts a "🔒 Lineup Locked" embed in the event channel listing each round's table assignments
+- [ ] Confirm round headers show real `<t:...:t>` start/end clock times, not just an estimated duration
 - [ ] Confirm two games that share a seated player never appear in the same round
 - [ ] Confirm two games with no shared players can land in the same round (up to `table_count` per round)
-- [ ] Confirm a game below its minimum player count appears under "Not scheduled" with a reason, rather than being silently dropped
-- [ ] Confirm the embed footer notes whether the estimated total fits within the event's start–end window
+- [ ] Seat a <30-min game in a round alongside a much longer game at another table — confirm its table line shows a play-count suffix like "(2x)" or "(3x)", and that the round's own duration is unaffected by the repeat
+- [ ] Confirm a short game that itself sets its round's duration (nothing else at another table runs longer) never gets a repeat
+- [ ] Set `max_game_repeats:2` (3.9a) — confirm repeats are capped at 2 even where leftover time would allow 3
+- [ ] With `heavy_game_break_minutes` set (3.9a), seat two Heavy-complexity games so they land at the same table in consecutive rounds — confirm a break note appears before the second round, and that *every* table's next round start time shifts by the break amount, not just the table that triggered it
+- [ ] Confirm two Heavy games at the same table with a non-Heavy game in between (round 1, 2, 3 respectively) do **not** trigger a break — this is a known limitation, only literally back-to-back rounds are checked
+- [ ] Seat exactly 1 player on a game — confirm it appears under a "Needs more players" section, separate from "Not scheduled", even if that game's own minimum player count is 1
+- [ ] Confirm a game below its minimum player count (with 2+ seated) appears under "Not scheduled" with a reason, rather than being silently dropped
+- [ ] Confirm the embed footer notes whether the estimated total fits within the event's start–end window, and includes any inserted break minutes in the total when present
 - [ ] After locking, run `/game suggest` in that event's channel — confirm it's rejected with a lineup-locked message instead of prompting to add a game
 - [ ] After locking, click **Join** or **Leave** on an existing game card — confirm both are rejected with the same lineup-locked message
 - [ ] After locking, click **Join Waitlist** or **Leave Waitlist** — confirm both are rejected the same way
 - [ ] Confirm an event is only locked/scheduled once — running the hourly check again after locking doesn't re-post the schedule or re-lock
 - [ ] Confirm a cancelled or already-archived event is never locked/scheduled, even past its threshold
 - [ ] Set `lock_hours_before_event` back to `0` — confirm no further events get locked, and existing unlocked events remain fully open
+
+**`/admin event preview` (dry run):**
+- [ ] Before the lock threshold is reached, run `/admin event preview` inside an event channel — confirm it shows an ephemeral embed shaped the same as a real lock's schedule embed (rounds with clock times, repeats, breaks, "Needs more players", "Not scheduled")
+- [ ] After running the preview, confirm suggestions are still unlocked — `/game suggest` still works, and Join/Leave on game cards still works normally
+- [ ] Confirm nothing is posted to the event channel itself, and no games have `scheduledRound`/`scheduledTable`/`scheduledPlayCount` set in storage after a preview
+- [ ] Run `/admin event preview` again after changing `table_count`, `heavy_game_break_minutes`, or `max_game_repeats` (3.9a) — confirm the preview reflects the new config immediately
+- [ ] Run `/admin event preview` in a channel that isn't an event channel — confirm a clear "isn't an event channel" ephemeral error instead of a crash
 
 **With `post_bgstats_links:true`:**
 - [ ] Confirm a separate message with a QR code image is posted for each *scheduled* game (not for games listed under "Not scheduled")

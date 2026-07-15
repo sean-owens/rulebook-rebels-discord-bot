@@ -32,6 +32,16 @@ export interface GuildConfig {
   // (see src/utils/bgStats.ts). Off by default — opt-in like the rest of the
   // scheduler behavior, since it posts extra messages existing servers didn't ask for.
   postBgStatsLinks: boolean;
+  // Post-placement scheduling refinements (see src/utils/scheduler.ts). Unlike most
+  // scheduler config these default to non-zero even though the feature itself is
+  // opt-in via lockHoursBeforeEvent — once a server turns scheduling on at all,
+  // these refinements should be on by default rather than silently inert.
+  // Global break inserted before a round when any one table would play two
+  // Heavy-complexity games in directly-adjacent rounds. 0 = disabled.
+  heavyGameBreakMinutes: number;
+  // Cap on total play count for a short game (<30 min raw playtime)
+  // opportunistically repeating into leftover round time. Minimum 1 (= no repeats).
+  maxGameRepeats: number;
   // /room private channels (see src/commands/room.ts).
   privateRoomCategoryName: string;
   // IANA timezone (e.g. "America/New_York") used to interpret /event
@@ -65,6 +75,8 @@ const DEFAULT_CONFIG: GuildConfig = {
   mediumBufferMinutes: 30,
   heavyBufferMinutes: 40,
   postBgStatsLinks: false,
+  heavyGameBreakMinutes: 20,
+  maxGameRepeats: 3,
   privateRoomCategoryName: 'Private Rooms',
   timezone: 'UTC',
 };

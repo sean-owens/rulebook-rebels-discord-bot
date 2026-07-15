@@ -1,4 +1,10 @@
-import { Client, EmbedBuilder, TextChannel } from 'discord.js';
+import {
+  ChatInputCommandInteraction,
+  Client,
+  EmbedBuilder,
+  MessageFlags,
+  TextChannel,
+} from 'discord.js';
 import { GameSuggestion, findGamesByChannel, upsertGame } from './gameStorage';
 import { GuildConfig, getGuildConfig } from './config';
 import { GameNight, loadGameNights, upsertGameNight } from './storage';
@@ -17,18 +23,25 @@ export function isLineupLocked(gn: Pick<GameNight, 'suggestionsLocked'>): boolea
   return gn.suggestionsLocked === true;
 }
 
+// A short game (raw playtime, before any complexity buffer) may opportunistically
+// repeat into leftover round time — see the repeat-fill pass in scheduleGames().
+const SHORT_GAME_MAX_RAW_MINUTES = 30;
+
 export interface SchedulableGame {
   id: string;
   title: string;
   minPlayers: number;
   seatedPlayers: string[];
   effectiveDurationMinutes: number;
+  rawMaxPlaytime: number;
+  complexity?: string;
 }
 
 export interface ScheduleAssignment {
   gameId: string;
   round: number; // 1-indexed
   table: number; // 1-indexed
+  playCount: number; // how many times this game is played within this round's slot
 }
 
 export interface UnscheduledGame {
@@ -36,12 +49,25 @@ export interface UnscheduledGame {
   reason: string;
 }
 
+export interface LowInterestGame {
+  gameId: string;
+  reason: string;
+}
+
 export interface ScheduleResult {
   assignments: ScheduleAssignment[];
   unscheduled: UnscheduledGame[];
+  lowInterest: LowInterestGame[];
   roundDurationsMinutes: number[]; // index 0 = round 1
+  roundBreakMinutesBefore: number[]; // index i = break minutes inserted before round i+1
   totalDurationMinutes: number;
   fitsInWindow: boolean;
+}
+
+export interface RoundClock {
+  round: number; // 1-indexed
+  startUnix: number;
+  endUnix: number;
 }
 
 export function complexityBufferMinutes(
@@ -72,7 +98,75 @@ export function toSchedulableGame(
     minPlayers: game.minPlayers,
     seatedPlayers: game.seats,
     effectiveDurationMinutes: game.maxPlaytime + complexityBufferMinutes(game.complexity, config),
+    rawMaxPlaytime: game.maxPlaytime,
+    complexity: game.complexity,
   };
+}
+
+interface RoundBin {
+  tables: (string | null)[]; // gameId per table slot
+  playersUsed: Set<string>;
+}
+
+/**
+ * Detects a table playing two Heavy-complexity games in directly-adjacent
+ * rounds and returns, per round, how many break minutes to insert beforehand.
+ *
+ * v1 limitation: only literally-adjacent round indices (r, r+1) are checked —
+ * a table idle in round r+1 with Heavy games in r and r+2 is not detected.
+ * The break is global (delays every table's next round, not just the
+ * offending one) to keep a single shared clock rather than letting one
+ * table's timeline drift independently of the others.
+ */
+function computeHeavyBreaks(
+  rounds: RoundBin[],
+  gameById: Map<string, SchedulableGame>,
+  breakMinutes: number,
+): number[] {
+  const breaks = new Array(rounds.length).fill(0);
+  if (breakMinutes <= 0) return breaks;
+
+  for (let r = 0; r < rounds.length - 1; r++) {
+    const tableCount = rounds[r].tables.length;
+    for (let t = 0; t < tableCount; t++) {
+      const a = rounds[r].tables[t];
+      const b = rounds[r + 1].tables[t];
+      if (!a || !b) continue;
+      if (gameById.get(a)?.complexity === 'Heavy' && gameById.get(b)?.complexity === 'Heavy') {
+        breaks[r + 1] = breakMinutes;
+        break;
+      }
+    }
+  }
+  return breaks;
+}
+
+/**
+ * Opportunistically fills leftover time within a table's already-decided
+ * round slot with repeat plays of that same short game — never restructures
+ * placement or extends the round's own duration, only uses time already
+ * allocated because another table's game runs longer that round.
+ */
+function applyRepeatFill(
+  assignments: ScheduleAssignment[],
+  roundDurationsMinutes: number[],
+  gameById: Map<string, SchedulableGame>,
+  maxGameRepeats: number,
+): void {
+  for (const a of assignments) {
+    a.playCount = 1;
+    const game = gameById.get(a.gameId);
+    if (!game) continue;
+    if (game.rawMaxPlaytime <= 0 || game.rawMaxPlaytime >= SHORT_GAME_MAX_RAW_MINUTES) continue;
+
+    const roundDuration = roundDurationsMinutes[a.round - 1];
+    const leftover = roundDuration - game.effectiveDurationMinutes;
+    // Repeats skip the complexity buffer — the group already knows the game.
+    if (leftover < game.rawMaxPlaytime) continue;
+
+    const extraPlays = Math.floor(leftover / game.rawMaxPlaytime);
+    a.playCount = Math.min(maxGameRepeats, 1 + extraPlays);
+  }
 }
 
 /**
@@ -90,9 +184,27 @@ export function scheduleGames(
   games: SchedulableGame[],
   tableCount: number,
   windowMinutes: number,
+  config: Pick<GuildConfig, 'heavyGameBreakMinutes' | 'maxGameRepeats'>,
 ): ScheduleResult {
+  const lowInterest: LowInterestGame[] = [];
   const unscheduled: UnscheduledGame[] = [];
-  const viable = games.filter((g) => {
+
+  // Games with exactly one seated player are unlikely to actually happen —
+  // surface them separately rather than mixing them into the round-placement
+  // path or the numeric-minimum "unscheduled" reasons below. This takes
+  // priority even over a game whose own minPlayers is 1.
+  const afterLowInterest = games.filter((g) => {
+    if (g.seatedPlayers.length === 1) {
+      lowInterest.push({
+        gameId: g.id,
+        reason: 'only 1 player interested — may not get played',
+      });
+      return false;
+    }
+    return true;
+  });
+
+  const viable = afterLowInterest.filter((g) => {
     if (g.seatedPlayers.length < g.minPlayers) {
       unscheduled.push({
         gameId: g.id,
@@ -112,11 +224,7 @@ export function scheduleGames(
     return b.seatedPlayers.length - a.seatedPlayers.length;
   });
 
-  interface Round {
-    tables: (string | null)[]; // gameId per table slot
-    playersUsed: Set<string>;
-  }
-  const rounds: Round[] = [];
+  const rounds: RoundBin[] = [];
   const assignments: ScheduleAssignment[] = [];
 
   for (const game of ordered) {
@@ -130,19 +238,19 @@ export function scheduleGames(
 
       round.tables[tableIdx] = game.id;
       game.seatedPlayers.forEach((p) => round.playersUsed.add(p));
-      assignments.push({ gameId: game.id, round: r + 1, table: tableIdx + 1 });
+      assignments.push({ gameId: game.id, round: r + 1, table: tableIdx + 1, playCount: 1 });
       placed = true;
     }
 
     if (!placed) {
-      const newRound: Round = {
+      const newRound: RoundBin = {
         tables: new Array(tableCount).fill(null),
         playersUsed: new Set(),
       };
       newRound.tables[0] = game.id;
       game.seatedPlayers.forEach((p) => newRound.playersUsed.add(p));
       rounds.push(newRound);
-      assignments.push({ gameId: game.id, round: rounds.length, table: 1 });
+      assignments.push({ gameId: game.id, round: rounds.length, table: 1, playCount: 1 });
     }
   }
 
@@ -155,24 +263,53 @@ export function scheduleGames(
         .map((gameId) => gameById.get(gameId)!.effectiveDurationMinutes),
     ),
   );
-  const totalDurationMinutes = roundDurationsMinutes.reduce((sum, m) => sum + m, 0);
+
+  const roundBreakMinutesBefore = computeHeavyBreaks(rounds, gameById, config.heavyGameBreakMinutes);
+
+  applyRepeatFill(assignments, roundDurationsMinutes, gameById, Math.max(1, config.maxGameRepeats));
+
+  const totalDurationMinutes =
+    roundDurationsMinutes.reduce((sum, m) => sum + m, 0) +
+    roundBreakMinutesBefore.reduce((sum, m) => sum + m, 0);
 
   return {
     assignments,
     unscheduled,
+    lowInterest,
     roundDurationsMinutes,
+    roundBreakMinutesBefore,
     totalDurationMinutes,
     fitsInWindow: totalDurationMinutes <= windowMinutes,
   };
 }
 
+/**
+ * Converts round durations + inserted breaks into real clock times, anchored
+ * to the event's start. Kept separate from scheduleGames() so the core
+ * placement algorithm stays free of Date/timezone concerns.
+ */
+export function computeRoundClocks(
+  result: Pick<ScheduleResult, 'roundDurationsMinutes' | 'roundBreakMinutesBefore'>,
+  eventStartISO: string,
+): RoundClock[] {
+  let cursor = Math.floor(new Date(eventStartISO).getTime() / 1000);
+  return result.roundDurationsMinutes.map((durationMin, i) => {
+    cursor += (result.roundBreakMinutesBefore[i] ?? 0) * 60;
+    const startUnix = cursor;
+    const endUnix = startUnix + durationMin * 60;
+    cursor = endUnix;
+    return { round: i + 1, startUnix, endUnix };
+  });
+}
+
 export function buildScheduleEmbed(
-  gn: Pick<GameNight, 'title'>,
+  gn: Pick<GameNight, 'title' | 'startTimeISO'>,
   games: Pick<GameSuggestion, 'id' | 'title'>[],
   result: ScheduleResult,
 ): EmbedBuilder {
   const gameById = new Map(games.map((g) => [g.id, g]));
   const roundCount = result.roundDurationsMinutes.length;
+  const clocks = computeRoundClocks(result, gn.startTimeISO);
 
   const embed = new EmbedBuilder()
     .setTitle(`🔒 Lineup Locked — ${gn.title ?? 'Game Night'}`)
@@ -182,14 +319,30 @@ export function buildScheduleEmbed(
     );
 
   for (let r = 1; r <= roundCount; r++) {
+    const clock = clocks[r - 1];
+    const breakMinutes = result.roundBreakMinutesBefore[r - 1] ?? 0;
+    const breakNote = breakMinutes > 0 ? `*⏸ ${breakMinutes}-minute break beforehand*\n` : '';
     const tablesInRound = result.assignments
       .filter((a) => a.round === r)
       .sort((a, b) => a.table - b.table)
-      .map((a) => `Table ${a.table}: **${gameById.get(a.gameId)?.title ?? 'Unknown game'}**`)
+      .map((a) => {
+        const title = gameById.get(a.gameId)?.title ?? 'Unknown game';
+        const repeatNote = a.playCount > 1 ? ` (${a.playCount}x)` : '';
+        return `Table ${a.table}: **${title}**${repeatNote}`;
+      })
       .join('\n');
     embed.addFields({
-      name: `Round ${r} (~${result.roundDurationsMinutes[r - 1]} min)`,
-      value: tablesInRound || '*(empty)*',
+      name: `Round ${r} (<t:${clock.startUnix}:t> – <t:${clock.endUnix}:t>)`,
+      value: breakNote + (tablesInRound || '*(empty)*'),
+    });
+  }
+
+  if (result.lowInterest.length > 0) {
+    embed.addFields({
+      name: 'Needs more players',
+      value: result.lowInterest
+        .map((u) => `**${gameById.get(u.gameId)?.title ?? 'Unknown game'}** — ${u.reason}`)
+        .join('\n'),
     });
   }
 
@@ -202,10 +355,12 @@ export function buildScheduleEmbed(
     });
   }
 
+  const totalBreakMinutes = result.roundBreakMinutesBefore.reduce((sum, m) => sum + m, 0);
+  const breakFooterNote = totalBreakMinutes > 0 ? ` (includes ${totalBreakMinutes} min of breaks)` : '';
   embed.setFooter({
     text: result.fitsInWindow
-      ? `Estimated total: ${result.totalDurationMinutes} min — fits within the event window`
-      : `Estimated total: ${result.totalDurationMinutes} min — may run past the event window`,
+      ? `Estimated total: ${result.totalDurationMinutes} min${breakFooterNote} — fits within the event window`
+      : `Estimated total: ${result.totalDurationMinutes} min${breakFooterNote} — may run past the event window`,
   });
 
   return embed;
@@ -229,6 +384,7 @@ async function postBgStatsButtons(
   }
 
   const assignmentByGame = new Map(result.assignments.map((a) => [a.gameId, a]));
+  const clocks = computeRoundClocks(result, gn.startTimeISO);
   const allPlayerIds = [...new Set(scheduledGames.flatMap((g) => g.seats))];
   const nameMap = await resolvePlayerNames(client, gn.guildId, allPlayerIds);
 
@@ -238,6 +394,7 @@ async function postBgStatsButtons(
 
     for (const game of scheduledGames) {
       const assignment = assignmentByGame.get(game.id)!;
+      const clock = clocks[assignment.round - 1];
       const url = buildBgStatsPlayUrl({
         gameName: game.title,
         bggId: game.bggId,
@@ -257,7 +414,7 @@ async function postBgStatsButtons(
       const embed = new EmbedBuilder()
         .setTitle(`📊 ${game.title}`)
         .setDescription(
-          `Round ${assignment.round}, Table ${assignment.table}\n` +
+          `Round ${assignment.round}, Table ${assignment.table} — <t:${clock.startUnix}:t>–<t:${clock.endUnix}:t>\n` +
             (buttonUrl
               ? 'Tap the button or scan the QR code to log this play in BG Stats.'
               : 'Scan the QR code to log this play in BG Stats (too many players for a tappable link).'),
@@ -290,6 +447,8 @@ export async function lockAndScheduleEvent(
     | 'mediumBufferMinutes'
     | 'heavyBufferMinutes'
     | 'postBgStatsLinks'
+    | 'heavyGameBreakMinutes'
+    | 'maxGameRepeats'
   >,
 ): Promise<void> {
   gn.suggestionsLocked = true;
@@ -300,7 +459,7 @@ export async function lockAndScheduleEvent(
     ? (new Date(gn.endTimeISO).getTime() - new Date(gn.startTimeISO).getTime()) / 60000
     : Number.POSITIVE_INFINITY;
 
-  const result = scheduleGames(schedulable, Math.max(1, config.scheduleTableCount), windowMinutes);
+  const result = scheduleGames(schedulable, Math.max(1, config.scheduleTableCount), windowMinutes, config);
 
   const assignmentByGame = new Map(result.assignments.map((a) => [a.gameId, a]));
   for (const game of games) {
@@ -308,6 +467,7 @@ export async function lockAndScheduleEvent(
     if (assignment) {
       game.scheduledRound = assignment.round;
       game.scheduledTable = assignment.table;
+      game.scheduledPlayCount = assignment.playCount;
       await upsertGame(game);
     }
   }
@@ -329,7 +489,7 @@ export async function lockAndScheduleEvent(
   }
 
   console.log(
-    `Locked lineup and scheduled game night ${gn.id} (${result.assignments.length} scheduled, ${result.unscheduled.length} unscheduled)`,
+    `Locked lineup and scheduled game night ${gn.id} (${result.assignments.length} scheduled, ${result.unscheduled.length} unscheduled, ${result.lowInterest.length} low interest)`,
   );
 }
 
@@ -350,4 +510,38 @@ export async function checkPendingSchedules(client: Client): Promise<void> {
 
     await lockAndScheduleEvent(client, gn, config);
   }
+}
+
+/**
+ * Admin-only dry run: computes and displays the schedule for the current
+ * event channel without locking suggestions, persisting assignments, posting
+ * to the event channel, or sending BG Stats buttons. Reuses scheduleGames()/
+ * buildScheduleEmbed() verbatim so the preview always matches what a real
+ * lock would produce.
+ */
+export async function previewSchedule(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const nights = (await loadGameNights()).filter((gn) => !gn.cancelled && !gn.archived);
+  const gn = nights.find((n) => n.eventChannelId === interaction.channelId);
+  if (!gn) {
+    await interaction.editReply("This isn't an event channel — run this inside the event's channel.");
+    return;
+  }
+
+  const config = await getGuildConfig(interaction.guildId!);
+  const games = gn.eventChannelId ? await findGamesByChannel(gn.eventChannelId) : [];
+  const schedulable = games.map((g) => toSchedulableGame(g, config));
+  const windowMinutes = gn.endTimeISO
+    ? (new Date(gn.endTimeISO).getTime() - new Date(gn.startTimeISO).getTime()) / 60000
+    : Number.POSITIVE_INFINITY;
+  const result = scheduleGames(schedulable, Math.max(1, config.scheduleTableCount), windowMinutes, config);
+
+  const embed = buildScheduleEmbed(gn, games, result)
+    .setTitle(`🔍 Schedule Preview — ${gn.title ?? 'Game Night'}`)
+    .setDescription(
+      'Dry run only — suggestions are NOT locked, nothing is saved, and nothing is posted to the event channel.',
+    );
+
+  await interaction.editReply({ embeds: [embed] });
 }

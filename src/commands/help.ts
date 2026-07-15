@@ -108,6 +108,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
               name: '🔧  /admin — Server & library configuration',
               value: [
                 '`/admin event config` — Set server-wide defaults for new events (location, time, description)',
+                '`/admin event preview` — Preview the game schedule for this event channel without locking or posting (dry run)',
                 "`/admin library clear` — Clear a specific member's entire library",
                 "`/admin library sync` — Re-sync a game's data from BoardGameGeek",
                 '`/admin library syncall` — Re-sync every game from BoardGameGeek (force:False to only fill in missing data)',

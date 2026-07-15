@@ -605,6 +605,8 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
   const mediumBufferMinutes = interaction.options.getInteger('medium_buffer_minutes');
   const heavyBufferMinutes = interaction.options.getInteger('heavy_buffer_minutes');
   const postBgStatsLinks = interaction.options.getBoolean('post_bgstats_links');
+  const heavyGameBreakMinutes = interaction.options.getInteger('heavy_game_break_minutes');
+  const maxGameRepeats = interaction.options.getInteger('max_game_repeats');
   const timezone = interaction.options.getString('timezone');
 
   if (timezone !== null && !isValidTimeZone(timezone)) {
@@ -633,6 +635,8 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
   if (mediumBufferMinutes !== null) patch.mediumBufferMinutes = mediumBufferMinutes;
   if (heavyBufferMinutes !== null) patch.heavyBufferMinutes = heavyBufferMinutes;
   if (postBgStatsLinks !== null) patch.postBgStatsLinks = postBgStatsLinks;
+  if (heavyGameBreakMinutes !== null) patch.heavyGameBreakMinutes = heavyGameBreakMinutes;
+  if (maxGameRepeats !== null) patch.maxGameRepeats = maxGameRepeats;
   if (timezone !== null) patch.timezone = timezone;
 
   function formatConfig(c: GuildConfig): string {
@@ -652,6 +656,8 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
       `> Lineup lock: ${c.lockHoursBeforeEvent === 0 ? 'Disabled' : `${c.lockHoursBeforeEvent}h before event`}`,
       `> Scheduler tables: ${c.scheduleTableCount}`,
       `> Scheduling buffers: Light +${c.lightBufferMinutes}m, Medium +${c.mediumBufferMinutes}m, Heavy +${c.heavyBufferMinutes}m`,
+      `> Heavy-game break: ${c.heavyGameBreakMinutes === 0 ? 'Disabled' : `${c.heavyGameBreakMinutes}m before back-to-back Heavy games at a table`}`,
+      `> Short-game repeat cap: ${c.maxGameRepeats}x`,
       `> BG Stats buttons on lock: ${c.postBgStatsLinks ? 'Enabled' : 'Disabled'}`,
     ].join('\n');
   }

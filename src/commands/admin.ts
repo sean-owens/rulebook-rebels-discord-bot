@@ -7,6 +7,7 @@ import {
 } from 'discord.js';
 import { loadCommandUsage } from '../utils/commandUsageStorage';
 import { handleConfig as handleEventConfig } from './gamenight';
+import { previewSchedule as handleEventPreview } from '../utils/scheduler';
 import { handleAdminLibraryClear, handleSync as handleLibrarySync, handleSyncAll as handleLibrarySyncAll } from './library';
 import { findGameNamesByPartial, loadLibraryForGuild } from '../utils/libraryStorage';
 import {
@@ -154,6 +155,31 @@ export const data = new SlashCommandBuilder()
                 'Post a "Log in BG Stats" button per scheduled game when the lineup locks (default: false)',
               )
               .setRequired(false),
+          )
+          .addIntegerOption((opt) =>
+            opt
+              .setName('heavy_game_break_minutes')
+              .setDescription(
+                'Minutes to pause before a table plays two Heavy games back-to-back (0 = disabled, default: 20)',
+              )
+              .setRequired(false)
+              .setMinValue(0),
+          )
+          .addIntegerOption((opt) =>
+            opt
+              .setName('max_game_repeats')
+              .setDescription(
+                'Cap on total plays for a short game (<30 min) repeating into leftover round time (default: 3)',
+              )
+              .setRequired(false)
+              .setMinValue(1),
+          ),
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('preview')
+          .setDescription(
+            "Preview the game schedule for this event channel without locking or posting (dry run)",
           ),
       ),
   )
@@ -378,6 +404,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     await handleUsage(interaction);
   } else if (group === 'event') {
     if (sub === 'config') await handleEventConfig(interaction);
+    else if (sub === 'preview') await handleEventPreview(interaction);
   } else if (group === 'library') {
     if (sub === 'clear') await handleAdminLibraryClear(interaction);
     else if (sub === 'sync') await handleLibrarySync(interaction);
