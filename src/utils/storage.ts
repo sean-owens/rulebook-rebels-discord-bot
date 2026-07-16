@@ -37,6 +37,9 @@ export interface GameNight {
   // Lineup lock + scheduler (see src/utils/scheduler.ts).
   suggestionsLocked?: boolean;
   scheduledAt?: string;
+  // Greeter role (see src/utils/greeters.ts) — up to 2 user IDs, set via
+  // `/host event greeters` and rotated by the host each event.
+  greeters?: string[];
 }
 
 export async function loadGameNights(): Promise<GameNight[]> {

@@ -37,6 +37,8 @@ export interface GameSuggestion {
   // How many times this game was scheduled to be played within its round's
   // time slot (opportunistic repeat-fill for short games). 1 = played once.
   scheduledPlayCount?: number;
+  // True if this game's round is projected to run past the event's end time.
+  scheduledMayNotFinish?: boolean;
 }
 
 export async function loadGames(): Promise<GameSuggestion[]> {

@@ -5,6 +5,7 @@ import {
   handleCancel as handleEventCancel,
   handleArchiveOld as handleEventArchive,
   handlePrivacy as handleEventPrivacy,
+  handleSetGreeters as handleEventSetGreeters,
 } from './gamenight';
 import { handleHostGameCancel } from './game';
 import { handleUnrequest as handleLibraryUnrequest } from './library';
@@ -136,6 +137,29 @@ export const data = new SlashCommandBuilder()
               .setDescription('true = open to everyone, false = RSVP only')
               .setRequired(true),
           ),
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('greeters')
+          .setDescription("Set (or clear) this event's greeters — restricted to Light games, never seated together")
+          .addStringOption((opt) =>
+            opt
+              .setName('id')
+              .setDescription('Game night ID (shown in the event embed footer)')
+              .setRequired(true),
+          )
+          .addUserOption((opt) =>
+            opt.setName('greeter1').setDescription('First greeter').setRequired(false),
+          )
+          .addUserOption((opt) =>
+            opt.setName('greeter2').setDescription('Second greeter (optional)').setRequired(false),
+          )
+          .addBooleanOption((opt) =>
+            opt
+              .setName('clear')
+              .setDescription("Remove this event's greeters instead of setting them")
+              .setRequired(false),
+          ),
       ),
   )
   // ── game group ────────────────────────────────────────────────────────────────
@@ -174,6 +198,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     else if (sub === 'cancel') await handleEventCancel(interaction);
     else if (sub === 'archive') await handleEventArchive(interaction);
     else if (sub === 'privacy') await handleEventPrivacy(interaction);
+    else if (sub === 'greeters') await handleEventSetGreeters(interaction);
   } else if (group === 'game') {
     if (sub === 'cancel') await handleHostGameCancel(interaction);
   } else if (group === 'library') {

@@ -483,6 +483,231 @@ describe('lineup lock enforcement', () => {
   });
 });
 
+describe('greeter restrictions', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-game-greeter-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  async function seedGreeterGame(overrides: Partial<Record<string, unknown>> = {}) {
+    const { upsertGame } = await import('../src/utils/gameStorage');
+    await upsertGameNight(makeGameNight({ id: 'gn-greeter', greeters: ['greeter-1', 'greeter-2'] }));
+    const game = {
+      id: 'game-greeter-1',
+      eventId: 'gn-greeter',
+      channelId: 'event-channel-1',
+      messageId: 'msg-1',
+      guildId: 'g1',
+      bggId: '1',
+      title: 'Some Game',
+      bggLink: '',
+      minPlayers: 1,
+      maxPlayers: 4,
+      suggestedPlayers: null,
+      minPlaytime: 30,
+      maxPlaytime: 60,
+      suggestedStartTime: null,
+      complexity: 'Medium',
+      expansions: [],
+      seats: [],
+      waitlist: [],
+      createdAt: new Date().toISOString(),
+      createdBy: 'u1',
+      ...overrides,
+    };
+    await upsertGame(game as any);
+    return game;
+  }
+
+  function makeGameButtonInteraction(userId: string) {
+    return {
+      user: { id: userId },
+      client: {},
+      reply: vi.fn(async () => {}),
+      update: vi.fn(async () => {}),
+    } as any;
+  }
+
+  it('Join is blocked for a greeter on a non-Light game', async () => {
+    const { handleGameJoin } = await import('../src/commands/game');
+    await seedGreeterGame({ complexity: 'Medium' });
+    const interaction = makeGameButtonInteraction('greeter-1');
+
+    await handleGameJoin(interaction, 'game-greeter-1');
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('Light-complexity') }),
+    );
+    expect(interaction.update).not.toHaveBeenCalled();
+  });
+
+  it('Join is blocked for a greeter on a game with unknown complexity', async () => {
+    const { handleGameJoin } = await import('../src/commands/game');
+    await seedGreeterGame({ complexity: undefined });
+    const interaction = makeGameButtonInteraction('greeter-1');
+
+    await handleGameJoin(interaction, 'game-greeter-1');
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('Light-complexity') }),
+    );
+  });
+
+  it('Join works normally for a non-greeter on the same non-Light game', async () => {
+    const { handleGameJoin } = await import('../src/commands/game');
+    await seedGreeterGame({ complexity: 'Medium' });
+    const interaction = makeGameButtonInteraction('regular-player');
+
+    await handleGameJoin(interaction, 'game-greeter-1');
+
+    expect(interaction.reply).not.toHaveBeenCalled();
+    expect(interaction.update).toHaveBeenCalled();
+  });
+
+  it('Join succeeds for a greeter on a Light game', async () => {
+    const { handleGameJoin } = await import('../src/commands/game');
+    await seedGreeterGame({ complexity: 'Light' });
+    const interaction = makeGameButtonInteraction('greeter-1');
+
+    await handleGameJoin(interaction, 'game-greeter-1');
+
+    expect(interaction.reply).not.toHaveBeenCalled();
+    expect(interaction.update).toHaveBeenCalled();
+  });
+
+  it('Join is blocked for the second greeter on a Light game the first greeter already occupies', async () => {
+    const { handleGameJoin } = await import('../src/commands/game');
+    await seedGreeterGame({ complexity: 'Light', seats: ['greeter-1'] });
+    const interaction = makeGameButtonInteraction('greeter-2');
+
+    await handleGameJoin(interaction, 'game-greeter-1');
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining("can't be on the same game") }),
+    );
+    expect(interaction.update).not.toHaveBeenCalled();
+  });
+
+  it('Join Waitlist is blocked for a greeter on a non-Light game', async () => {
+    const { handleWaitlistJoin } = await import('../src/commands/game');
+    await seedGreeterGame({
+      complexity: 'Medium',
+      seats: ['p1', 'p2', 'p3', 'p4'], // full, so waitlist join is otherwise valid
+    });
+    const interaction = makeGameButtonInteraction('greeter-1');
+
+    await handleWaitlistJoin(interaction, 'game-greeter-1');
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('Light-complexity') }),
+    );
+    expect(interaction.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('greeter restrictions — suggestion creation', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-game-greeter-suggest-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  async function seedGreeterEvent() {
+    await upsertGameNight(
+      makeGameNight({
+        id: 'gn-greeter-suggest',
+        eventChannelId: 'event-channel-1',
+        greeters: ['greeter-1', 'greeter-2'],
+        rsvps: { yes: ['greeter-1', 'regular-player'], maybe: [], no: [] },
+      }),
+    );
+  }
+
+  // A game the greeter owns themselves in the library, so the "owner must be
+  // attending" check (unrelated to greeters) is satisfied regardless.
+
+  it('blocks a greeter from suggesting a game with no confirmed complexity (auto-seats the suggester, so it counts as signing up)', async () => {
+    const { addGame } = await import('../src/utils/libraryStorage');
+    await seedGreeterEvent();
+    await addGame('g1', 'greeter-1', 'Mystery Game');
+
+    const interaction = makeSuggestInteraction('Mystery Game', 'event-channel-1', 'g1', 'greeter-1');
+    await execute(interaction);
+
+    expect(interaction._postedChannel.send).not.toHaveBeenCalled();
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('Light-complexity') }),
+    );
+  });
+
+  it('blocks a greeter from suggesting a Medium-complexity game', async () => {
+    const { addGame } = await import('../src/utils/libraryStorage');
+    const { upsertGameInfo } = await import('../src/utils/libraryStorage');
+    await seedGreeterEvent();
+    await addGame('g1', 'greeter-1', 'Heavy Strategy Game');
+    await upsertGameInfo({
+      gameName: 'Heavy Strategy Game',
+      complexity: 'Medium',
+      updatedAt: new Date().toISOString(),
+    });
+
+    const interaction = makeSuggestInteraction('Heavy Strategy Game', 'event-channel-1', 'g1', 'greeter-1');
+    await execute(interaction);
+
+    expect(interaction._postedChannel.send).not.toHaveBeenCalled();
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('Light-complexity') }),
+    );
+  });
+
+  it('allows a greeter to suggest a Light-complexity game', async () => {
+    const { addGame, upsertGameInfo } = await import('../src/utils/libraryStorage');
+    await seedGreeterEvent();
+    await addGame('g1', 'greeter-1', 'Simple Card Game');
+    await upsertGameInfo({
+      gameName: 'Simple Card Game',
+      complexity: 'Light',
+      updatedAt: new Date().toISOString(),
+    });
+
+    const interaction = makeSuggestInteraction('Simple Card Game', 'event-channel-1', 'g1', 'greeter-1');
+    await execute(interaction);
+
+    expect(interaction._postedChannel.send).toHaveBeenCalled();
+  });
+
+  it('does not restrict a non-greeter suggesting the same Medium game', async () => {
+    const { addGame, upsertGameInfo } = await import('../src/utils/libraryStorage');
+    await seedGreeterEvent();
+    await addGame('g1', 'regular-player', 'Heavy Strategy Game');
+    await upsertGameInfo({
+      gameName: 'Heavy Strategy Game',
+      complexity: 'Medium',
+      updatedAt: new Date().toISOString(),
+    });
+
+    const interaction = makeSuggestInteraction('Heavy Strategy Game', 'event-channel-1', 'g1', 'regular-player');
+    await execute(interaction);
+
+    expect(interaction._postedChannel.send).toHaveBeenCalled();
+  });
+});
+
 describe('/game suggest — inside a private room', () => {
   let tmpDir: string;
   let cwdSpy: ReturnType<typeof vi.spyOn>;

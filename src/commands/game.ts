@@ -39,6 +39,7 @@ import {
 import { buildGameEmbed, buildGameButtons, buildBggAttachment } from '../utils/gameEmbeds';
 import { loadGameNights, findGameNight, GameNight } from '../utils/storage';
 import { isLineupLocked, LOCK_MESSAGE } from '../utils/scheduler';
+import { greeterSeatViolation } from '../utils/greeters';
 import { findRoomByChannel, PrivateRoom } from '../utils/roomStorage';
 import {
   findGamesByName,
@@ -1018,6 +1019,13 @@ async function postLibraryGame(
     info = (await getGameInfo(gameName)) ?? info;
   }
 
+  const complexity = info?.complexity ?? undefined;
+  const violation = greeterSeatViolation(gameNight, { complexity, seats: [], waitlist: [] }, interaction.user.id);
+  if (violation) {
+    await interaction.editReply({ content: violation, components: [] });
+    return;
+  }
+
   const minPlayers = info?.minPlayers ?? 2;
   const maxPlayers = info?.maxPlayers ?? 4;
   const playTime = info?.playTime ?? 60;
@@ -1042,7 +1050,7 @@ async function postLibraryGame(
     maxPlaytime: playTime,
     suggestedStartTime: null,
     tags: info?.tags ?? [],
-    complexity: info?.complexity ?? undefined,
+    complexity,
     howToPlayUrl: info?.howToPlayUrl ?? null,
     thumbnail: info?.thumbnail ?? null,
     expansions,
@@ -1372,6 +1380,13 @@ export async function handleGameJoin(
   }
 
   const userId = interaction.user.id;
+  if (gameNight) {
+    const violation = greeterSeatViolation(gameNight, game, userId);
+    if (violation) {
+      await interaction.reply({ content: violation, flags: MessageFlags.Ephemeral });
+      return;
+    }
+  }
   if (game.seats.includes(userId)) {
     await interaction.reply({ content: "You're already in this game.", flags: MessageFlags.Ephemeral });
     return;
@@ -1456,6 +1471,13 @@ export async function handleWaitlistJoin(
   const userId = interaction.user.id;
   const waitlist = game.waitlist ?? [];
 
+  if (gameNight) {
+    const violation = greeterSeatViolation(gameNight, game, userId);
+    if (violation) {
+      await interaction.reply({ content: violation, flags: MessageFlags.Ephemeral });
+      return;
+    }
+  }
   if (game.seats.includes(userId)) {
     await interaction.reply({ content: "You're already in this game.", flags: MessageFlags.Ephemeral });
     return;
@@ -1619,6 +1641,13 @@ async function postBGGGame(
     return;
   }
 
+  const complexity = bggGame.weight != null ? weightTag(bggGame.weight) : undefined;
+  const violation = greeterSeatViolation(gameNight, { complexity, seats: [], waitlist: [] }, interaction.user.id);
+  if (violation) {
+    await interaction.editReply({ content: violation, components: [] });
+    return;
+  }
+
   const eventChannelId = gameNight.eventChannelId ?? interaction.channelId;
   const id = randomUUID().slice(0, 8);
   const game: GameSuggestion = {
@@ -1637,7 +1666,7 @@ async function postBGGGame(
     maxPlaytime: bggGame.maxPlaytime,
     suggestedStartTime: null,
     tags: bggGame.tags,
-    complexity: bggGame.weight != null ? weightTag(bggGame.weight) : undefined,
+    complexity,
     howToPlayUrl: bggGame.howToPlayUrl,
     thumbnail: bggGame.thumbnail,
     expansions: expansions.map((e) => ({ id: e.id, name: e.name }) as GameExpansion),

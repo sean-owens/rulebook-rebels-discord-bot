@@ -61,7 +61,9 @@ describe('toSchedulableGame', () => {
 describe('scheduleGames', () => {
   it('schedules a single game onto round 1, table 1', () => {
     const result = scheduleGames([makeGame({ id: 'g1' })], 2, 120, NO_REFINEMENTS);
-    expect(result.assignments).toEqual([{ gameId: 'g1', round: 1, table: 1, playCount: 1 }]);
+    expect(result.assignments).toEqual([
+      { gameId: 'g1', round: 1, table: 1, playCount: 1, mayNotFinish: false },
+    ]);
     expect(result.unscheduled).toEqual([]);
     expect(result.lowInterest).toEqual([]);
     expect(result.totalDurationMinutes).toBe(60);
@@ -433,6 +435,63 @@ describe('scheduleGames', () => {
       expect(result.roundDurationsMinutes).toEqual([90]);
     });
   });
+
+  describe('mayNotFinish flag (window overrun)', () => {
+    it('flags every game in a round whose cumulative end runs past the window', () => {
+      // Two rounds of 90 min each (no shared players -> two separate rounds
+      // needed since table_count is 1), window is only 120 min: round 1 ends
+      // at minute 90 (fits), round 2 ends at minute 180 (overruns).
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'g1', seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 90 }),
+          makeGame({ id: 'g2', seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 90 }),
+        ],
+        1,
+        120,
+        NO_REFINEMENTS,
+      );
+      const g1 = result.assignments.find((a) => a.gameId === 'g1')!;
+      const g2 = result.assignments.find((a) => a.gameId === 'g2')!;
+      expect(g1.round).toBe(1);
+      expect(g1.mayNotFinish).toBe(false);
+      expect(g2.round).toBe(2);
+      expect(g2.mayNotFinish).toBe(true);
+    });
+
+    it('does not flag anything when the whole schedule fits the window', () => {
+      const result = scheduleGames([makeGame({ id: 'g1', effectiveDurationMinutes: 60 })], 2, 120, NO_REFINEMENTS);
+      expect(result.assignments.every((a) => !a.mayNotFinish)).toBe(true);
+    });
+
+    it('never flags anything when there is no end time (window is Infinity)', () => {
+      const result = scheduleGames(
+        [makeGame({ id: 'g1', effectiveDurationMinutes: 600 })],
+        2,
+        Number.POSITIVE_INFINITY,
+        NO_REFINEMENTS,
+      );
+      expect(result.assignments.every((a) => !a.mayNotFinish)).toBe(true);
+    });
+
+    it('accounts for inserted break minutes when deciding if a round overruns', () => {
+      // Round 1: 60 min (ends at 60). Round 2: same table plays two Heavy
+      // games back-to-back so a 30-min break is inserted before round 2,
+      // pushing its end to 60 + 30 + 60 = 150 -- over a 140-min window even
+      // though the raw game durations alone (120) would have fit.
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'g1', seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 60, complexity: 'Heavy' }),
+          makeGame({ id: 'g2', seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 60, complexity: 'Heavy' }),
+        ],
+        1,
+        140,
+        { heavyGameBreakMinutes: 30, maxGameRepeats: 1 },
+      );
+      const g2 = result.assignments.find((a) => a.gameId === 'g2')!;
+      expect(g2.round).toBe(2);
+      expect(g2.mayNotFinish).toBe(true);
+    });
+  });
 });
 
 describe('computeRoundClocks', () => {
@@ -478,8 +537,8 @@ describe('buildScheduleEmbed', () => {
   it('lists each round with real clock times and its table assignments', () => {
     const result = {
       assignments: [
-        { gameId: 'g1', round: 1, table: 1, playCount: 1 },
-        { gameId: 'g2', round: 1, table: 2, playCount: 1 },
+        { gameId: 'g1', round: 1, table: 1, playCount: 1, mayNotFinish: false },
+        { gameId: 'g2', round: 1, table: 2, playCount: 1, mayNotFinish: false },
       ],
       unscheduled: [],
       lowInterest: [],
@@ -497,9 +556,61 @@ describe('buildScheduleEmbed', () => {
     expect(data.fields![0].value).toContain('Catan');
   });
 
+  it('lists the greeters in their own field, ahead of the round fields, when the event has any', () => {
+    const gnWithGreeters = { ...gn, greeters: ['u1', 'u2'] };
+    const result = {
+      assignments: [],
+      unscheduled: [],
+      lowInterest: [],
+      roundDurationsMinutes: [],
+      roundBreakMinutesBefore: [],
+      totalDurationMinutes: 0,
+      fitsInWindow: true,
+    };
+    const embed = buildScheduleEmbed(gnWithGreeters, games, result);
+    const data = embed.toJSON();
+    expect(data.fields![0].name).toBe('🙋 Greeters');
+    expect(data.fields![0].value).toBe('<@u1> and <@u2>');
+  });
+
+  it('shows a single greeter without "and"', () => {
+    const gnWithGreeter = { ...gn, greeters: ['u1'] };
+    const result = {
+      assignments: [],
+      unscheduled: [],
+      lowInterest: [],
+      roundDurationsMinutes: [],
+      roundBreakMinutesBefore: [],
+      totalDurationMinutes: 0,
+      fitsInWindow: true,
+    };
+    const embed = buildScheduleEmbed(gnWithGreeter, games, result);
+    const data = embed.toJSON();
+    expect(data.fields![0].value).toBe('<@u1>');
+  });
+
+  it('omits the greeters field entirely when the event has none set', () => {
+    const result = {
+      assignments: [
+        { gameId: 'g1', round: 1, table: 1, playCount: 1, mayNotFinish: false },
+      ],
+      unscheduled: [],
+      lowInterest: [],
+      roundDurationsMinutes: [60],
+      roundBreakMinutesBefore: [0],
+      totalDurationMinutes: 60,
+      fitsInWindow: true,
+    };
+    const embedNoField = buildScheduleEmbed(gn, games, result);
+    expect(embedNoField.toJSON().fields!.some((f) => f.name === '🙋 Greeters')).toBe(false);
+
+    const embedEmptyArray = buildScheduleEmbed({ ...gn, greeters: [] }, games, result);
+    expect(embedEmptyArray.toJSON().fields!.some((f) => f.name === '🙋 Greeters')).toBe(false);
+  });
+
   it('notes the play count on the table line when a game repeats', () => {
     const result = {
-      assignments: [{ gameId: 'g1', round: 1, table: 1, playCount: 3 }],
+      assignments: [{ gameId: 'g1', round: 1, table: 1, playCount: 3, mayNotFinish: false }],
       unscheduled: [],
       lowInterest: [],
       roundDurationsMinutes: [90],
@@ -514,7 +625,7 @@ describe('buildScheduleEmbed', () => {
 
   it('omits the play-count suffix entirely when a game is only played once', () => {
     const result = {
-      assignments: [{ gameId: 'g1', round: 1, table: 1, playCount: 1 }],
+      assignments: [{ gameId: 'g1', round: 1, table: 1, playCount: 1, mayNotFinish: false }],
       unscheduled: [],
       lowInterest: [],
       roundDurationsMinutes: [60],
@@ -529,7 +640,7 @@ describe('buildScheduleEmbed', () => {
 
   it('shows a break note before a round that has an inserted break', () => {
     const result = {
-      assignments: [{ gameId: 'g1', round: 2, table: 1, playCount: 1 }],
+      assignments: [{ gameId: 'g1', round: 2, table: 1, playCount: 1, mayNotFinish: false }],
       unscheduled: [],
       lowInterest: [],
       roundDurationsMinutes: [60, 60],
@@ -541,6 +652,27 @@ describe('buildScheduleEmbed', () => {
     const data = embed.toJSON();
     const round2 = data.fields!.find((f) => f.name.startsWith('Round 2'))!;
     expect(round2.value).toContain('20-minute break beforehand');
+  });
+
+  it('shows a warning note on a round flagged as mayNotFinish, and omits it on others', () => {
+    const result = {
+      assignments: [
+        { gameId: 'g1', round: 1, table: 1, playCount: 1, mayNotFinish: false },
+        { gameId: 'g2', round: 2, table: 1, playCount: 1, mayNotFinish: true },
+      ],
+      unscheduled: [],
+      lowInterest: [],
+      roundDurationsMinutes: [60, 60],
+      roundBreakMinutesBefore: [0, 0],
+      totalDurationMinutes: 120,
+      fitsInWindow: false,
+    };
+    const embed = buildScheduleEmbed(gn, games, result);
+    const data = embed.toJSON();
+    const round1 = data.fields!.find((f) => f.name.startsWith('Round 1'))!;
+    const round2 = data.fields!.find((f) => f.name.startsWith('Round 2'))!;
+    expect(round1.value).not.toContain('⚠️');
+    expect(round2.value).toContain("⚠️ This round is projected to start and/or run past the event's end time");
   });
 
   it('lists low-interest games in their own section, distinct from Not scheduled', () => {
@@ -722,6 +854,7 @@ describe('lockAndScheduleEvent', () => {
     expect(game?.scheduledRound).toBe(1);
     expect(game?.scheduledTable).toBe(1);
     expect(game?.scheduledPlayCount).toBe(1);
+    expect(game?.scheduledMayNotFinish).toBe(false);
   });
 
   it('persists a higher scheduledPlayCount for a short game repeated into leftover round time', async () => {
