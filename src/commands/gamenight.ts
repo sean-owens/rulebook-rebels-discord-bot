@@ -1,5 +1,6 @@
 import {
   ChatInputCommandInteraction,
+  Client,
   SlashCommandBuilder,
   PermissionFlagsBits,
   ChannelType,
@@ -20,6 +21,9 @@ import { archiveEventChannel } from '../utils/archive';
 import { ensureGameNightTags, resolvedGameNightTag } from '../utils/gameNightTags';
 import { updateAnnouncementPin } from '../utils/pins';
 import { updateGameListPin, updateRequestPin } from '../utils/requestPin';
+import { findGamesByEvent, upsertGame, GameSuggestion } from '../utils/gameStorage';
+import { buildGameEmbed, buildGameButtons, buildBggAttachment } from '../utils/gameEmbeds';
+import { MAX_GREETERS } from '../utils/greeters';
 
 export const data = new SlashCommandBuilder()
   .setName('event')
@@ -586,6 +590,159 @@ export async function handlePrivacy(interaction: ChatInputCommandInteraction): P
   await interaction.editReply(
     `Event \`${id}\`'s channel is now ${open ? '**open to everyone**' : '**RSVP-only**'}.`,
   );
+}
+
+// Re-renders a single game's posted card (embed + buttons) after its seats/waitlist
+// were mutated outside the normal button-click flow (e.g. by the greeter reconciliation
+// below), so the live message doesn't go stale.
+async function refreshGameCard(client: Client, game: GameSuggestion): Promise<void> {
+  try {
+    const channel = (await client.channels.fetch(game.channelId)) as TextChannel;
+    const msg = await channel.messages.fetch(game.messageId);
+    const nameMap: Record<string, string> = {};
+    if (channel.guild) {
+      await Promise.all(
+        [...game.seats, ...game.waitlist].map(async (userId) => {
+          try {
+            nameMap[userId] = (await channel.guild.members.fetch(userId)).displayName;
+          } catch {
+            /* fall back to mention */
+          }
+        }),
+      );
+    }
+    await msg.edit({
+      embeds: [await buildGameEmbed(game, nameMap)],
+      files: [buildBggAttachment()],
+      components: [buildGameButtons(game.id, game.seats.length >= game.maxPlayers)],
+    });
+  } catch {
+    /* card may have been deleted */
+  }
+}
+
+// Assigning a new greeter can retroactively conflict with seats/waitlist spots they (or
+// the other greeter) already hold — see handleSetGreeters below. Rather than leaving the
+// event in an inconsistent state (a "greeter" seated on a Heavy game), this removes the
+// offending seats/waitlist spots and reports what it removed so the host can tell affected
+// players directly if needed.
+async function reconcileGreeterSeats(
+  client: Client,
+  eventId: string,
+  newGreeters: string[],
+): Promise<string[]> {
+  const notes: string[] = [];
+  if (newGreeters.length === 0) return notes;
+
+  const games = await findGamesByEvent(eventId);
+  const [keep, drop] = newGreeters; // if both greeters land on the same game, keep the first, drop the second
+
+  for (const game of games) {
+    let changed = false;
+    const nonLight = game.complexity !== 'Light';
+
+    for (const greeterId of newGreeters) {
+      if (nonLight && game.seats.includes(greeterId)) {
+        game.seats = game.seats.filter((id) => id !== greeterId);
+        notes.push(`Removed <@${greeterId}> from **${game.title}** (not a Light game)`);
+        changed = true;
+      }
+      if (nonLight && game.waitlist.includes(greeterId)) {
+        game.waitlist = game.waitlist.filter((id) => id !== greeterId);
+        notes.push(`Removed <@${greeterId}> from **${game.title}**'s waitlist (not a Light game)`);
+        changed = true;
+      }
+    }
+
+    if (drop) {
+      if (game.seats.includes(keep) && game.seats.includes(drop)) {
+        game.seats = game.seats.filter((id) => id !== drop);
+        notes.push(`Removed <@${drop}> from **${game.title}** (both greeters can't be on the same game)`);
+        changed = true;
+      }
+      if (game.waitlist.includes(keep) && game.waitlist.includes(drop)) {
+        game.waitlist = game.waitlist.filter((id) => id !== drop);
+        notes.push(`Removed <@${drop}> from **${game.title}**'s waitlist (both greeters can't be on the same game)`);
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      await upsertGame(game);
+      await refreshGameCard(client, game);
+    }
+  }
+
+  return notes;
+}
+
+export async function handleSetGreeters(interaction: ChatInputCommandInteraction): Promise<void> {
+  if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageEvents)) {
+    await interaction.reply({ content: 'Only hosts can set greeters.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const id = interaction.options.getString('id', true);
+  const gn = await findGameNight(id);
+
+  if (!gn) {
+    await interaction.reply({ content: `No event found with ID \`${id}\`.`, flags: MessageFlags.Ephemeral });
+    return;
+  }
+  if (gn.cancelled) {
+    await interaction.reply({ content: 'That event is already cancelled.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  if (gn.archived) {
+    await interaction.reply({ content: 'That event has already concluded.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const clear = interaction.options.getBoolean('clear') ?? false;
+  const greeter1 = interaction.options.getUser('greeter1');
+  const greeter2 = interaction.options.getUser('greeter2');
+
+  if (clear) {
+    gn.greeters = [];
+    await upsertGameNight(gn);
+    await interaction.reply({ content: `Greeters cleared for event \`${id}\`.`, flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  if (!greeter1) {
+    await interaction.reply({
+      content:
+        "Provide `greeter1` (and optionally `greeter2`), or set `clear:true` to remove this event's greeters.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  if (greeter2 && greeter2.id === greeter1.id) {
+    await interaction.reply({
+      content: '`greeter1` and `greeter2` must be different users.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const newGreeters = greeter2 ? [greeter1.id, greeter2.id] : [greeter1.id];
+  gn.greeters = newGreeters;
+  await upsertGameNight(gn);
+
+  const notes = await reconcileGreeterSeats(interaction.client, gn.id, newGreeters);
+  try {
+    await updateGameListPin(interaction.client, gn.id);
+  } catch {
+    /* no event channel */
+  }
+
+  const names = newGreeters.map((userId) => `<@${userId}>`).join(' and ');
+  const pairNote = newGreeters.length === MAX_GREETERS ? ", and they can't both be seated on the same game" : '';
+  const summary = `Greeters for event \`${id}\` set to ${names}. They can now only sign up for Light-complexity games${pairNote}.`;
+  const noteBlock = notes.length > 0 ? `\n\n${notes.join('\n')}` : '';
+  await interaction.editReply(`${summary}${noteBlock}`);
 }
 
 export async function handleConfig(interaction: ChatInputCommandInteraction): Promise<void> {

@@ -848,3 +848,287 @@ describe('handlePrivacy', () => {
     expect(gn?.openChannel).toBe(false);
   });
 });
+
+describe('handleSetGreeters', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-gamenight-greeters-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  async function seedGameNight(overrides: Partial<Record<string, unknown>> = {}) {
+    const { upsertGameNight } = await import('../src/utils/storage');
+    const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const gn = {
+      id: 'gn-greeters-1',
+      title: 'Board Game Bash',
+      date: 'Saturday',
+      time: '7:00 PM',
+      location: 'Library Room 1',
+      link: '',
+      description: '',
+      messageId: 'announcement-msg-1',
+      channelId: 'announcements',
+      guildId: 'guild-1',
+      discordEventId: null,
+      eventChannelId: 'event-channel-1',
+      startTimeISO: future,
+      endTimeISO: null,
+      rsvps: { yes: [], maybe: [], no: [] },
+      createdBy: 'host-1',
+      cancelled: false,
+      archived: false,
+      createdAt: new Date().toISOString(),
+      ...overrides,
+    };
+    await upsertGameNight(gn as any);
+    return gn;
+  }
+
+  async function seedGame(overrides: Partial<Record<string, unknown>> = {}) {
+    const { upsertGame } = await import('../src/utils/gameStorage');
+    const id = (overrides.id as string) ?? 'game-1';
+    const game = {
+      id,
+      eventId: 'gn-greeters-1',
+      channelId: 'event-channel-1',
+      messageId: `msg-${id}`,
+      guildId: 'guild-1',
+      bggId: '1',
+      title: `Game ${id}`,
+      bggLink: '',
+      minPlayers: 1,
+      maxPlayers: 4,
+      suggestedPlayers: null,
+      minPlaytime: 30,
+      maxPlaytime: 60,
+      suggestedStartTime: null,
+      complexity: 'Medium',
+      expansions: [],
+      seats: [],
+      waitlist: [],
+      createdAt: new Date().toISOString(),
+      createdBy: 'u1',
+      ...overrides,
+    };
+    await upsertGame(game as any);
+    return game;
+  }
+
+  function makeClientForGreeters() {
+    const messages: Record<string, { edit: ReturnType<typeof vi.fn> }> = {};
+    const guild = { members: { fetch: vi.fn(async (id: string) => ({ displayName: id })) } };
+    const channel = {
+      guild,
+      messages: {
+        fetch: vi.fn(async (msgId: string) => {
+          if (!messages[msgId]) messages[msgId] = { edit: vi.fn(async () => {}) };
+          return messages[msgId];
+        }),
+      },
+    };
+    return {
+      channels: { fetch: vi.fn(async () => channel) },
+      _channel: channel,
+      _messages: messages,
+    };
+  }
+
+  function makeGreetersInteraction(
+    options: { id: string; greeter1?: string | null; greeter2?: string | null; clear?: boolean | null },
+    client: ReturnType<typeof makeClientForGreeters>,
+  ) {
+    return {
+      guildId: 'guild-1',
+      client,
+      user: { id: 'host-2' },
+      memberPermissions: { has: () => true },
+      options: {
+        getString: (name: string) => (name === 'id' ? options.id : null),
+        getUser: (name: string) => {
+          const val = name === 'greeter1' ? options.greeter1 : name === 'greeter2' ? options.greeter2 : null;
+          return val ? { id: val } : null;
+        },
+        getBoolean: (name: string) => (name === 'clear' ? (options.clear ?? null) : null),
+      },
+      reply: vi.fn(async () => {}),
+      deferReply: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
+    } as any;
+  }
+
+  it('refuses when the invoker lacks ManageEvents', async () => {
+    const { handleSetGreeters } = await import('../src/commands/gamenight');
+    const interaction = { memberPermissions: { has: () => false }, reply: vi.fn(async () => {}) } as any;
+
+    await handleSetGreeters(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('Only hosts') }),
+    );
+  });
+
+  it('replies with an error for an unknown event id', async () => {
+    const { handleSetGreeters } = await import('../src/commands/gamenight');
+    const client = makeClientForGreeters();
+    const interaction = makeGreetersInteraction({ id: 'no-such-id', greeter1: 'u1' }, client);
+
+    await handleSetGreeters(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('No event found') }),
+    );
+  });
+
+  it('refuses for a cancelled event', async () => {
+    const { handleSetGreeters } = await import('../src/commands/gamenight');
+    await seedGameNight({ cancelled: true });
+    const client = makeClientForGreeters();
+    const interaction = makeGreetersInteraction({ id: 'gn-greeters-1', greeter1: 'u1' }, client);
+
+    await handleSetGreeters(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('already cancelled') }),
+    );
+  });
+
+  it('refuses for an archived event', async () => {
+    const { handleSetGreeters } = await import('../src/commands/gamenight');
+    await seedGameNight({ archived: true });
+    const client = makeClientForGreeters();
+    const interaction = makeGreetersInteraction({ id: 'gn-greeters-1', greeter1: 'u1' }, client);
+
+    await handleSetGreeters(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('already concluded') }),
+    );
+  });
+
+  it('errors when neither greeter1 nor clear is provided', async () => {
+    const { handleSetGreeters } = await import('../src/commands/gamenight');
+    await seedGameNight();
+    const client = makeClientForGreeters();
+    const interaction = makeGreetersInteraction({ id: 'gn-greeters-1' }, client);
+
+    await handleSetGreeters(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('Provide `greeter1`') }),
+    );
+    expect(interaction.deferReply).not.toHaveBeenCalled();
+  });
+
+  it('errors when greeter1 and greeter2 are the same user', async () => {
+    const { handleSetGreeters } = await import('../src/commands/gamenight');
+    await seedGameNight();
+    const client = makeClientForGreeters();
+    const interaction = makeGreetersInteraction({ id: 'gn-greeters-1', greeter1: 'u1', greeter2: 'u1' }, client);
+
+    await handleSetGreeters(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('must be different users') }),
+    );
+  });
+
+  it('sets a single greeter and confirms via editReply', async () => {
+    const { handleSetGreeters } = await import('../src/commands/gamenight');
+    const { findGameNight } = await import('../src/utils/storage');
+    await seedGameNight();
+    const client = makeClientForGreeters();
+    const interaction = makeGreetersInteraction({ id: 'gn-greeters-1', greeter1: 'u1' }, client);
+
+    await handleSetGreeters(interaction);
+
+    const gn = await findGameNight('gn-greeters-1');
+    expect(gn?.greeters).toEqual(['u1']);
+    expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining('<@u1>'));
+  });
+
+  it('sets two greeters', async () => {
+    const { handleSetGreeters } = await import('../src/commands/gamenight');
+    const { findGameNight } = await import('../src/utils/storage');
+    await seedGameNight();
+    const client = makeClientForGreeters();
+    const interaction = makeGreetersInteraction({ id: 'gn-greeters-1', greeter1: 'u1', greeter2: 'u2' }, client);
+
+    await handleSetGreeters(interaction);
+
+    const gn = await findGameNight('gn-greeters-1');
+    expect(gn?.greeters).toEqual(['u1', 'u2']);
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      expect.stringContaining("can't both be seated on the same game"),
+    );
+  });
+
+  it('clears greeters and replies without deferring', async () => {
+    const { handleSetGreeters } = await import('../src/commands/gamenight');
+    const { findGameNight } = await import('../src/utils/storage');
+    await seedGameNight({ greeters: ['u1', 'u2'] });
+    const client = makeClientForGreeters();
+    const interaction = makeGreetersInteraction({ id: 'gn-greeters-1', clear: true }, client);
+
+    await handleSetGreeters(interaction);
+
+    const gn = await findGameNight('gn-greeters-1');
+    expect(gn?.greeters).toEqual([]);
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('cleared') }),
+    );
+    expect(interaction.deferReply).not.toHaveBeenCalled();
+  });
+
+  it('auto-removes a newly-designated greeter from a non-Light game they already occupy, and refreshes its card', async () => {
+    const { handleSetGreeters } = await import('../src/commands/gamenight');
+    await seedGameNight();
+    await seedGame({ id: 'g-heavy', complexity: 'Heavy', seats: ['u1', 'other-player'] });
+    const client = makeClientForGreeters();
+    const interaction = makeGreetersInteraction({ id: 'gn-greeters-1', greeter1: 'u1' }, client);
+
+    await handleSetGreeters(interaction);
+
+    const { findGame } = await import('../src/utils/gameStorage');
+    const game = await findGame('g-heavy');
+    expect(game?.seats).toEqual(['other-player']);
+    expect(client._messages['msg-g-heavy'].edit).toHaveBeenCalled();
+    expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining('not a Light game'));
+  });
+
+  it('auto-removes the second greeter (keeping the first) when both already share a Light game', async () => {
+    const { handleSetGreeters } = await import('../src/commands/gamenight');
+    await seedGameNight();
+    await seedGame({ id: 'g-light', complexity: 'Light', seats: ['u1', 'u2'] });
+    const client = makeClientForGreeters();
+    const interaction = makeGreetersInteraction({ id: 'gn-greeters-1', greeter1: 'u1', greeter2: 'u2' }, client);
+
+    await handleSetGreeters(interaction);
+
+    const { findGame } = await import('../src/utils/gameStorage');
+    const game = await findGame('g-light');
+    expect(game?.seats).toEqual(['u1']);
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      expect.stringContaining("both greeters can't be on the same game"),
+    );
+  });
+
+  it('leaves unaffected games untouched (no card refresh, no note)', async () => {
+    const { handleSetGreeters } = await import('../src/commands/gamenight');
+    await seedGameNight();
+    await seedGame({ id: 'g-fine', complexity: 'Light', seats: ['other-player'] });
+    const client = makeClientForGreeters();
+    const interaction = makeGreetersInteraction({ id: 'gn-greeters-1', greeter1: 'u1' }, client);
+
+    await handleSetGreeters(interaction);
+
+    expect(client._channel.messages.fetch).not.toHaveBeenCalledWith('msg-g-fine');
+  });
+});

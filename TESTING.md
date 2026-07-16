@@ -1107,7 +1107,31 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Attempt on a cancelled or archived event — confirm the same "already cancelled"/"already concluded" errors as `/host event edit` (2.8b)
 - [ ] 👑 Attempt as a non-host — confirm "Only hosts can change an event's channel visibility" error
 
-### 2.8f `/host game cancel`
+### 2.8f `/host event greeters`
+
+**What it does:** Sets (or clears) an event's greeters — up to 2 members who rotate each event. While assigned, a greeter can only join, waitlist, or suggest Light-complexity games (unconfirmed/unknown complexity counts as not-Light and is blocked too), keeping them free to help arriving guests. If there are two greeters, they can never both be seated (or waitlisted) on the same game. Assigning a greeter who's already seated somewhere that violates these rules automatically removes them from that seat/waitlist spot (and the other greeter's seat if they're doubled up), and reports what was removed.
+
+- [ ] Run `/host event greeters id:<event-id> greeter1:@Alice` — confirm the reply confirms Alice is now a greeter, restricted to Light games
+- [ ] Run `/host event greeters id:<event-id> greeter1:@Alice greeter2:@Bob` — confirm the reply also notes they can't both be seated on the same game
+- [ ] Run `/host event greeters id:<event-id> greeter1:@Alice greeter2:@Alice` — confirm a "must be different users" error and nothing changes
+- [ ] Run `/host event greeters id:<event-id> clear:true` — confirm greeters are cleared and both members can freely join/suggest any game again
+- [ ] Run with neither `greeter1` nor `clear:true` — confirm a clear "Provide `greeter1`..." error
+- [ ] Attempt on an invalid event ID — confirm "No event found" error
+- [ ] Attempt on a cancelled or archived event — confirm the same "already cancelled"/"already concluded" errors as `/host event edit` (2.8b)
+- [ ] 👑 Attempt as a non-host — confirm "Only hosts can set greeters" error
+- [ ] With Alice already seated on a Medium/Heavy game, assign her as `greeter1` — confirm she's automatically removed from that game's seats, its posted card updates live, and the reply lists what was removed
+- [ ] With Alice already on a Medium/Heavy game's waitlist, assign her as a greeter — confirm she's removed from the waitlist too, with the same live-card update
+- [ ] With Alice and Bob both already seated together on the same Light game, assign them as `greeter1`/`greeter2` — confirm Bob (the second-listed) is removed while Alice keeps her seat, and the reply explains why
+- [ ] As a greeter, attempt to Join a Medium/Heavy game — confirm "As a greeter for this event, you can only sign up for Light-complexity games..." error and the seat is not taken
+- [ ] As a greeter, attempt to Join a game with no confirmed complexity (BGG has no weight data) — confirm the same restriction applies (unknown complexity is treated as not-Light)
+- [ ] As a greeter, Join a Light-complexity game — confirm it works normally
+- [ ] As a greeter, attempt to `/game suggest` a Medium/Heavy (or unknown-complexity) game — confirm the suggestion is rejected before it's posted, with the same Light-complexity error (suggesting auto-seats you, so it counts as signing up)
+- [ ] As a greeter, `/game suggest` a Light-complexity game — confirm it posts normally
+- [ ] With two greeters assigned, have the first Join a Light game, then have the second attempt to Join or Waitlist that same game — confirm "Both greeters can't be on the same game..." error
+- [ ] With two greeters assigned, confirm each can freely join *different* Light games at the same time
+- [ ] Confirm a regular (non-greeter) member is unaffected by any of the above restrictions
+
+### 2.8g `/host game cancel`
 
 **What it does:** Removes any game from the event lineup regardless of who suggested it. If the given title isn't an exact match, falls back to a fuzzy match against the current lineup (e.g. `catan` matches "Settlers of Catan").
 
@@ -1116,7 +1140,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] With two similarly-named games in the lineup, run `/host game cancel` with an ambiguous partial title — confirm the bot asks you to be more specific instead of guessing
 - [ ] Attempt to cancel a game not in the lineup (no exact or fuzzy match) — confirm "No game called X found" error
 
-### 2.8g `/host library unrequest`
+### 2.8h `/host library unrequest`
 
 **What it does:** Shows all game requests for an event (not just the host's own) and allows removing any of them.
 
@@ -1706,7 +1730,16 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Attempt on a cancelled or archived event — confirm the same "already cancelled"/"already concluded" errors as `/host event edit` (3.8b)
 - [ ] 👑 Attempt as a non-host — confirm "Only hosts can change an event's channel visibility" error
 
-### 3.8f `/host game cancel`
+### 3.8f `/host event greeters`
+
+**What it does:** Sets (or clears) an event's greeters — up to 2 members who rotate each event. While assigned, a greeter can only join, waitlist, or suggest Light-complexity games (unconfirmed/unknown complexity counts as not-Light and is blocked too), keeping them free to help arriving guests. If there are two greeters, they can never both be seated (or waitlisted) on the same game. Assigning a greeter who's already seated somewhere that violates these rules automatically removes them from that seat/waitlist spot (and the other greeter's seat if they're doubled up), and reports what was removed.
+
+See 2.8f for the full checklist — this Admin-tier pass just confirms Admins retain the same access Hosts have:
+
+- [ ] Run `/host event greeters id:<event-id> greeter1:@Alice greeter2:@Bob` as an Admin — confirm it works the same as for a Host
+- [ ] As a greeter, confirm the Join/Waitlist/`/game suggest` restrictions from 2.8f still apply regardless of who assigned the greeter role
+
+### 3.8g `/host game cancel`
 
 **What it does:** Removes any game from the event lineup regardless of who suggested it. If the given title isn't an exact match, falls back to a fuzzy match against the current lineup (e.g. `catan` matches "Settlers of Catan").
 
@@ -1715,7 +1748,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] With two similarly-named games in the lineup, run `/host game cancel` with an ambiguous partial title — confirm the bot asks you to be more specific instead of guessing
 - [ ] Attempt to cancel a game not in the lineup (no exact or fuzzy match) — confirm "No game called X found" error
 
-### 3.8g `/host library unrequest`
+### 3.8h `/host library unrequest`
 
 **What it does:** Shows all game requests for an event (not just the caller's own) and allows removing any of them.
 
@@ -2034,6 +2067,10 @@ These features are triggered by Discord events and scheduled timers rather than 
 
 Round headers show real clock start/end times (Discord's auto-localizing `<t:...:t>` timestamp markup), computed by summing round durations from the event's start time — not just an estimated duration. A short game (under 30 minutes of raw playtime, before the complexity buffer) that shares a round with a longer game at another table opportunistically repeats to fill that table's leftover time, up to `max_game_repeats` total plays (3.9a); its table line notes the play count, e.g. "(3x)". If any one table would play two Heavy-complexity games in directly consecutive rounds, a `heavy_game_break_minutes`-long break (3.9a) is inserted before the second round — this break is global and delays every table's next round, not just the offending one. Games with exactly one seated player are pulled into a separate "Needs more players" section instead of being scheduled or counted as "Not scheduled" (this applies even if that game's own minimum player count is 1 — a behavior change from before this feature, when a 1-seated game with `minPlayers:1` would have been scheduled normally).
 
+If a round's cumulative start time — summed from the event's start across every prior round and inserted break — runs past the event's configured end time, every game in that round gets a "⚠️ This round is projected to start and/or run past the event's end time" note in its round's field. This is a per-round check (all tables in a round share the same start/end clock), separate from the whole-schedule `fitsInWindow` check that drives the embed's overall color and footer text — a schedule can fit overall while an individual late round still gets flagged, and vice versa isn't possible (the last round's flag and the footer always agree). An event with no configured end time never shows this warning, since there's no window to run past.
+
+If the event has greeters set (`/host event greeters`, 2.8f), a "🙋 Greeters" field listing them (`@mention`s, "and"-joined for two) appears as the very first field, ahead of the round breakdown. Events with no greeters set show no such field at all.
+
 **Prerequisites:**
 - `lock_hours_before_event` set to a non-zero value via `/admin event config` (3.9a).
 - An event with several suggested games (`/game suggest`, 1.3a), seated by more than one confirmed player each — use several test accounts so some games can be given overlapping players (to see round conflicts) and others distinct players (to see them land in the same round). Include a mix: at least one Light/Medium/Heavy game, one game under 30 minutes playtime, two Heavy games that can land on the same table in consecutive rounds, and one game with exactly 1 seated player.
@@ -2041,6 +2078,8 @@ Round headers show real clock start/end times (Discord's auto-localizing `<t:...
 - To test the BG Stats buttons specifically, also set `post_bgstats_links:true` (3.9a), and link at least one seated test account's BGG account (`/bgg link`) so you can see the username-vs-display-name fallback in action.
 
 - [ ] With the lock threshold crossed, confirm the bot posts a "🔒 Lineup Locked" embed in the event channel listing each round's table assignments
+- [ ] With greeters set on the event (2.8f) before it locks, confirm the locked schedule embed's first field is "🙋 Greeters" listing them by mention, ahead of the Round 1 field
+- [ ] With no greeters set, confirm the schedule embed has no "🙋 Greeters" field at all
 - [ ] Confirm round headers show real `<t:...:t>` start/end clock times, not just an estimated duration
 - [ ] Confirm two games that share a seated player never appear in the same round
 - [ ] Confirm two games with no shared players can land in the same round (up to `table_count` per round)
@@ -2052,6 +2091,9 @@ Round headers show real clock start/end times (Discord's auto-localizing `<t:...
 - [ ] Seat exactly 1 player on a game — confirm it appears under a "Needs more players" section, separate from "Not scheduled", even if that game's own minimum player count is 1
 - [ ] Confirm a game below its minimum player count (with 2+ seated) appears under "Not scheduled" with a reason, rather than being silently dropped
 - [ ] Confirm the embed footer notes whether the estimated total fits within the event's start–end window, and includes any inserted break minutes in the total when present
+- [ ] Set up an event whose suggested games clearly overrun `end_time` (seat enough non-overlapping games, or a short `end_time`, that a later round's cumulative start pushes past it) — confirm that round (and only that round) shows the "⚠️ This round is projected to start and/or run past the event's end time" note, while earlier rounds that still fit do not
+- [ ] Confirm an inserted Heavy-game break (above) counts toward this cumulative check — a round that would fit on game time alone but is pushed over the window by the break's minutes still gets flagged
+- [ ] With no `end_time` set on the event, confirm no round is ever flagged, regardless of total length
 - [ ] After locking, run `/game suggest` in that event's channel — confirm it's rejected with a lineup-locked message instead of prompting to add a game
 - [ ] After locking, click **Join** or **Leave** on an existing game card — confirm both are rejected with the same lineup-locked message
 - [ ] After locking, click **Join Waitlist** or **Leave Waitlist** — confirm both are rejected the same way

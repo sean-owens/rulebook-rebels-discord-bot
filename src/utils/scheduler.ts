@@ -42,6 +42,10 @@ export interface ScheduleAssignment {
   round: number; // 1-indexed
   table: number; // 1-indexed
   playCount: number; // how many times this game is played within this round's slot
+  // True if this game's round is projected to start and/or run past the
+  // event's end time — a heads-up that starting it probably won't leave
+  // enough time to finish before the event wraps up.
+  mayNotFinish: boolean;
 }
 
 export interface UnscheduledGame {
@@ -238,7 +242,13 @@ export function scheduleGames(
 
       round.tables[tableIdx] = game.id;
       game.seatedPlayers.forEach((p) => round.playersUsed.add(p));
-      assignments.push({ gameId: game.id, round: r + 1, table: tableIdx + 1, playCount: 1 });
+      assignments.push({
+        gameId: game.id,
+        round: r + 1,
+        table: tableIdx + 1,
+        playCount: 1,
+        mayNotFinish: false,
+      });
       placed = true;
     }
 
@@ -250,7 +260,13 @@ export function scheduleGames(
       newRound.tables[0] = game.id;
       game.seatedPlayers.forEach((p) => newRound.playersUsed.add(p));
       rounds.push(newRound);
-      assignments.push({ gameId: game.id, round: rounds.length, table: 1, playCount: 1 });
+      assignments.push({
+        gameId: game.id,
+        round: rounds.length,
+        table: 1,
+        playCount: 1,
+        mayNotFinish: false,
+      });
     }
   }
 
@@ -265,6 +281,20 @@ export function scheduleGames(
   );
 
   const roundBreakMinutesBefore = computeHeavyBreaks(rounds, gameById, config.heavyGameBreakMinutes);
+
+  // A round "may not finish" if its own end — cumulative time from the event's
+  // start, including every break and round before it — runs past the window.
+  // Every game placed in that round is flagged, since all tables in a round
+  // share the same start/end clock (see computeRoundClocks).
+  let cursorMinutes = 0;
+  const roundExceedsWindow = roundDurationsMinutes.map((durationMin, i) => {
+    cursorMinutes += roundBreakMinutesBefore[i] ?? 0;
+    cursorMinutes += durationMin;
+    return cursorMinutes > windowMinutes;
+  });
+  for (const a of assignments) {
+    a.mayNotFinish = roundExceedsWindow[a.round - 1] ?? false;
+  }
 
   applyRepeatFill(assignments, roundDurationsMinutes, gameById, Math.max(1, config.maxGameRepeats));
 
@@ -303,7 +333,7 @@ export function computeRoundClocks(
 }
 
 export function buildScheduleEmbed(
-  gn: Pick<GameNight, 'title' | 'startTimeISO'>,
+  gn: Pick<GameNight, 'title' | 'startTimeISO' | 'greeters'>,
   games: Pick<GameSuggestion, 'id' | 'title'>[],
   result: ScheduleResult,
 ): EmbedBuilder {
@@ -318,13 +348,25 @@ export function buildScheduleEmbed(
       "Suggestions and seats are now locked. Here's a suggested schedule based on who's seated — times aren't enforced in person, just a guide to help fit everything in.",
     );
 
+  if (gn.greeters && gn.greeters.length > 0) {
+    embed.addFields({
+      name: '🙋 Greeters',
+      value: gn.greeters.map((userId) => `<@${userId}>`).join(' and '),
+    });
+  }
+
   for (let r = 1; r <= roundCount; r++) {
     const clock = clocks[r - 1];
     const breakMinutes = result.roundBreakMinutesBefore[r - 1] ?? 0;
     const breakNote = breakMinutes > 0 ? `*⏸ ${breakMinutes}-minute break beforehand*\n` : '';
-    const tablesInRound = result.assignments
+    const roundAssignments = result.assignments
       .filter((a) => a.round === r)
-      .sort((a, b) => a.table - b.table)
+      .sort((a, b) => a.table - b.table);
+    const mayNotFinish = roundAssignments.some((a) => a.mayNotFinish);
+    const lateNote = mayNotFinish
+      ? "*⚠️ This round is projected to start and/or run past the event's end time*\n"
+      : '';
+    const tablesInRound = roundAssignments
       .map((a) => {
         const title = gameById.get(a.gameId)?.title ?? 'Unknown game';
         const repeatNote = a.playCount > 1 ? ` (${a.playCount}x)` : '';
@@ -333,7 +375,7 @@ export function buildScheduleEmbed(
       .join('\n');
     embed.addFields({
       name: `Round ${r} (<t:${clock.startUnix}:t> – <t:${clock.endUnix}:t>)`,
-      value: breakNote + (tablesInRound || '*(empty)*'),
+      value: breakNote + lateNote + (tablesInRound || '*(empty)*'),
     });
   }
 
@@ -468,6 +510,7 @@ export async function lockAndScheduleEvent(
       game.scheduledRound = assignment.round;
       game.scheduledTable = assignment.table;
       game.scheduledPlayCount = assignment.playCount;
+      game.scheduledMayNotFinish = assignment.mayNotFinish;
       await upsertGame(game);
     }
   }
