@@ -43,6 +43,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
           "`mine` — List all the games you've added",
           '`list` — Browse the full library',
           '`view` — Look up a specific game',
+          '`random` — Get 3 random picks, filtered by tag/complexity — defaults to your `/myroles` preferences if set',
+          '`search` — Find games by player count, tag, duration, or complexity — also defaults to your `/myroles` preferences',
           '`edit` — Update details on one of your games (players, play time, tags, complexity)',
           '`clear` — Remove all your own games at once',
           '`request` — Request a game be brought to an event',
