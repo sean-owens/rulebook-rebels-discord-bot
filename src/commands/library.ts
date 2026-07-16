@@ -40,7 +40,7 @@ import {
   GameRequest,
 } from '../utils/libraryStorage';
 import { loadGameNights } from '../utils/storage';
-import { getGameRoles } from '../utils/gameRoles';
+import { getGameRoles, getMemberPreferences } from '../utils/gameRoles';
 import { updateRequestPin } from '../utils/requestPin';
 import AdmZip from 'adm-zip';
 import { getBGGGame, getBGGGamesBatch, BGGGame, weightTag, fetchBggOwnedCollection } from '../utils/bgg';
@@ -2653,12 +2653,23 @@ export async function handleTagsSkip(interaction: ButtonInteraction): Promise<vo
 }
 
 async function handleRandom(interaction: ChatInputCommandInteraction): Promise<void> {
-  const tags = [
+  let tags = [
     interaction.options.getString('tag'),
     interaction.options.getString('tag2'),
     interaction.options.getString('tag3'),
   ].filter((t): t is string => t !== null);
-  const complexity = interaction.options.getString('complexity') as Complexity | null;
+  let complexity = interaction.options.getString('complexity') as Complexity | null;
+
+  let personalized = false;
+  if (tags.length === 0 && !complexity) {
+    const member = await interaction.guild!.members.fetch(interaction.user.id);
+    const prefs = await getMemberPreferences(interaction.guildId!, member);
+    if (prefs.tags.length > 0 || prefs.complexity) {
+      tags = prefs.tags;
+      complexity = prefs.complexity as Complexity | null;
+      personalized = true;
+    }
+  }
 
   const library = await loadLibraryForGuild(interaction.guildId!);
   const infos = await loadGameInfos();
@@ -2711,9 +2722,10 @@ async function handleRandom(interaction: ChatInputCommandInteraction): Promise<v
   const filterLabels = [tags.length > 0 ? tags.join(' or ') : '', complexity ?? '']
     .filter(Boolean)
     .join(', ');
+  const sourceNote = personalized ? ' (from your /myroles)' : '';
   const title = fallback
-    ? `No **${filterLabels}** games found — here are 3 random picks instead`
-    : `3 Random Game${picks.length !== 3 ? '' : 's'}${filterLabels ? ` — ${filterLabels}` : ''}`;
+    ? `No **${filterLabels}**${sourceNote} games found — here are 3 random picks instead`
+    : `3 Random Game${picks.length !== 3 ? '' : 's'}${filterLabels ? ` — ${filterLabels}${sourceNote}` : ''}`;
 
   const embed = new EmbedBuilder().setTitle(title).setColor(0x5865f2);
 
@@ -2731,8 +2743,11 @@ async function handleRandom(interaction: ChatInputCommandInteraction): Promise<v
     embed.addFields({ name: pick.displayName, value });
   }
 
+  const footerTip = tags.length === 0 && !complexity
+    ? ' • Set your preferences with /myroles to get picks tailored to you'
+    : '';
   embed.setFooter({
-    text: 'Use /library view <game> for full details • Run again for different picks',
+    text: `Use /library view <game> for full details • Run again for different picks${footerTip}`,
   });
 
   await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
@@ -2747,7 +2762,7 @@ function parseInts(raw: string): number[] {
 
 async function handleSearch(interaction: ChatInputCommandInteraction): Promise<void> {
   const playersRaw = interaction.options.getString('players') ?? undefined;
-  const tags = [
+  let tags = [
     interaction.options.getString('tag'),
     interaction.options.getString('tag2'),
     interaction.options.getString('tag3'),
@@ -2755,10 +2770,21 @@ async function handleSearch(interaction: ChatInputCommandInteraction): Promise<v
   const durationRaw = interaction.options.getString('duration') ?? undefined;
   const minDuration = interaction.options.getInteger('min_duration') ?? undefined;
   const maxDuration = interaction.options.getInteger('max_duration') ?? undefined;
-  const complexity = interaction.options.getString('complexity') as Complexity | null;
+  let complexity = interaction.options.getString('complexity') as Complexity | null;
 
   const playerCounts = playersRaw ? parseInts(playersRaw) : [];
   const durations = durationRaw ? parseInts(durationRaw) : [];
+
+  let personalized = false;
+  if (tags.length === 0 && !complexity) {
+    const member = await interaction.guild!.members.fetch(interaction.user.id);
+    const prefs = await getMemberPreferences(interaction.guildId!, member);
+    if (prefs.tags.length > 0 || prefs.complexity) {
+      tags = prefs.tags;
+      complexity = prefs.complexity as Complexity | null;
+      personalized = true;
+    }
+  }
 
   if (
     playerCounts.length === 0 &&
@@ -2769,7 +2795,8 @@ async function handleSearch(interaction: ChatInputCommandInteraction): Promise<v
     !complexity
   ) {
     await interaction.reply({
-      content: 'Provide at least one valid filter: `players`, `tag`, or `duration`.',
+      content:
+        'Provide at least one valid filter: `players`, `tag`, or `duration` — or set your preferences with `/myroles` to search based on those.',
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -2839,10 +2866,10 @@ async function handleSearch(interaction: ChatInputCommandInteraction): Promise<v
       : '';
   const filterParts = [
     playerCounts.length > 0 ? `**${playerCounts.join(' or ')} players**` : '',
-    tags.length > 0 ? `tag **${tags.join(' or ')}**` : '',
+    tags.length > 0 ? `tag **${tags.join(' or ')}**${personalized ? ' (from your /myroles)' : ''}` : '',
     durations.length > 0 ? `**${durations.join(' or ')} min** (±15 min)` : '',
     durationRangePart,
-    complexity ? `**${complexity}**` : '',
+    complexity ? `**${complexity}**${personalized && tags.length === 0 ? ' (from your /myroles)' : ''}` : '',
   ]
     .filter(Boolean)
     .join(', ');

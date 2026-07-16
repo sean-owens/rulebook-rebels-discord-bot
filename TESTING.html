@@ -559,6 +559,7 @@ Everything in this group (Parts 1–4, 6) can be completed solo by one tester ho
 - [ ] 👑 Run `/help` as a regular member — confirm only user-facing command sections appear (`/event`, `/game`, `/library`, `/myroles`, `/bgg`, `/marketplace`, `/room`) with **no Host or Admin section**
 - [ ] Confirm `/game cancel` description says "Remove your own game suggestion"
 - [ ] Confirm `/library clear` description says "Remove all your own games at once"
+- [ ] Confirm the `/library` field lists `random` and `search`, both noting they default to `/myroles` preferences
 - [ ] Confirm the top description points new members to `/getting-started` for a shorter walkthrough
 - [ ] Confirm the response is ephemeral
 - [ ] 👑 Confirm `/host` and `/admin` commands are **not visible** in the Discord slash command picker
@@ -870,7 +871,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.4l `/library search`
 
-**What it does:** Searches the library with filters for player count, tags, duration, and complexity.
+**What it does:** Searches the library with filters for player count, tags, duration, and complexity. If no `tag`/`tag2`/`tag3` or `complexity` option is given, it defaults to your own `/myroles` preferences (1.5) instead of requiring you to type them every time.
 
 - [ ] `/library search players:4` — confirm results include games supporting 4 players, sorted by proximity to 4
 - [ ] `/library search players:2,4` (multiple counts) — confirm games matching either count appear
@@ -883,18 +884,22 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] `/library search min_duration:30 max_duration:60` — confirm only games within that exact range appear
 - [ ] `/library search complexity:Light` — confirm only Light games appear
 - [ ] Combine filters (e.g. `players`, `tag`, and `complexity` together) — confirm all filters apply together (AND across filter types, OR within tag1/2/3)
-- [ ] Run `/library search` with no options at all — confirm error: "Provide at least one valid filter: `players`, `tag`, or `duration`."
+- [ ] Set genre/difficulty preferences via `/myroles` (1.5), then run `/library search` with no options at all — confirm it searches using those preferences instead of erroring, and the result description notes "(from your /myroles)"
+- [ ] With `/myroles` preferences set, run `/library search tag:Party` (a tag different from your preference) — confirm the explicit tag wins over your preferences, with no "(from your /myroles)" note
+- [ ] With no `/myroles` preferences set, run `/library search` with no options at all — confirm error: "Provide at least one valid filter: `players`, `tag`, or `duration` — or set your preferences with `/myroles` to search based on those."
 - [ ] Search with valid filters but no matches — confirm "No games matched your filters"
 
 ### 1.4m `/library random`
 
-**What it does:** Picks 3 random games from the library, optionally filtered by tags and complexity.
+**What it does:** Picks 3 random games from the library, optionally filtered by tags and complexity. If no `tag`/`tag2`/`tag3` or `complexity` option is given, it defaults to your own `/myroles` preferences (1.5) instead of picking from the whole library.
 
-- [ ] `/library random` with no filters — confirm 3 random games are shown
+- [ ] `/library random` with no filters and no `/myroles` preferences set — confirm 3 fully random games are shown, with a footer tip to set `/myroles`
 - [ ] `/library random tag:Co-op` — confirm all 3 results are Co-op tagged
 - [ ] `/library random tag:Co-op tag2:Party` — confirm results match EITHER tag (OR logic across tag/tag2/tag3)
 - [ ] `/library random complexity:Light` — confirm all 3 results are Light complexity
 - [ ] `/library random tag:Co-op complexity:Heavy` — confirm results match the tag AND the complexity together
+- [ ] Set genre/difficulty preferences via `/myroles` (1.5), then run `/library random` with no options at all — confirm the title includes "(from your /myroles)" and results are filtered to those preferences
+- [ ] With `/myroles` preferences set, run `/library random complexity:Heavy` (different from your preference) — confirm the explicit complexity wins, with no "(from your /myroles)" note
 - [ ] Filter for a tag/complexity combination with no matching games — confirm it falls back to 3 unfiltered random picks with a "No `<filter>` games found — here are 3 random picks instead" title
 - [ ] Run multiple times — confirm different results each time
 
@@ -1396,7 +1401,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.4l `/library search`
 
-**What it does:** Searches the library with filters for player count, tags, duration, and complexity.
+**What it does:** Searches the library with filters for player count, tags, duration, and complexity. If no `tag`/`tag2`/`tag3` or `complexity` option is given, it defaults to your own `/myroles` preferences (2.5) instead of requiring you to type them every time.
 
 - [ ] `/library search players:4` — confirm results include games supporting 4 players, sorted by proximity to 4
 - [ ] `/library search players:2,4` (multiple counts) — confirm games matching either count appear
@@ -1409,18 +1414,22 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] `/library search min_duration:30 max_duration:60` — confirm only games within that exact range appear
 - [ ] `/library search complexity:Light` — confirm only Light games appear
 - [ ] Combine filters (e.g. `players`, `tag`, and `complexity` together) — confirm all filters apply together (AND across filter types, OR within tag1/2/3)
-- [ ] Run `/library search` with no options at all — confirm error: "Provide at least one valid filter: `players`, `tag`, or `duration`."
+- [ ] Set genre/difficulty preferences via `/myroles` (2.5), then run `/library search` with no options at all — confirm it searches using those preferences instead of erroring, and the result description notes "(from your /myroles)"
+- [ ] With `/myroles` preferences set, run `/library search tag:Party` (a tag different from your preference) — confirm the explicit tag wins over your preferences, with no "(from your /myroles)" note
+- [ ] With no `/myroles` preferences set, run `/library search` with no options at all — confirm error: "Provide at least one valid filter: `players`, `tag`, or `duration` — or set your preferences with `/myroles` to search based on those."
 - [ ] Search with valid filters but no matches — confirm "No games matched your filters"
 
 ### 2.4m `/library random`
 
-**What it does:** Picks 3 random games from the library, optionally filtered by tags and complexity.
+**What it does:** Picks 3 random games from the library, optionally filtered by tags and complexity. If no `tag`/`tag2`/`tag3` or `complexity` option is given, it defaults to your own `/myroles` preferences (2.5) instead of picking from the whole library.
 
-- [ ] `/library random` with no filters — confirm 3 random games are shown
+- [ ] `/library random` with no filters and no `/myroles` preferences set — confirm 3 fully random games are shown, with a footer tip to set `/myroles`
 - [ ] `/library random tag:Co-op` — confirm all 3 results are Co-op tagged
 - [ ] `/library random tag:Co-op tag2:Party` — confirm results match EITHER tag (OR logic across tag/tag2/tag3)
 - [ ] `/library random complexity:Light` — confirm all 3 results are Light complexity
 - [ ] `/library random tag:Co-op complexity:Heavy` — confirm results match the tag AND the complexity together
+- [ ] Set genre/difficulty preferences via `/myroles` (2.5), then run `/library random` with no options at all — confirm the title includes "(from your /myroles)" and results are filtered to those preferences
+- [ ] With `/myroles` preferences set, run `/library random complexity:Heavy` (different from your preference) — confirm the explicit complexity wins, with no "(from your /myroles)" note
 - [ ] Filter for a tag/complexity combination with no matching games — confirm it falls back to 3 unfiltered random picks with a "No `<filter>` games found — here are 3 random picks instead" title
 - [ ] Run multiple times — confirm different results each time
 
@@ -2025,7 +2034,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.4l `/library search`
 
-**What it does:** Searches the library with filters for player count, tags, duration, and complexity.
+**What it does:** Searches the library with filters for player count, tags, duration, and complexity. If no `tag`/`tag2`/`tag3` or `complexity` option is given, it defaults to your own `/myroles` preferences (3.5) instead of requiring you to type them every time.
 
 - [ ] `/library search players:4` — confirm results include games supporting 4 players, sorted by proximity to 4
 - [ ] `/library search players:2,4` (multiple counts) — confirm games matching either count appear
@@ -2038,18 +2047,22 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] `/library search min_duration:30 max_duration:60` — confirm only games within that exact range appear
 - [ ] `/library search complexity:Light` — confirm only Light games appear
 - [ ] Combine filters (e.g. `players`, `tag`, and `complexity` together) — confirm all filters apply together (AND across filter types, OR within tag1/2/3)
-- [ ] Run `/library search` with no options at all — confirm error: "Provide at least one valid filter: `players`, `tag`, or `duration`."
+- [ ] Set genre/difficulty preferences via `/myroles` (3.5), then run `/library search` with no options at all — confirm it searches using those preferences instead of erroring, and the result description notes "(from your /myroles)"
+- [ ] With `/myroles` preferences set, run `/library search tag:Party` (a tag different from your preference) — confirm the explicit tag wins over your preferences, with no "(from your /myroles)" note
+- [ ] With no `/myroles` preferences set, run `/library search` with no options at all — confirm error: "Provide at least one valid filter: `players`, `tag`, or `duration` — or set your preferences with `/myroles` to search based on those."
 - [ ] Search with valid filters but no matches — confirm "No games matched your filters"
 
 ### 3.4m `/library random`
 
-**What it does:** Picks 3 random games from the library, optionally filtered by tags and complexity.
+**What it does:** Picks 3 random games from the library, optionally filtered by tags and complexity. If no `tag`/`tag2`/`tag3` or `complexity` option is given, it defaults to your own `/myroles` preferences (3.5) instead of picking from the whole library.
 
-- [ ] `/library random` with no filters — confirm 3 random games are shown
+- [ ] `/library random` with no filters and no `/myroles` preferences set — confirm 3 fully random games are shown, with a footer tip to set `/myroles`
 - [ ] `/library random tag:Co-op` — confirm all 3 results are Co-op tagged
 - [ ] `/library random tag:Co-op tag2:Party` — confirm results match EITHER tag (OR logic across tag/tag2/tag3)
 - [ ] `/library random complexity:Light` — confirm all 3 results are Light complexity
 - [ ] `/library random tag:Co-op complexity:Heavy` — confirm results match the tag AND the complexity together
+- [ ] Set genre/difficulty preferences via `/myroles` (3.5), then run `/library random` with no options at all — confirm the title includes "(from your /myroles)" and results are filtered to those preferences
+- [ ] With `/myroles` preferences set, run `/library random complexity:Heavy` (different from your preference) — confirm the explicit complexity wins, with no "(from your /myroles)" note
 - [ ] Filter for a tag/complexity combination with no matching games — confirm it falls back to 3 unfiltered random picks with a "No `<filter>` games found — here are 3 random picks instead" title
 - [ ] Run multiple times — confirm different results each time
 
