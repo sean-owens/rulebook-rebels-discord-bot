@@ -292,6 +292,20 @@
     margin: 34px 0;
   }
 
+  /* Top-level group divider (Single-Tester vs Multi-Person) */
+  .group-divider {
+    margin: 46px 0 20px;
+    padding-top: 22px;
+    border-top: 2px solid var(--rule-strong);
+  }
+  .group-divider:first-of-type { margin-top: 30px; }
+  .group-divider h2 {
+    font-family: var(--serif);
+    font-size: 21px;
+    margin: 0;
+    color: var(--ink);
+  }
+
   /* Part banner */
   .part { scroll-margin-top: 14px; }
   .part-banner {
@@ -486,7 +500,7 @@
     <div class="hero">
       <div class="eyebrow">Manual QA · Discord Bot</div>
       <h1>Rulebook Rebels Bot — Testing Guide</h1>
-      <p>A tiered checklist for verifying bot behavior in Discord. Work through the part that matches the role you were handed — each is self-contained.</p>
+      <p>A checklist for verifying bot behavior in Discord. Solo-testable tiers (Member → Host → Admin, plus system and edge-case checks) come first, self-contained per role — multi-person flows that need a second Discord identity are grouped at the end.</p>
     </div>
     <div id="render-target"></div>
   </main>
@@ -497,16 +511,24 @@
 
 This document describes every feature in the bot and provides a checklist of test cases to verify correct behavior. All tests are performed in Discord using slash commands unless otherwise noted.
 
-The guide is organized by **permission tier** so a single tester can be handed one part and complete it end-to-end without flipping between sections:
+The guide has two top-level groups, so you know at a glance whether you can run a test alone or need to wait until a second person is around:
 
+- **🧍 Single-Tester Tests** — every one of these can be completed solo by one person with the right role. Sub-grouped by permission tier (Member → Host → Admin), plus system/automated behavior and role-agnostic edge cases.
+- **👥 Multi-Person Tests** — these genuinely cannot be completed alone, even with several test accounts on hand, because they involve live back-and-forth between two distinct Discord identities (marketplace DM negotiation) or a real join event (new member welcome). All of them live together in one place so you can knock them all out in a single sitting whenever a second tester is available. Also sub-grouped by which tier's flow needed the second person (Member-tier marketplace flows, then a System/Automated flow).
+
+**A note on the numbering:** each test still carries its original **Part N** label (Part 1 = Member, Part 2 = Host, Part 3 = Admin, Part 4 = System & Automated, Part 5 = Multi-Person, Part 6 = General Edge Cases) — that numbering is also used throughout the doc for cross-references (e.g. `(2.8a)`, `(4.7)`, `5.1a`). Those numbers reflect *what* a test is, not the order it appears in — Part 5 (multi-person) is physically placed at the very end of the document, after Part 6, so all solo-testable parts (1–4, 6) come first and stay together.
+
+Within **🧍 Single-Tester Tests**:
 - **Part 1 — Regular Member Tests**: no elevated role required.
 - **Part 2 — Host Tests**: requires the Host role (or Manage Events permission). Fully repeats Part 1 plus Host-only commands, since Hosts must retain full member-level access.
 - **Part 3 — Admin Tests**: requires the Admin role (or Manage Guild permission). Fully repeats Parts 1 and 2 plus Admin-only commands, since Admins must retain full member- and Host-level access.
 - **Part 4 — System & Automated Behavior**: features triggered by Discord events/timers rather than a slash command permission check (bot join/leave, scheduled event completion, new member join). Requires server ownership or Admin-level Discord permissions to exercise (adding/removing the bot, editing scheduled events), even though it isn't part of the slash-command tier model.
-- **Part 5 — Multi-Person Tests**: test cases that cannot be completed by a single tester alone, even with several test accounts, because they involve genuine back-and-forth between two distinct Discord identities (marketplace DM negotiation) or a real join event (new member welcome). These are pulled out of Parts 1–4 so they're not scattered through solo-testable checklists — a short pointer note is left where each one used to live.
 - **Part 6 — General Edge Cases**: role-agnostic sanity checks. Run once, regardless of which tier you're testing.
 
-Because Parts 2 and 3 repeat the tests from the tier(s) below them, the same test case appears more than once in this document — that's intentional, not a copy/paste error. It lets a tester assigned to a single tier work from one self-contained part. Where a test case was moved to Part 5 instead, the original spot has a one-line pointer rather than the checklist itself.
+Because Parts 2 and 3 repeat the tests from the tier(s) below them, the same test case appears more than once in this document — that's intentional, not a copy/paste error. It lets a tester assigned to a single tier work from one self-contained part. Where a test case needed a second person instead, the original spot (in Parts 1–4) has a one-line pointer into **👥 Multi-Person Tests** rather than the checklist itself.
+
+Within **👥 Multi-Person Tests**:
+- **Part 5 — Multi-Person Tests**: pulled out of Parts 1–4 so they're not scattered through solo-testable checklists. Grouped first by tier (5.1 is a Member-tier flow — marketplace negotiation only ever needs two regular members, no elevated role on either side; 5.2 is a System/Automated flow — a new member joining), then by which pairing you need to recruit within that.
 
 ---
 
@@ -519,6 +541,12 @@ Because Parts 2 and 3 repeat the tests from the tier(s) below them, the same tes
 - A BGG account should be linked via `/bgg link` before testing `/library import bgg`.
 - **For Part 5:** you'll need a second, distinct Discord account you can act as concurrently with your primary tester account — reusing one of the three test accounts above is fine. Discord does not allow an account to DM itself, so marketplace negotiation genuinely cannot be exercised with only one identity. For the "new member joins" case, you don't need a never-before-seen account — kicking an existing test account from the server and re-inviting it fires the same join event the welcome flow listens for.
 - 👑 marks a check that will behave differently — usually silently pass when it should fail — if run from the Discord **server owner's** account. This bot enforces its Host/Admin tiers entirely through Discord's native `Manage Events`/`Manage Server` permission bits (no custom role lookup), and Discord grants the server owner every permission implicitly and permanently, regardless of what role (if any) they're assigned. An owner account can never be used to validate a "this should be denied to non-hosts/non-admins" case — use a genuinely separate, non-owner account for anything marked 👑.
+
+---
+
+# 🧍 Single-Tester Tests
+
+Everything in this group (Parts 1–4, 6) can be completed solo by one tester holding the appropriate role — no second Discord identity needed.
 
 ---
 
@@ -616,6 +644,10 @@ All `/game` commands should be used inside an active event channel unless otherw
 #### From outside an event channel
 - [ ] Run `/game suggest title:Catan` from a non-event channel — confirm an event picker dropdown appears
 - [ ] Select an event — confirm the suggest flow continues normally
+- [ ] With multiple upcoming events, run `/game suggest` for a title that has no library match, select an event from the picker — confirm the BGG search dropdown appears next (regression: the event picker used to lose track of the typed title if it wasn't resolved as part of the same interaction, making it look like nothing happened after picking an event)
+- [ ] Same as above but with a title that **is** an exact library match — confirm the game card posts directly (with the owner listed) right after picking the event, no extra step
+- [ ] Restart/redeploy the bot between running `/game suggest` (before picking an event) and selecting an event from the picker — confirm the picker still resolves the original title correctly afterward (the title/expansion choice now travels with the dropdown itself rather than living in the bot process's memory)
+- [ ] Select an event from the picker for a lineup that has already locked (4.7) — confirm the same "lineup is locked" message you'd get from suggesting directly in that event's channel
 
 ### 1.3b `/game list`
 
@@ -627,11 +659,13 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.3c `/game cancel`
 
-**What it does:** Removes your own game suggestion from the lineup. Only the person who suggested the game can remove it via this command; hosts can remove any game via `/host game cancel`.
+**What it does:** Removes your own game suggestion from the lineup. Only the person who suggested the game can remove it via this command; hosts can remove any game via `/host game cancel`. If the given title isn't an exact match, falls back to a fuzzy match against the current lineup (e.g. `catan` matches "Settlers of Catan").
 
 - [ ] Remove your own game suggestion: `/game cancel title:Wingspan` — confirm card is deleted
+- [ ] Remove your own game suggestion using a partial/fuzzy title, e.g. `/game cancel title:catan` when "Settlers of Catan" is in the lineup — confirm it's found and removed
+- [ ] With two similarly-named games in the lineup (e.g. "Wingspan" and "Wingspan: Asia"), run `/game cancel title:wing` — confirm the bot asks you to be more specific instead of guessing, and neither game is removed
 - [ ] Attempt to remove another user's suggestion as a regular member — confirm "Only the person who suggested... can remove it. Ask a host or admin if you need it removed." error
-- [ ] Attempt to cancel a game not in the lineup — confirm "No game called X found" error
+- [ ] Attempt to cancel a game not in the lineup (no exact or fuzzy match) — confirm "No game called X found" error
 
 ### 1.3d Game Card Buttons — Join / Leave
 
@@ -660,6 +694,21 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 - [ ] After suggesting a BGG game, click **Yes, I'll bring it** — confirm game is added to your library (check with `/library mine`)
 - [ ] Click **No** — confirm the game is still in the lineup but not added to your library
+
+### 1.3g `/game bgstats`
+
+**What it does:** Generates a QR code (and, for small enough tables — or always, if `SHORT_LINK_BASE_URL` is configured, see 4.7a — a "Log in BG Stats" button) for one of the current channel's suggested games, pre-filled with that game, its seated players, and a location — useful for a one-off play (especially in `/room` private rooms, which have no automatic scheduler pass). Works the same in event channels and private rooms; anyone who can see the game card can run it, not just its creator.
+
+- [ ] With `SHORT_LINK_BASE_URL` configured (4.7a), run `/game bgstats title:Wingspan` in an event channel with players seated — confirm a public reply with a "📊 Log in BG Stats" button and a QR code image, regardless of how many players are seated
+- [ ] Confirm the button opens BG Stats (or, pasted/decoded, contains) the correct game, the event's configured location, and the seated players
+- [ ] Without `SHORT_LINK_BASE_URL` configured, run the same command — confirm the button is **omitted** (BG Stats' full payload, including the fields it requires per player/game, exceeds Discord's 512-char button limit even for a solo play) but the QR code is still present, and the reply text explains why there's no button
+- [ ] Confirm the QR code decodes to (or, via the short link, redirects to) the exact same play details the button would have used, regardless of player count
+- [ ] Scan the QR code (or tap the button) and confirm BG Stats opens the pre-filled play screen without an "Invalid data" JSON error (regression: BG Stats' Android app requires explicit `winner`, `startPlayer`, `highestWins`, and `noPoints` values, even though all four are documented as optional)
+- [ ] For a game with a BGG id, confirm BG Stats opens successfully on iOS **and** macOS/Mac Catalyst without crashing (regression: `game.bggId` was sent as a quoted JSON string instead of the number BG Stats' schema expects, which threw a Core Data type-coercion exception — crashed outright on macOS, and silently closed the app on iOS)
+- [ ] For a seated player with a linked BGG account (`/bgg link`), confirm their BGG username appears instead of their Discord display name
+- [ ] Run `/game bgstats title:Wingspan location:Sean's place` — confirm the supplied location overrides the event's default
+- [ ] Run the same command inside a `/room`-created private room with a suggested game — confirm it works identically, and that location is blank unless the `location` option is given (rooms have no location of their own)
+- [ ] Run with a title that doesn't match any suggested game — confirm a clear ephemeral "No game called... found" error listing current games
 
 ## 1.4 `/library` — Game Library
 
@@ -736,10 +785,12 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.4f `/library edit`
 
-**What it does:** Lets you update the details of a game you own (player count, play time, tags, expansions, and complexity).
+**What it does:** Lets you update the details of a game you own (player count, play time, tags, expansions, and complexity). Every field in the modal is pre-filled with its current value, so deleting a field's text and saving clears that field rather than leaving the old value in place.
 
-- [ ] `/library edit game:Wingspan` — confirm the edit modal appears
+- [ ] `/library edit game:Wingspan` — confirm the edit modal appears, pre-filled with the game's current values
 - [ ] Update player range, save — confirm updated values appear in `/library view`
+- [ ] Set an expansion you own (e.g. `Prelude`), save, then re-open `/library edit` and clear the Expansions field entirely — confirm `/library view` no longer lists any expansions
+- [ ] Clear the player range, play time, tags, and complexity fields (leave every field blank), save — confirm `/library view` shows none of those values set, rather than the previous ones
 - [ ] Set Complexity to `Medium` — confirm 🟡 icon appears in `/library list`
 - [ ] Set Complexity to `light` (lowercase) — confirm it is accepted and normalized to `Light`
 - [ ] Set Complexity to an invalid value (e.g. `Extreme`) — confirm a warning is shown and the previous value is kept
@@ -1134,6 +1185,10 @@ All `/game` commands should be used inside an active event channel unless otherw
 #### From outside an event channel
 - [ ] Run `/game suggest title:Catan` from a non-event channel — confirm an event picker dropdown appears
 - [ ] Select an event — confirm the suggest flow continues normally
+- [ ] With multiple upcoming events, run `/game suggest` for a title that has no library match, select an event from the picker — confirm the BGG search dropdown appears next (regression: the event picker used to lose track of the typed title if it wasn't resolved as part of the same interaction, making it look like nothing happened after picking an event)
+- [ ] Same as above but with a title that **is** an exact library match — confirm the game card posts directly (with the owner listed) right after picking the event, no extra step
+- [ ] Restart/redeploy the bot between running `/game suggest` (before picking an event) and selecting an event from the picker — confirm the picker still resolves the original title correctly afterward (the title/expansion choice now travels with the dropdown itself rather than living in the bot process's memory)
+- [ ] Select an event from the picker for a lineup that has already locked (4.7) — confirm the same "lineup is locked" message you'd get from suggesting directly in that event's channel
 
 ### 2.3b `/game list`
 
@@ -1145,11 +1200,13 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.3c `/game cancel`
 
-**What it does:** Removes your own game suggestion from the lineup. Only the person who suggested the game can remove it via this command; hosts can remove any game via `/host game cancel`.
+**What it does:** Removes your own game suggestion from the lineup. Only the person who suggested the game can remove it via this command; hosts can remove any game via `/host game cancel`. If the given title isn't an exact match, falls back to a fuzzy match against the current lineup (e.g. `catan` matches "Settlers of Catan").
 
 - [ ] Remove your own game suggestion: `/game cancel title:Wingspan` — confirm card is deleted
+- [ ] Remove your own game suggestion using a partial/fuzzy title, e.g. `/game cancel title:catan` when "Settlers of Catan" is in the lineup — confirm it's found and removed
+- [ ] With two similarly-named games in the lineup (e.g. "Wingspan" and "Wingspan: Asia"), run `/game cancel title:wing` — confirm the bot asks you to be more specific instead of guessing, and neither game is removed
 - [ ] Attempt to remove another user's suggestion via this command (not `/host game cancel`) — confirm "Only the person who suggested... can remove it. Ask a host or admin if you need it removed." error
-- [ ] Attempt to cancel a game not in the lineup — confirm "No game called X found" error
+- [ ] Attempt to cancel a game not in the lineup (no exact or fuzzy match) — confirm "No game called X found" error
 
 ### 2.3d Game Card Buttons — Join / Leave
 
@@ -1254,10 +1311,12 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.4f `/library edit`
 
-**What it does:** Lets you update the details of a game you own (player count, play time, tags, expansions, and complexity).
+**What it does:** Lets you update the details of a game you own (player count, play time, tags, expansions, and complexity). Every field in the modal is pre-filled with its current value, so deleting a field's text and saving clears that field rather than leaving the old value in place.
 
-- [ ] `/library edit game:Wingspan` — confirm the edit modal appears
+- [ ] `/library edit game:Wingspan` — confirm the edit modal appears, pre-filled with the game's current values
 - [ ] Update player range, save — confirm updated values appear in `/library view`
+- [ ] Set an expansion you own (e.g. `Prelude`), save, then re-open `/library edit` and clear the Expansions field entirely — confirm `/library view` no longer lists any expansions
+- [ ] Clear the player range, play time, tags, and complexity fields (leave every field blank), save — confirm `/library view` shows none of those values set, rather than the previous ones
 - [ ] Set Complexity to `Medium` — confirm 🟡 icon appears in `/library list`
 - [ ] Set Complexity to `light` (lowercase) — confirm it is accepted and normalized to `Light`
 - [ ] Set Complexity to an invalid value (e.g. `Extreme`) — confirm a warning is shown and the previous value is kept
@@ -1497,13 +1556,14 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.8a `/host event create`
 
-**What it does:** Creates a Discord scheduled event, a text channel, and posts an RSVP embed in the configured announcements channel.
+**What it does:** Creates a Discord scheduled event, a text channel, and posts an RSVP embed in the configured announcements channel. If the announcements channel is a **Forum Channel**, the event becomes a forum thread instead of a plain message, tagged "Upcoming" (see 3.9a for eager tag creation).
 
 - [ ] Create an event with required fields only: `/host event create title:Board Game Bash date:August 22 time:7pm` — confirm:
   - Discord scheduled event is created, named `Board Game Bash — <full date>`
   - A channel named `august-22-board-game-bash` appears under "Game Nights"
   - Channel topic and welcome message both reference "Board Game Bash"
   - RSVP embed is posted in the announcements channel, titled `Board Game Bash — <full date>`
+- [ ] With the announcements channel set to a Forum Channel (3.9a), create an event — confirm a new forum thread is posted with the "Upcoming" tag applied
 - [ ] Attempt to create an event without `title` — confirm Discord rejects it as a missing required option
 - [ ] Create an event with all fields (end_time, location, link, description) — confirm all appear in the embed
 - [ ] Confirm date formats work: `aug 22`, `August 22`, `august 22, 2026`
@@ -1528,28 +1588,68 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.8c `/host event cancel`
 
-**What it does:** Cancels a game night, deletes the Discord scheduled event, removes the RSVP embed, and cleans up the event channel.
+**What it does:** Cancels a game night, deletes the Discord scheduled event, removes the RSVP embed, and cleans up the event channel. If the RSVP was a forum thread, it's tagged "Cancelled" and locked/archived instead of deleted.
 
 - [ ] Cancel an event as the creator: `/host event cancel id:<event-id>` — confirm event is removed
 - [ ] Cancel an event as a host (non-creator) — confirm it works
+- [ ] With a forum announcements channel, cancel an event — confirm the forum thread is tagged "Cancelled", gets a "this event has been cancelled" message, and is locked/archived
 - [ ] Attempt to cancel with an invalid ID — confirm "No event found" error
 - [ ] Attempt to cancel an already-cancelled event — confirm "already cancelled" error
 
 ### 2.8d `/host event archive`
 
-**What it does:** Manually archives channels for all past events that haven't been archived yet.
+**What it does:** Manually archives channels for all past events that haven't been archived yet. If the RSVP was a forum thread, it's tagged "Concluded" and locked/archived.
 
 - [ ] Run `/host event archive` with no past events — confirm "No past event channels to archive"
 - [ ] Run with a past event — confirm channel moves to "Archive" category and a lock-date message is posted
+- [ ] With a forum announcements channel, archive a past event — confirm the forum thread is tagged "Concluded", gets a "this event has concluded" message, and is locked/archived
 
-### 2.8e `/host game cancel`
+### 2.8e `/host event privacy`
 
-**What it does:** Removes any game from the event lineup regardless of who suggested it.
+**What it does:** Opens or restricts a single event's channel, overriding the server-wide `open_channels` default (3.9a) for just that event — e.g. to open up a channel that was created RSVP-only, or lock down one that was created open, without changing the default for future events.
+
+- [ ] With an event created RSVP-only, run `/host event privacy id:<event-id> open:true` — confirm the channel becomes visible to everyone (no longer hidden from `@everyone`)
+- [ ] With an event created open, run `/host event privacy id:<event-id> open:false` — confirm the channel is hidden from `@everyone`, and that the event creator plus everyone currently RSVP'd Going/Maybe still has access
+- [ ] After closing an open event via `open:false`, have a new member RSVP Going — confirm they gain channel access same as any RSVP-only event (2.2b)
+- [ ] Run the same `open:true`/`open:false` value the channel is already set to — confirm a "already open to everyone"/"already RSVP-only" message and no channel changes
+- [ ] Attempt on an invalid event ID — confirm "No event found" error
+- [ ] Attempt on a cancelled or archived event — confirm the same "already cancelled"/"already concluded" errors as `/host event edit` (2.8b)
+- [ ] 👑 Attempt as a non-host — confirm "Only hosts can change an event's channel visibility" error
+
+### 2.8f `/host event greeters`
+
+**What it does:** Sets (or clears) an event's greeters — up to 2 members who rotate each event. While assigned, a greeter can only join, waitlist, or suggest Light-complexity games (unconfirmed/unknown complexity counts as not-Light and is blocked too), keeping them free to help arriving guests. If there are two greeters, they can never both be seated (or waitlisted) on the same game. Assigning a greeter who's already seated somewhere that violates these rules automatically removes them from that seat/waitlist spot (and the other greeter's seat if they're doubled up), and reports what was removed.
+
+- [ ] Run `/host event greeters id:<event-id> greeter1:@Alice` — confirm the reply confirms Alice is now a greeter, restricted to Light games
+- [ ] Run `/host event greeters id:<event-id> greeter1:@Alice greeter2:@Bob` — confirm the reply also notes they can't both be seated on the same game
+- [ ] Run `/host event greeters id:<event-id> greeter1:@Alice greeter2:@Alice` — confirm a "must be different users" error and nothing changes
+- [ ] Run `/host event greeters id:<event-id> clear:true` — confirm greeters are cleared and both members can freely join/suggest any game again
+- [ ] Run with neither `greeter1` nor `clear:true` — confirm a clear "Provide `greeter1`..." error
+- [ ] Attempt on an invalid event ID — confirm "No event found" error
+- [ ] Attempt on a cancelled or archived event — confirm the same "already cancelled"/"already concluded" errors as `/host event edit` (2.8b)
+- [ ] 👑 Attempt as a non-host — confirm "Only hosts can set greeters" error
+- [ ] With Alice already seated on a Medium/Heavy game, assign her as `greeter1` — confirm she's automatically removed from that game's seats, its posted card updates live, and the reply lists what was removed
+- [ ] With Alice already on a Medium/Heavy game's waitlist, assign her as a greeter — confirm she's removed from the waitlist too, with the same live-card update
+- [ ] With Alice and Bob both already seated together on the same Light game, assign them as `greeter1`/`greeter2` — confirm Bob (the second-listed) is removed while Alice keeps her seat, and the reply explains why
+- [ ] As a greeter, attempt to Join a Medium/Heavy game — confirm "As a greeter for this event, you can only sign up for Light-complexity games..." error and the seat is not taken
+- [ ] As a greeter, attempt to Join a game with no confirmed complexity (BGG has no weight data) — confirm the same restriction applies (unknown complexity is treated as not-Light)
+- [ ] As a greeter, Join a Light-complexity game — confirm it works normally
+- [ ] As a greeter, attempt to `/game suggest` a Medium/Heavy (or unknown-complexity) game — confirm the suggestion is rejected before it's posted, with the same Light-complexity error (suggesting auto-seats you, so it counts as signing up)
+- [ ] As a greeter, `/game suggest` a Light-complexity game — confirm it posts normally
+- [ ] With two greeters assigned, have the first Join a Light game, then have the second attempt to Join or Waitlist that same game — confirm "Both greeters can't be on the same game..." error
+- [ ] With two greeters assigned, confirm each can freely join *different* Light games at the same time
+- [ ] Confirm a regular (non-greeter) member is unaffected by any of the above restrictions
+
+### 2.8g `/host game cancel`
+
+**What it does:** Removes any game from the event lineup regardless of who suggested it. If the given title isn't an exact match, falls back to a fuzzy match against the current lineup (e.g. `catan` matches "Settlers of Catan").
 
 - [ ] Remove another user's game: `/host game cancel title:Wingspan` — confirm card is deleted
-- [ ] Attempt to cancel a game not in the lineup — confirm "No game called X found" error
+- [ ] Remove a game using a partial/fuzzy title, e.g. `/host game cancel title:catan` — confirm it's found and removed
+- [ ] With two similarly-named games in the lineup, run `/host game cancel` with an ambiguous partial title — confirm the bot asks you to be more specific instead of guessing
+- [ ] Attempt to cancel a game not in the lineup (no exact or fuzzy match) — confirm "No game called X found" error
 
-### 2.8f `/host library unrequest`
+### 2.8h `/host library unrequest`
 
 **What it does:** Shows all game requests for an event (not just the host's own) and allows removing any of them.
 
@@ -1626,7 +1726,7 @@ Admins retain full Regular Member and Host access, so this part fully repeats Pa
 
 **What it does:** Displays an ephemeral embed listing all available commands, tier-filtered to the invoking user's permissions.
 
-- [ ] Run `/help` as an admin — confirm all three sections appear: user commands, **🎙️ /host**, and **🔧 /admin**
+- [ ] Run `/help` as an admin — confirm all three sections appear: user commands, **🎙️ /host**, and **🔧 /admin**, now split across **🔧 /admin — Server & library configuration** and **🔧 /admin — Welcome, marketplace & rooms** (regression check: this used to be one field that silently exceeded Discord's 1024-character field limit and made `/help` fail with no response at all for every admin)
 - [ ] Confirm `/game cancel` description says "Remove your own game suggestion"
 - [ ] Confirm `/library clear` description says "Remove all your own games at once"
 - [ ] Confirm the response is ephemeral
@@ -1715,6 +1815,10 @@ All `/game` commands should be used inside an active event channel unless otherw
 #### From outside an event channel
 - [ ] Run `/game suggest title:Catan` from a non-event channel — confirm an event picker dropdown appears
 - [ ] Select an event — confirm the suggest flow continues normally
+- [ ] With multiple upcoming events, run `/game suggest` for a title that has no library match, select an event from the picker — confirm the BGG search dropdown appears next (regression: the event picker used to lose track of the typed title if it wasn't resolved as part of the same interaction, making it look like nothing happened after picking an event)
+- [ ] Same as above but with a title that **is** an exact library match — confirm the game card posts directly (with the owner listed) right after picking the event, no extra step
+- [ ] Restart/redeploy the bot between running `/game suggest` (before picking an event) and selecting an event from the picker — confirm the picker still resolves the original title correctly afterward (the title/expansion choice now travels with the dropdown itself rather than living in the bot process's memory)
+- [ ] Select an event from the picker for a lineup that has already locked (4.7) — confirm the same "lineup is locked" message you'd get from suggesting directly in that event's channel
 
 ### 3.3b `/game list`
 
@@ -1726,11 +1830,13 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.3c `/game cancel`
 
-**What it does:** Removes your own game suggestion from the lineup. Only the person who suggested the game can remove it via this command; hosts/admins can remove any game via `/host game cancel`.
+**What it does:** Removes your own game suggestion from the lineup. Only the person who suggested the game can remove it via this command; hosts/admins can remove any game via `/host game cancel`. If the given title isn't an exact match, falls back to a fuzzy match against the current lineup (e.g. `catan` matches "Settlers of Catan").
 
 - [ ] Remove your own game suggestion: `/game cancel title:Wingspan` — confirm card is deleted
+- [ ] Remove your own game suggestion using a partial/fuzzy title, e.g. `/game cancel title:catan` when "Settlers of Catan" is in the lineup — confirm it's found and removed
+- [ ] With two similarly-named games in the lineup (e.g. "Wingspan" and "Wingspan: Asia"), run `/game cancel title:wing` — confirm the bot asks you to be more specific instead of guessing, and neither game is removed
 - [ ] Attempt to remove another user's suggestion via this command (not `/host game cancel`) — confirm "Only the person who suggested... can remove it. Ask a host or admin if you need it removed." error
-- [ ] Attempt to cancel a game not in the lineup — confirm "No game called X found" error
+- [ ] Attempt to cancel a game not in the lineup (no exact or fuzzy match) — confirm "No game called X found" error
 
 ### 3.3d Game Card Buttons — Join / Leave
 
@@ -1835,10 +1941,12 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.4f `/library edit`
 
-**What it does:** Lets you update the details of a game you own (player count, play time, tags, expansions, and complexity).
+**What it does:** Lets you update the details of a game you own (player count, play time, tags, expansions, and complexity). Every field in the modal is pre-filled with its current value, so deleting a field's text and saving clears that field rather than leaving the old value in place.
 
-- [ ] `/library edit game:Wingspan` — confirm the edit modal appears
+- [ ] `/library edit game:Wingspan` — confirm the edit modal appears, pre-filled with the game's current values
 - [ ] Update player range, save — confirm updated values appear in `/library view`
+- [ ] Set an expansion you own (e.g. `Prelude`), save, then re-open `/library edit` and clear the Expansions field entirely — confirm `/library view` no longer lists any expansions
+- [ ] Clear the player range, play time, tags, and complexity fields (leave every field blank), save — confirm `/library view` shows none of those values set, rather than the previous ones
 - [ ] Set Complexity to `Medium` — confirm 🟡 icon appears in `/library list`
 - [ ] Set Complexity to `light` (lowercase) — confirm it is accepted and normalized to `Light`
 - [ ] Set Complexity to an invalid value (e.g. `Extreme`) — confirm a warning is shown and the previous value is kept
@@ -2071,13 +2179,14 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.8a `/host event create`
 
-**What it does:** Creates a Discord scheduled event, a text channel, and posts an RSVP embed in the configured announcements channel.
+**What it does:** Creates a Discord scheduled event, a text channel, and posts an RSVP embed in the configured announcements channel. If the announcements channel is a **Forum Channel**, the event becomes a forum thread instead of a plain message, tagged "Upcoming" (see 3.9a for eager tag creation).
 
 - [ ] Create an event with required fields only: `/host event create title:Board Game Bash date:August 22 time:7pm` — confirm:
   - Discord scheduled event is created, named `Board Game Bash — <full date>`
   - A channel named `august-22-board-game-bash` appears under "Game Nights"
   - Channel topic and welcome message both reference "Board Game Bash"
   - RSVP embed is posted in the announcements channel, titled `Board Game Bash — <full date>`
+- [ ] With the announcements channel set to a Forum Channel (3.9a), create an event — confirm a new forum thread is posted with the "Upcoming" tag applied
 - [ ] Attempt to create an event without `title` — confirm Discord rejects it as a missing required option
 - [ ] Create an event with all fields (end_time, location, link, description) — confirm all appear in the embed
 - [ ] Confirm date formats work: `aug 22`, `August 22`, `august 22, 2026`
@@ -2102,28 +2211,53 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.8c `/host event cancel`
 
-**What it does:** Cancels a game night, deletes the Discord scheduled event, removes the RSVP embed, and cleans up the event channel.
+**What it does:** Cancels a game night, deletes the Discord scheduled event, removes the RSVP embed, and cleans up the event channel. If the RSVP was a forum thread, it's tagged "Cancelled" and locked/archived instead of deleted.
 
 - [ ] Cancel an event as the creator: `/host event cancel id:<event-id>` — confirm event is removed
 - [ ] Cancel an event created by someone else — confirm it works (Admin can cancel any event)
+- [ ] With a forum announcements channel, cancel an event — confirm the forum thread is tagged "Cancelled", gets a "this event has been cancelled" message, and is locked/archived
 - [ ] Attempt to cancel with an invalid ID — confirm "No event found" error
 - [ ] Attempt to cancel an already-cancelled event — confirm "already cancelled" error
 
 ### 3.8d `/host event archive`
 
-**What it does:** Manually archives channels for all past events that haven't been archived yet.
+**What it does:** Manually archives channels for all past events that haven't been archived yet. If the RSVP was a forum thread, it's tagged "Concluded" and locked/archived.
 
 - [ ] Run `/host event archive` with no past events — confirm "No past event channels to archive"
 - [ ] Run with a past event — confirm channel moves to "Archive" category and a lock-date message is posted
+- [ ] With a forum announcements channel, archive a past event — confirm the forum thread is tagged "Concluded", gets a "this event has concluded" message, and is locked/archived
 
-### 3.8e `/host game cancel`
+### 3.8e `/host event privacy`
 
-**What it does:** Removes any game from the event lineup regardless of who suggested it.
+**What it does:** Opens or restricts a single event's channel, overriding the server-wide `open_channels` default (3.9a) for just that event — e.g. to open up a channel that was created RSVP-only, or lock down one that was created open, without changing the default for future events.
+
+- [ ] With an event created RSVP-only, run `/host event privacy id:<event-id> open:true` — confirm the channel becomes visible to everyone (no longer hidden from `@everyone`)
+- [ ] With an event created open, run `/host event privacy id:<event-id> open:false` — confirm the channel is hidden from `@everyone`, and that the event creator plus everyone currently RSVP'd Going/Maybe still has access
+- [ ] After closing an open event via `open:false`, have a new member RSVP Going — confirm they gain channel access same as any RSVP-only event (2.2b)
+- [ ] Run the same `open:true`/`open:false` value the channel is already set to — confirm a "already open to everyone"/"already RSVP-only" message and no channel changes
+- [ ] Attempt on an invalid event ID — confirm "No event found" error
+- [ ] Attempt on a cancelled or archived event — confirm the same "already cancelled"/"already concluded" errors as `/host event edit` (3.8b)
+- [ ] 👑 Attempt as a non-host — confirm "Only hosts can change an event's channel visibility" error
+
+### 3.8f `/host event greeters`
+
+**What it does:** Sets (or clears) an event's greeters — up to 2 members who rotate each event. While assigned, a greeter can only join, waitlist, or suggest Light-complexity games (unconfirmed/unknown complexity counts as not-Light and is blocked too), keeping them free to help arriving guests. If there are two greeters, they can never both be seated (or waitlisted) on the same game. Assigning a greeter who's already seated somewhere that violates these rules automatically removes them from that seat/waitlist spot (and the other greeter's seat if they're doubled up), and reports what was removed.
+
+See 2.8f for the full checklist — this Admin-tier pass just confirms Admins retain the same access Hosts have:
+
+- [ ] Run `/host event greeters id:<event-id> greeter1:@Alice greeter2:@Bob` as an Admin — confirm it works the same as for a Host
+- [ ] As a greeter, confirm the Join/Waitlist/`/game suggest` restrictions from 2.8f still apply regardless of who assigned the greeter role
+
+### 3.8g `/host game cancel`
+
+**What it does:** Removes any game from the event lineup regardless of who suggested it. If the given title isn't an exact match, falls back to a fuzzy match against the current lineup (e.g. `catan` matches "Settlers of Catan").
 
 - [ ] Remove another user's game: `/host game cancel title:Wingspan` — confirm card is deleted
-- [ ] Attempt to cancel a game not in the lineup — confirm "No game called X found" error
+- [ ] Remove a game using a partial/fuzzy title, e.g. `/host game cancel title:catan` — confirm it's found and removed
+- [ ] With two similarly-named games in the lineup, run `/host game cancel` with an ambiguous partial title — confirm the bot asks you to be more specific instead of guessing
+- [ ] Attempt to cancel a game not in the lineup (no exact or fuzzy match) — confirm "No game called X found" error
 
-### 3.8f `/host library unrequest`
+### 3.8h `/host library unrequest`
 
 **What it does:** Shows all game requests for an event (not just the caller's own) and allows removing any of them.
 
@@ -2147,6 +2281,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Set a default location: `/admin event config location:Library Room 1` — confirm it saves
 - [ ] Set a default start time: `/admin event config time:7:00 PM` — confirm it saves
 - [ ] Set an announcements channel: `/admin event config announcements:#announcements` — confirm it saves
+- [ ] Set the announcements channel to a **Forum Channel** — confirm it saves and the forum channel's tag list is eagerly populated with "Upcoming", "Cancelled", and "Concluded" tags (check the forum channel's tag settings in Discord) before any event is created
 - [ ] Set open channels to true/false — confirm it saves and new events respect the setting
 - [ ] Set event category and archive category — confirm new events and archives use the correct category
 - [ ] Set `archive_retention_days:14` — confirm it saves and the config summary shows "14 days"
@@ -2156,6 +2291,14 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Set `lock_hours_before_event:0` (the default) — confirm the config summary shows "Disabled"
 - [ ] Set `table_count:2` — confirm it saves and the config summary reflects it (see 4.7 for the scheduler behavior this feeds)
 - [ ] Set `light_buffer_minutes`, `medium_buffer_minutes`, `heavy_buffer_minutes` — confirm all three save independently and appear in the config summary
+- [ ] Set `heavy_game_break_minutes:15` — confirm it saves and the config summary reflects it (see 4.7 for the scheduler behavior this feeds); set to `0` — confirm the config summary shows "Disabled"
+- [ ] Set `max_game_repeats:1` — confirm it saves and the config summary shows "1x" (see 4.7)
+- [ ] Set `post_bgstats_links:true` — confirm the config summary shows "Enabled" (see 4.7 for the behavior this feeds); set back to `false` — confirm it shows "Disabled" (the default)
+- [ ] Run `/admin event config` with no options — confirm the config summary shows "Timezone: UTC" when never configured
+- [ ] Set `timezone:America/New_York` — confirm it saves and the config summary shows "Timezone: America/New_York"
+- [ ] Set an invalid value, e.g. `timezone:Not/A_Zone` — confirm a clear ephemeral error naming the bad value and suggesting the IANA format (e.g. `America/New_York`), and that the config is **not** changed
+- [ ] With `timezone` set to a non-UTC zone (e.g. `America/New_York`), create an event (2.8a) with a date/time — confirm the RSVP embed's Date/Time and the native Discord scheduled event ("Interested" tab) show the **same** time to you as the viewer (regression: previously the announcement text was formatted in the host server's own local timezone rather than the configured one, so it could silently disagree with the native event depending on where the bot process happened to be running)
+- [ ] Confirm the RSVP embed's Date/Time fields render as Discord's own auto-localizing timestamp (hover/click behavior, or compare against a teammate in a different timezone if available) rather than fixed text
 
 ### 3.9b `/admin library clear`
 
@@ -2231,19 +2374,22 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.9j `/admin welcome config`
 
-**What it does:** Sets the welcome channel, rules channel, and Facebook group URL for the automatic welcome message.
+**What it does:** Sets the welcome channel, rules channel, Facebook group URL, and BGG group URL for the automatic welcome message.
 
 - [ ] Run with no options — confirm current config is displayed
 - [ ] Set channel: `/admin welcome config channel:#welcome`
 - [ ] Set rules channel: `/admin welcome config rules_channel:#rules`
 - [ ] Set Facebook URL: `/admin welcome config facebook_url:https://facebook.com/groups/...`
-- [ ] Confirm all three values persist after setting them
+- [ ] Set BGG URL: `/admin welcome config bgg_url:https://boardgamegeek.com/guild/...`
+- [ ] Confirm all four values persist after setting them
 
 ### 3.9k `/admin welcome test`
 
 **What it does:** Sends the welcome message to yourself as a preview.
 
 - [ ] Run `/admin welcome test` — confirm welcome message appears in the welcome channel and a DM is sent
+- [ ] With a BGG group URL configured (3.9j), confirm the welcome embed includes a "🎲 BoardGameGeek" field linking to it
+- [ ] With no BGG group URL configured, confirm the welcome embed omits the BoardGameGeek field entirely
 
 ### 3.9l `/admin welcome greet`
 
@@ -2281,6 +2427,17 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run `/admin room config` with no options — confirm it shows the current category name
 - [ ] Run `/admin room config category:Secret Rooms` — confirm it saves and the reply reflects the new name
 - [ ] Create a room after changing the category — confirm it's placed under the newly configured category, creating it if it doesn't already exist
+
+### 3.9p `/admin usage`
+
+**What it does:** Shows, per this server, which slash commands (and subcommands) have been called and how many times, plus a count of how often each optional parameter was supplied — never the parameter values themselves. Tracking starts from whenever this feature was deployed; nothing is backfilled.
+
+- [ ] 👑 Run as non-admin — confirm "requires Manage Server permission"
+- [ ] On a server with no prior command activity since this feature was deployed, run `/admin usage` — confirm "No command usage recorded yet."
+- [ ] Run a few different commands and subcommands (e.g. `/help`, `/library add`, `/admin event config location:...`), then run `/admin usage` — confirm each shows up as its full path (e.g. `/library add`, `/admin event config`) with an accurate call count, sorted most-used first
+- [ ] For a command run with an optional parameter (e.g. `/admin event config location:...`), confirm the reply shows that parameter name and count (e.g. `location: 1`) — and confirm the actual value typed (e.g. the location text) never appears anywhere in the reply
+- [ ] Run the same command again without that optional parameter — confirm the total call count increases but the parameter's count does not
+- [ ] Confirm this is per-server: running commands on a different server the bot is in does not affect this server's counts
 
 ## 3.10 `/room` — Private Rooms
 
@@ -2348,12 +2505,13 @@ These features are triggered by Discord events and scheduled timers rather than 
 
 ## 4.1 Automatic Archiving (Event Completion)
 
-**What it does:** When a Discord scheduled event is marked as "Completed" by the server, the bot automatically archives the associated channel.
+**What it does:** When a Discord scheduled event is marked as "Completed" by the server, the bot automatically archives the associated channel. If the RSVP was a forum thread, it's tagged "Concluded" and locked/archived.
 
 - [ ] Mark a test event as completed in Discord — confirm:
   - Event channel moves to Archive category
   - Lock-date message is posted in the channel
   - Channel remains writable for 7 days
+- [ ] With a forum announcements channel, let an event auto-archive — confirm the forum thread is tagged "Concluded" and locked/archived
 
 ## 4.2 Delayed Channel Lock
 
@@ -2416,22 +2574,71 @@ These features are triggered by Discord events and scheduled timers rather than 
 
 **What it does:** If `lock_hours_before_event` is set (via `/admin event config`, 3.9a — 0 disables this entirely, which is the default), the bot locks an event's game suggestions and seats that many hours before its start time, then posts a suggested schedule packing the suggested games into rounds across `table_count` parallel tables so no player is double-booked in the same round. Game durations use each game's stored playtime plus a teach/overflow buffer based on its complexity (Light/Medium/Heavy — also configurable via 3.9a). This runs on the same hourly check as archiving (4.1-4.3), plus once on bot startup.
 
+Round headers show real clock start/end times (Discord's auto-localizing `<t:...:t>` timestamp markup), computed by summing round durations from the event's start time — not just an estimated duration. A short game (under 30 minutes of raw playtime, before the complexity buffer) that shares a round with a longer game at another table opportunistically repeats to fill that table's leftover time, up to `max_game_repeats` total plays (3.9a); its table line notes the play count, e.g. "(3x)". If any one table would play two Heavy-complexity games in directly consecutive rounds, a `heavy_game_break_minutes`-long break (3.9a) is inserted before the second round — this break is global and delays every table's next round, not just the offending one. Games with exactly one seated player are pulled into a separate "Needs more players" section instead of being scheduled or counted as "Not scheduled" (this applies even if that game's own minimum player count is 1 — a behavior change from before this feature, when a 1-seated game with `minPlayers:1` would have been scheduled normally).
+
+If a round's cumulative start time — summed from the event's start across every prior round and inserted break — runs past the event's configured end time, every game in that round gets a "⚠️ This round is projected to start and/or run past the event's end time" note in its round's field. This is a per-round check (all tables in a round share the same start/end clock), separate from the whole-schedule `fitsInWindow` check that drives the embed's overall color and footer text — a schedule can fit overall while an individual late round still gets flagged, and vice versa isn't possible (the last round's flag and the footer always agree). An event with no configured end time never shows this warning, since there's no window to run past.
+
+If the event has greeters set (`/host event greeters`, 2.8f), a "🙋 Greeters" field listing them (`@mention`s, "and"-joined for two) appears as the very first field, ahead of the round breakdown. Events with no greeters set show no such field at all.
+
 **Prerequisites:**
 - `lock_hours_before_event` set to a non-zero value via `/admin event config` (3.9a).
-- An event with several suggested games (`/game suggest`, 1.3a), seated by more than one confirmed player each — use several test accounts so some games can be given overlapping players (to see round conflicts) and others distinct players (to see them land in the same round).
+- An event with several suggested games (`/game suggest`, 1.3a), seated by more than one confirmed player each — use several test accounts so some games can be given overlapping players (to see round conflicts) and others distinct players (to see them land in the same round). Include a mix: at least one Light/Medium/Heavy game, one game under 30 minutes playtime, two Heavy games that can land on the same table in consecutive rounds, and one game with exactly 1 seated player.
 - To trigger the lock without waiting for real time to pass, manually set a game night's `startTimeISO` in storage to fall within the configured lock window and wait for the next hourly check (or restart the bot).
+- To test the BG Stats buttons specifically, also set `post_bgstats_links:true` (3.9a), and link at least one seated test account's BGG account (`/bgg link`) so you can see the username-vs-display-name fallback in action.
 
 - [ ] With the lock threshold crossed, confirm the bot posts a "🔒 Lineup Locked" embed in the event channel listing each round's table assignments
+- [ ] With greeters set on the event (2.8f) before it locks, confirm the locked schedule embed's first field is "🙋 Greeters" listing them by mention, ahead of the Round 1 field
+- [ ] With no greeters set, confirm the schedule embed has no "🙋 Greeters" field at all
+- [ ] Confirm round headers show real `<t:...:t>` start/end clock times, not just an estimated duration
 - [ ] Confirm two games that share a seated player never appear in the same round
 - [ ] Confirm two games with no shared players can land in the same round (up to `table_count` per round)
-- [ ] Confirm a game below its minimum player count appears under "Not scheduled" with a reason, rather than being silently dropped
-- [ ] Confirm the embed footer notes whether the estimated total fits within the event's start–end window
+- [ ] Seat a <30-min game in a round alongside a much longer game at another table — confirm its table line shows a play-count suffix like "(2x)" or "(3x)", and that the round's own duration is unaffected by the repeat
+- [ ] Confirm a short game that itself sets its round's duration (nothing else at another table runs longer) never gets a repeat
+- [ ] Set `max_game_repeats:2` (3.9a) — confirm repeats are capped at 2 even where leftover time would allow 3
+- [ ] With `heavy_game_break_minutes` set (3.9a), seat two Heavy-complexity games so they land at the same table in consecutive rounds — confirm a break note appears before the second round, and that *every* table's next round start time shifts by the break amount, not just the table that triggered it
+- [ ] Confirm two Heavy games at the same table with a non-Heavy game in between (round 1, 2, 3 respectively) do **not** trigger a break — this is a known limitation, only literally back-to-back rounds are checked
+- [ ] Seat exactly 1 player on a game — confirm it appears under a "Needs more players" section, separate from "Not scheduled", even if that game's own minimum player count is 1
+- [ ] Confirm a game below its minimum player count (with 2+ seated) appears under "Not scheduled" with a reason, rather than being silently dropped
+- [ ] Confirm the embed footer notes whether the estimated total fits within the event's start–end window, and includes any inserted break minutes in the total when present
+- [ ] Set up an event whose suggested games clearly overrun `end_time` (seat enough non-overlapping games, or a short `end_time`, that a later round's cumulative start pushes past it) — confirm that round (and only that round) shows the "⚠️ This round is projected to start and/or run past the event's end time" note, while earlier rounds that still fit do not
+- [ ] Confirm an inserted Heavy-game break (above) counts toward this cumulative check — a round that would fit on game time alone but is pushed over the window by the break's minutes still gets flagged
+- [ ] With no `end_time` set on the event, confirm no round is ever flagged, regardless of total length
 - [ ] After locking, run `/game suggest` in that event's channel — confirm it's rejected with a lineup-locked message instead of prompting to add a game
 - [ ] After locking, click **Join** or **Leave** on an existing game card — confirm both are rejected with the same lineup-locked message
 - [ ] After locking, click **Join Waitlist** or **Leave Waitlist** — confirm both are rejected the same way
 - [ ] Confirm an event is only locked/scheduled once — running the hourly check again after locking doesn't re-post the schedule or re-lock
 - [ ] Confirm a cancelled or already-archived event is never locked/scheduled, even past its threshold
 - [ ] Set `lock_hours_before_event` back to `0` — confirm no further events get locked, and existing unlocked events remain fully open
+
+**`/admin event preview` (dry run):**
+- [ ] Before the lock threshold is reached, run `/admin event preview` inside an event channel — confirm it shows an ephemeral embed shaped the same as a real lock's schedule embed (rounds with clock times, repeats, breaks, "Needs more players", "Not scheduled")
+- [ ] After running the preview, confirm suggestions are still unlocked — `/game suggest` still works, and Join/Leave on game cards still works normally
+- [ ] Confirm nothing is posted to the event channel itself, and no games have `scheduledRound`/`scheduledTable`/`scheduledPlayCount` set in storage after a preview
+- [ ] Run `/admin event preview` again after changing `table_count`, `heavy_game_break_minutes`, or `max_game_repeats` (3.9a) — confirm the preview reflects the new config immediately
+- [ ] Run `/admin event preview` in a channel that isn't an event channel — confirm a clear "isn't an event channel" ephemeral error instead of a crash
+
+**With `post_bgstats_links:true`:**
+- [ ] Confirm a separate message with a QR code image is posted for each *scheduled* game (not for games listed under "Not scheduled")
+- [ ] **With `SHORT_LINK_BASE_URL` configured** (see 4.7a below): confirm a "📊 Log in BG Stats" button is present regardless of how many players are seated, and tapping it opens directly to a new-play screen pre-filled with the correct game, location (the event's configured location), and the full seated roster for that table
+- [ ] **Without `SHORT_LINK_BASE_URL` configured**: confirm the button is **omitted** for essentially any game with at least one seated player (the full BG Stats payload — including the `winner`/`startPlayer`/`highestWins`/`noPoints` fields BG Stats' app requires — now exceeds Discord's 512-char limit even for a solo play) and the message text explains why ("too many players for a tappable link") rather than silently vanishing
+- [ ] Scan the QR code with a phone camera — confirm it scans quickly and decodes to (or, via the short link, redirects to) the exact same play details regardless of player count. The QR encodes the short link when one exists (small/simple code, easy to scan) and only falls back to the full raw link when `SHORT_LINK_BASE_URL` isn't configured (denser code, still functional but harder for a camera to lock onto)
+- [ ] Scan the QR code (or tap the button) and confirm BG Stats opens the pre-filled play screen **without** an "Invalid data" JSON error (regression: BG Stats' Android app requires explicit `winner`, `startPlayer`, `highestWins`, and `noPoints` values even though all four are documented as optional — omitting any of them threw `JSONException: No value for <field>`)
+- [ ] For a scheduled game with a BGG id, confirm BG Stats opens successfully on iOS **and** macOS/Mac Catalyst without crashing (regression: `game.bggId` was sent as a quoted JSON string instead of the number BG Stats' schema expects, throwing a Core Data type-coercion exception — crashed outright on macOS, and silently closed the app on iOS)
+- [ ] For a seated player with a linked BGG account (`/bgg link`), confirm their BGG username is used as their player name in BG Stats rather than their Discord display name
+- [ ] For a seated player without a linked BGG account, confirm their Discord display name is used instead
+
+### 4.7a BG Stats short-link redirect service
+
+**What it does:** Backs the "Log in BG Stats" button with a short `https://<domain>/s/<code>` URL instead of the full BG Stats deep link, so the button stays under Discord's 512-character link limit no matter how many players are seated. Visiting the short link serves a small landing page ("Log this play in BG Stats") with an "Open BG Stats" link, then auto-forwards to BG Stats after a 2-second pause — the pause gives the user context on what's about to happen, and the page still forwards on its own for anyone who doesn't tap the button. Requires `SHORT_LINK_BASE_URL` to be set to a public domain generated for this Railway service (Settings → Networking → Generate Domain); the bot listens on Railway's injected `$PORT`. If unset, this feature no-ops entirely — buttons fall back to the old "only if the raw link is short enough" behavior (see 4.7 above).
+
+- [ ] With `SHORT_LINK_BASE_URL` set and the service redeployed, confirm the button's link is a short `<domain>/s/<code>` URL (not the raw `bgstatsapp.com` link) even for a large table
+- [ ] Confirm the QR code image also encodes that same short link rather than the raw `bgstatsapp.com` URL — visually it should look noticeably simpler/less dense than before this was added, and should scan quickly with a phone camera
+- [ ] Visit that short link directly in a browser — confirm it shows the "Log this play in BG Stats" landing page (not an instant silent redirect), and that it auto-forwards to the pre-filled BG Stats play screen on its own after ~2 seconds
+- [ ] On the same page, tap/click the "Open BG Stats" link right away — confirm it takes you to the pre-filled play screen immediately, without waiting for the auto-forward
+- [ ] **On an iPhone specifically**, confirm the auto-forward opens BG Stats and it *stays open* rather than flashing open and immediately closing (watch closely: Apple's universal-link activation is documented to require a genuine tap rather than a timed/automatic redirect like this one — this auto-forward was removed once already over reports of exactly this symptom, then re-added after a separate root cause, a `game.bggId` type bug, was found and fixed; if this recurs, the safest fix is to skip the meta-refresh for iOS user agents specifically rather than removing it for everyone)
+- [ ] Visit `<domain>/s/<made-up-code>` — confirm a "Link not found" landing page (404) that does **not** auto-forward anywhere, rather than a crash or an open redirect to an arbitrary URL
+- [ ] Confirm `/game bgstats` (1.3g) also produces a short-link button under the same configuration
+- [ ] With `post_bgstats_links:false` (the default), confirm no BG Stats messages are posted at all — only the existing "🔒 Lineup Locked" schedule embed
 
 ## 4.8 Private Room Expiration
 
@@ -2447,16 +2654,39 @@ These features are triggered by Discord events and scheduled timers rather than 
 
 ---
 
+# Part 6 — General Edge Cases (Any Role)
+
+Run through this section once, regardless of which tier you're testing.
+
+- [ ] Run any command in a DM (outside a server) — confirm graceful failure
+- [ ] Run `/game suggest` in a channel with no active event and no upcoming events — confirm "There are no upcoming events" message
+- [ ] Attempt to RSVP to a cancelled event — confirm the embed is removed or no longer responds
+- [ ] Suggest a game when the event's channel has been archived — confirm "no longer active" message
+- [ ] Verify bot handles BGG being unreachable — confirm graceful fallback to local catalog or manual entry
+- [ ] Confirm all ephemeral responses are only visible to the invoking user
+- [ ] Search BGG for a game with an apostrophe or ampersand in its name (e.g. "Star Trek: Captain's Chair") — confirm it displays with a real apostrophe/ampersand, not raw HTML entities (`&#039;`, `&amp;`), in the search dropdown, the game lineup list, and the "Games to Bring" list
+- [ ] Manually un-pin the game lineup or "Games to Bring" message in an event channel, then trigger any update to it (e.g. suggest/cancel a game) — confirm the bot re-pins it automatically rather than leaving it unpinned
+- [ ] Run `/event list` — confirm each event's date/time renders as a Discord timestamp (shows in your local time, updates live rather than being frozen text)
+- [ ] Start `/marketplace post sell` up to the price-selection step (a "Set Custom Price" button visible), restart/redeploy the bot, then click the button — confirm it still works instead of saying the session expired (regression: in-progress sell/trade drafts previously lived only in memory and were lost on any bot restart)
+
+---
+
+# 👥 Multi-Person Tests
+
+This is the entire group of tests that need a second, distinct Discord identity — save this section for a session when a second tester is actually around, and knock it all out in one sitting. Grouped by tier first (which permission level the flow needs), then by which pairing you need to recruit within that tier.
+
+---
+
 # Part 5 — Multi-Person Tests
 
-These test cases involve genuine back-and-forth between two distinct Discord identities, or a real join event — they can't be completed by one tester working alone, even with several test accounts on hand. Grouped by which pairing you need to recruit, so you can knock out everything for one pairing in a single sitting.
+These test cases involve genuine back-and-forth between two distinct Discord identities, or a real join event — they can't be completed by one tester working alone, even with several test accounts on hand. Grouped by tier (5.1 is a Member-tier flow; 5.2 is a System/Automated flow), then by which pairing you need to recruit within that.
 
 **Prerequisites:**
 - A second, distinct Discord account (see the global Prerequisites section above — reusing one of your three test accounts is fine).
 - For 5.1: a marketplace forum channel configured (`/admin marketplace config`, 3.9m), and one account with an active sell or trade listing posted (`/marketplace post sell`/`post trade`, 1.7a/1.7b).
 - For 5.2: a welcome channel configured (`/admin welcome config`, 3.9j).
 
-## 5.1 Buyer + Seller — Marketplace Negotiation
+## 5.1 Buyer + Seller — Marketplace Negotiation *(Member-tier flow — neither side needs an elevated role)*
 
 ### 5.1a "I'm Interested" button flow
 
@@ -2522,29 +2752,16 @@ These test cases involve genuine back-and-forth between two distinct Discord ide
 **Edge cases:**
 - [ ] 👑 In private mode, have a third account (neither buyer nor seller) try to view or join the private negotiation thread — confirm they cannot see it (a server owner can typically still see private threads via Discord's own `Manage Threads` permission, which owners always have — this isn't a bot bug, it's Discord's platform behavior)
 
-## 5.2 New Member Join — Welcome Flow
+## 5.2 New Member Join — Welcome Flow *(System/Automated flow — triggered by a real `guildMemberAdd` join event, not a slash command permission tier)*
 
 **What it does:** When a new member joins the server, the bot sends a welcome DM and posts a message in the configured welcome channel.
 
 - [ ] Have a second account join the server (a fresh account, or an existing test account you first kick and then re-invite) — confirm the welcome message is automatically sent to the welcome channel and to the new member via DM
-- [ ] Confirm the message includes a link to the rules channel and Facebook group (if configured via `/admin welcome config`)
+- [ ] Confirm the message includes a link to the rules channel, Facebook group, and BGG group (if configured via `/admin welcome config`)
 
 **Edge cases:**
-- [ ] Trigger a join with `/admin welcome config` left at defaults (no rules channel or Facebook URL set) — confirm the welcome message still sends cleanly without a broken link or placeholder text
+- [ ] Trigger a join with `/admin welcome config` left at defaults (no rules channel, Facebook URL, or BGG URL set) — confirm the welcome message still sends cleanly without a broken link or placeholder text
 - [ ] Disable DMs on the joining account beforehand — confirm the channel post still happens even if the DM can't be delivered
-
----
-
-# Part 6 — General Edge Cases (Any Role)
-
-Run through this section once, regardless of which tier you're testing.
-
-- [ ] Run any command in a DM (outside a server) — confirm graceful failure
-- [ ] Run `/game suggest` in a channel with no active event and no upcoming events — confirm "There are no upcoming events" message
-- [ ] Attempt to RSVP to a cancelled event — confirm the embed is removed or no longer responds
-- [ ] Suggest a game when the event's channel has been archived — confirm "no longer active" message
-- [ ] Verify bot handles BGG being unreachable — confirm graceful fallback to local catalog or manual entry
-- [ ] Confirm all ephemeral responses are only visible to the invoking user
 </script>
 
 <script>
@@ -2574,10 +2791,11 @@ Run through this section once, regardless of which tier you're testing.
   }
 
   function parse(raw) {
-    var lines = raw.split("\n");
+    var lines = raw.replace(/\r\n/g, "\n").split("\n");
     var out = [];
     var i = 0;
     var itemCounter = 0;
+    var sawDocTitle = false;
 
     function peekIndentDash(line) {
       return /^\s{2,}- /.test(line);
@@ -2596,8 +2814,11 @@ Run through this section once, regardless of which tier you're testing.
         if (partMatch) {
           var meta = TIER_META[partMatch[1]] || { key: "", label: "" };
           out.push({ type: "part", tierKey: meta.key, eyebrow: partMatch[1], title: partMatch[2] });
-        } else {
+        } else if (!sawDocTitle) {
           out.push({ type: "doctitle", title: text });
+          sawDocTitle = true;
+        } else {
+          out.push({ type: "group", title: text });
         }
         i++; continue;
       }
@@ -2684,6 +2905,13 @@ Run through this section once, regardless of which tier you're testing.
     blocks.forEach(function (b) {
       if (b.type === "doctitle") return; // shown in hero already
       if (b.type === "hr") { closeLists(); return; }
+
+      if (b.type === "group") {
+        closeLists();
+        if (openPart) { html.push("</section>"); openPart = false; }
+        html.push('<div class="group-divider"><h2>' + inline(b.title) + "</h2></div>");
+        return;
+      }
 
       if (b.type === "part") {
         closeLists();
