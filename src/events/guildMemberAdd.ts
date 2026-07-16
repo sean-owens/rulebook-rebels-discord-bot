@@ -28,6 +28,16 @@ export async function handleGuildMemberAdd(member: GuildMember): Promise<void> {
         value: `Use \`/myroles\` to set your preferred complexity level and tag the game genres you enjoy most!`,
       });
 
+      fields.push({
+        name: '📚 Browse the Library',
+        value: `Run \`/library list\` to see what games the group already owns.`,
+      });
+
+      fields.push({
+        name: '🎲 Suggest a Game',
+        value: `Inside an event's channel, run \`/game suggest\` to put a game up for that night.`,
+      });
+
       if (config.facebookGroupUrl) {
         fields.push({
           name: '📘 Facebook Group',
@@ -69,9 +79,14 @@ export async function handleGuildMemberAdd(member: GuildMember): Promise<void> {
       [
         `👋 Hey **${member.displayName}**, welcome to **${member.guild.name}**!`,
         ``,
-        `One quick tip: consider setting a **server nickname** so the group knows who you are!`,
+        `A few commands to get you going:`,
+        `> • \`/myroles\` — set your preferred complexity and favorite genres`,
+        `> • \`/library list\` — see what games the group already owns`,
+        `> • \`/game suggest\` — put a game up for an upcoming night (run inside that event's channel)`,
         ``,
-        `Here's how:`,
+        `Run \`/getting-started\` any time for a quick walkthrough, or \`/help\` to see everything the bot can do.`,
+        ``,
+        `One more tip: consider setting a **server nickname** so the group knows who you are!`,
         `> • **Desktop:** Right-click your name in the member list → *Edit Server Profile* → set a *Server Nickname*`,
         `> • **Mobile:** Tap your avatar → *Edit Server Profile* → set a *Server Nickname*`,
         ``,

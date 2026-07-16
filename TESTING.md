@@ -50,8 +50,18 @@ Everything in this group (Parts 1–4, 6) can be completed solo by one tester ho
 - [ ] 👑 Run `/help` as a regular member — confirm only user-facing command sections appear (`/event`, `/game`, `/library`, `/myroles`, `/bgg`, `/marketplace`, `/room`) with **no Host or Admin section**
 - [ ] Confirm `/game cancel` description says "Remove your own game suggestion"
 - [ ] Confirm `/library clear` description says "Remove all your own games at once"
+- [ ] Confirm the top description points new members to `/getting-started` for a shorter walkthrough
 - [ ] Confirm the response is ephemeral
 - [ ] 👑 Confirm `/host` and `/admin` commands are **not visible** in the Discord slash command picker
+
+## 1.1a `/getting-started`
+
+**What it does:** Displays a short, ephemeral, ordered walkthrough for new members — RSVPing to a game night, setting preferences (`/myroles`), suggesting a game (`/game suggest`), and browsing the library (`/library list`) — plus a rules-channel step if one is configured. Deliberately omits `/library add` from the numbered steps' emphasis and BGG linking, marketplace, and rooms entirely, so a brand-new member isn't asked to commit to anything on day one; it points to `/help` for the rest.
+
+- [ ] Run `/getting-started` with no rules channel configured (`/admin welcome config`, 3.9j) — confirm the walkthrough starts at "RSVP to a game night" with no rules-channel step
+- [ ] Configure a rules channel (3.9j), run `/getting-started` again — confirm "Read the rules" is now step 1 and links to that channel, and the remaining steps renumber accordingly
+- [ ] Confirm the walkthrough mentions `/myroles`, `/game suggest`, and `/library list`
+- [ ] Confirm the response is ephemeral
 
 ## 1.2 `/event` — Event Viewing
 
@@ -2248,7 +2258,8 @@ These test cases involve genuine back-and-forth between two distinct Discord ide
 **What it does:** When a new member joins the server, the bot sends a welcome DM and posts a message in the configured welcome channel.
 
 - [ ] Have a second account join the server (a fresh account, or an existing test account you first kick and then re-invite) — confirm the welcome message is automatically sent to the welcome channel and to the new member via DM
-- [ ] Confirm the message includes a link to the rules channel, Facebook group, and BGG group (if configured via `/admin welcome config`)
+- [ ] Confirm the welcome channel embed includes a link to the rules channel, Facebook group, and BGG group (if configured via `/admin welcome config`), plus "📚 Browse the Library" (`/library list`) and "🎲 Suggest a Game" (`/game suggest`) fields — note it deliberately does **not** mention `/library add`, since a brand-new member shouldn't feel pressed to add their own games on day one
+- [ ] Confirm the DM lists `/myroles`, `/library list`, and `/game suggest`, and points to both `/getting-started` and `/help` — and, like the channel embed, does not mention `/library add`
 
 **Edge cases:**
 - [ ] Trigger a join with `/admin welcome config` left at defaults (no rules channel, Facebook URL, or BGG URL set) — confirm the welcome message still sends cleanly without a broken link or placeholder text

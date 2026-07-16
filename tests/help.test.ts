@@ -20,6 +20,14 @@ describe('/help', () => {
     expect(embed.fields.some((f: any) => f.name.includes('/host'))).toBe(false);
   });
 
+  it('points new members to /getting-started', async () => {
+    const interaction = makeInteraction(new Set());
+    await execute(interaction);
+
+    const embed = interaction.reply.mock.calls[0][0].embeds[0].toJSON();
+    expect(embed.description).toContain('/getting-started');
+  });
+
   it('replies successfully for a host', async () => {
     const interaction = makeInteraction(new Set([PermissionFlagsBits.ManageEvents]));
     await execute(interaction);
