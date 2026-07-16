@@ -7,6 +7,7 @@ import { data as hostCommand } from './commands/host';
 import { data as myrolesCommand } from './commands/myroles';
 import { data as libraryCommand } from './commands/library';
 import { data as helpCommand } from './commands/help';
+import { data as gettingStartedCommand } from './commands/gettingStarted';
 import { data as bggCommand } from './commands/bgg';
 import { data as marketplaceCommand } from './commands/marketplace';
 import { data as roomCommand } from './commands/room';
@@ -28,6 +29,7 @@ const commands = [
   myrolesCommand.toJSON(),
   libraryCommand.toJSON(),
   helpCommand.toJSON(),
+  gettingStartedCommand.toJSON(),
   bggCommand.toJSON(),
   marketplaceCommand.toJSON(),
   roomCommand.toJSON(),

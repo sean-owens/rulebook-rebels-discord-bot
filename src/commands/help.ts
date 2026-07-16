@@ -19,7 +19,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     .setColor(0x5865f2)
     .setTitle('Rulebook Rebels Bot — Commands')
     .setDescription(
-      "Here's everything you can do. All commands are slash commands — type `/` to get started.",
+      "Here's everything you can do. All commands are slash commands — type `/` to get started.\n\nNew here? Run `/getting-started` for a quick walkthrough instead of this full list.",
     )
     .addFields(
       {

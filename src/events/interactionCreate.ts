@@ -1,5 +1,6 @@
 import { ButtonInteraction, Interaction, StringSelectMenuInteraction, TextChannel, MessageFlags, ModalSubmitInteraction } from 'discord.js';
 import { execute as executeHelp } from '../commands/help';
+import { execute as executeGettingStarted } from '../commands/gettingStarted';
 import { execute as executeGameNight } from '../commands/gamenight';
 import {
   execute as executeAdmin,
@@ -108,6 +109,7 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         }
       }
       if (interaction.commandName === 'help') await executeHelp(interaction);
+      else if (interaction.commandName === 'getting-started') await executeGettingStarted(interaction);
       else if (interaction.commandName === 'event') await executeGameNight(interaction);
       else if (interaction.commandName === 'game') await executeGame(interaction);
       else if (interaction.commandName === 'admin') await executeAdmin(interaction);
