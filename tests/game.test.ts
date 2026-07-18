@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { PermissionFlagsBits } from 'discord.js';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -480,6 +481,84 @@ describe('lineup lock enforcement', () => {
 
     expect(interaction.reply).not.toHaveBeenCalled();
     expect(interaction.update).toHaveBeenCalled();
+  });
+});
+
+describe('waitlist promotion on leave', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-game-waitlist-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeGameButtonInteraction(userId: string) {
+    return {
+      user: { id: userId },
+      client: { users: { fetch: vi.fn(async () => { throw new Error('no DM'); }) } },
+      reply: vi.fn(async () => {}),
+      update: vi.fn(async () => {}),
+    } as any;
+  }
+
+  async function seedFullGameWithWaitlist(waitlist: string[]) {
+    const { upsertGame } = await import('../src/utils/gameStorage');
+    await upsertGameNight(makeGameNight({ id: 'gn-wl', suggestionsLocked: false }));
+    const game = {
+      id: 'game-wl-1',
+      eventId: 'gn-wl',
+      channelId: 'event-channel-1',
+      messageId: 'msg-1',
+      guildId: 'g1',
+      bggId: '1',
+      title: 'Full Game',
+      bggLink: '',
+      minPlayers: 2,
+      maxPlayers: 2,
+      suggestedPlayers: null,
+      minPlaytime: 30,
+      maxPlaytime: 60,
+      suggestedStartTime: null,
+      expansions: [],
+      seats: ['seated-1', 'seated-2'],
+      waitlist,
+      createdAt: new Date().toISOString(),
+      createdBy: 'u1',
+    };
+    await upsertGame(game as any);
+    return game;
+  }
+
+  it('promotes the first waitlisted player into a freed seat and removes them from the waitlist', async () => {
+    const { handleGameLeave } = await import('../src/commands/game');
+    const { findGame } = await import('../src/utils/gameStorage');
+    await seedFullGameWithWaitlist(['waiter-1', 'waiter-2']);
+
+    const interaction = makeGameButtonInteraction('seated-1');
+    await handleGameLeave(interaction, 'game-wl-1');
+
+    const updated = await findGame('game-wl-1');
+    expect(updated?.seats).toEqual(['seated-2', 'waiter-1']);
+    expect(updated?.waitlist).toEqual(['waiter-2']);
+  });
+
+  it('does not promote anyone when the waitlist is empty', async () => {
+    const { handleGameLeave } = await import('../src/commands/game');
+    const { findGame } = await import('../src/utils/gameStorage');
+    await seedFullGameWithWaitlist([]);
+
+    const interaction = makeGameButtonInteraction('seated-1');
+    await handleGameLeave(interaction, 'game-wl-1');
+
+    const updated = await findGame('game-wl-1');
+    expect(updated?.seats).toEqual(['seated-2']);
+    expect(updated?.waitlist).toEqual([]);
   });
 });
 
@@ -1094,5 +1173,116 @@ describe('/game cancel — fuzzy title matching', () => {
         content: expect.stringContaining('No game called'),
       }),
     );
+  });
+});
+
+describe('/game cancel — permission checks', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-game-cancel-perm-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeCancelInteraction(
+    title: string,
+    channelId: string,
+    userId: string,
+    hasManageEvents: boolean,
+  ) {
+    return {
+      options: {
+        getString: (name: string) => (name === 'title' ? title : null),
+        getSubcommand: () => 'cancel',
+      },
+      reply: vi.fn(async () => {}),
+      channelId,
+      guildId: 'g1',
+      user: { id: userId },
+      isChatInputCommand: () => true,
+      memberPermissions: { has: (p: bigint) => hasManageEvents && p === PermissionFlagsBits.ManageEvents },
+      client: {
+        channels: {
+          fetch: vi.fn(async () => {
+            throw new Error('not accessible in test');
+          }),
+        },
+      },
+    } as any;
+  }
+
+  async function seedSuggestedBySomeoneElse() {
+    const { upsertGame } = await import('../src/utils/gameStorage');
+    await upsertGameNight(makeGameNight({ id: 'gn1', eventChannelId: 'event-channel-1', createdBy: 'host1' }));
+    const game = {
+      id: 'game1',
+      eventId: 'gn1',
+      channelId: 'event-channel-1',
+      messageId: 'm1',
+      guildId: 'g1',
+      bggId: '266192',
+      title: 'Settlers of Catan',
+      bggLink: '',
+      minPlayers: 3,
+      maxPlayers: 4,
+      suggestedPlayers: null,
+      minPlaytime: 60,
+      maxPlaytime: 90,
+      suggestedStartTime: null,
+      expansions: [],
+      seats: ['suggester-1'],
+      waitlist: [],
+      createdAt: new Date().toISOString(),
+      createdBy: 'suggester-1',
+    };
+    await upsertGame(game as any);
+    return game;
+  }
+
+  it('rejects a regular member who is neither the suggester nor the event host nor an admin', async () => {
+    await seedSuggestedBySomeoneElse();
+
+    const interaction = makeCancelInteraction('catan', 'event-channel-1', 'random-member', false);
+    await execute(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('the event host, or an admin can remove it'),
+      }),
+    );
+    const { findGamesByChannel } = await import('../src/utils/gameStorage');
+    expect(await findGamesByChannel('event-channel-1')).toHaveLength(1);
+  });
+
+  it('allows the event host to remove a game suggested by someone else', async () => {
+    await seedSuggestedBySomeoneElse();
+
+    const interaction = makeCancelInteraction('catan', 'event-channel-1', 'host1', false);
+    await execute(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('has been removed') }),
+    );
+    const { findGamesByChannel } = await import('../src/utils/gameStorage');
+    expect(await findGamesByChannel('event-channel-1')).toHaveLength(0);
+  });
+
+  it('allows an admin (Manage Events permission) to remove a game suggested by someone else', async () => {
+    await seedSuggestedBySomeoneElse();
+
+    const interaction = makeCancelInteraction('catan', 'event-channel-1', 'some-admin', true);
+    await execute(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('has been removed') }),
+    );
+    const { findGamesByChannel } = await import('../src/utils/gameStorage');
+    expect(await findGamesByChannel('event-channel-1')).toHaveLength(0);
   });
 });

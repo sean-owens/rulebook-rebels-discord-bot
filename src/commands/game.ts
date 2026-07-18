@@ -714,9 +714,14 @@ async function handleGameCancel(interaction: ChatInputCommandInteraction): Promi
     return;
   }
 
-  if (match.createdBy !== interaction.user.id) {
+  const gameNight = await findGameNight(match.eventId);
+  const isSuggester = match.createdBy === interaction.user.id;
+  const isHost = gameNight?.createdBy === interaction.user.id;
+  const isAdmin = interaction.memberPermissions?.has(PermissionFlagsBits.ManageEvents) ?? false;
+
+  if (!isSuggester && !isHost && !isAdmin) {
     await interaction.reply({
-      content: `Only the person who suggested **${match.title}** can remove it. Ask a host or admin if you need it removed.`,
+      content: `Only the person who suggested **${match.title}**, the event host, or an admin can remove it.`,
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -1435,7 +1440,34 @@ export async function handleGameLeave(
   }
 
   game.seats = game.seats.filter((id) => id !== userId);
+
+  const waitlist = game.waitlist ?? [];
+  const prevHadGroup2 = waitlist.length >= game.minPlayers;
+  const promotedUserId = game.seats.length < game.maxPlayers ? waitlist[0] : undefined;
+  if (promotedUserId) {
+    game.seats.push(promotedUserId);
+    game.waitlist = waitlist.slice(1);
+  }
   await save(game);
+
+  if (promotedUserId) {
+    const nowHasGroup2 = (game.waitlist ?? []).length >= game.minPlayers;
+    if (prevHadGroup2 && !nowHasGroup2) {
+      await updateRequestCopies(game.eventId, game.title, 1);
+      try {
+        await updateRequestPin(interaction.client, game.eventId);
+      } catch {
+        /* no event channel */
+      }
+    }
+    try {
+      const promotedUser = await interaction.client.users.fetch(promotedUserId);
+      await promotedUser.send(`A seat opened up in **${game.title}** — you've been moved off the waitlist and into the game!`);
+    } catch {
+      /* DMs disabled */
+    }
+  }
+
   try {
     await updateGameListPin(interaction.client, game.eventId);
   } catch {

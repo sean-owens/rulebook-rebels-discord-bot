@@ -13,6 +13,10 @@ import {
   previewSchedule,
   isLineupLocked,
   SchedulableGame,
+  computeHeadcountTableFloor,
+  computePreferenceSplitTableFloor,
+  computeEffectiveTableCount,
+  resolveRsvpComplexityPreferences,
 } from '../src/utils/scheduler';
 import { GameSuggestion } from '../src/utils/gameStorage';
 
@@ -527,6 +531,143 @@ describe('isLineupLocked', () => {
   });
 });
 
+describe('computeHeadcountTableFloor', () => {
+  it('returns 0 for no RSVPs', () => {
+    expect(computeHeadcountTableFloor(0)).toBe(0);
+  });
+
+  it('picks the evenly-dividing size, tie-breaking toward fewer tables', () => {
+    // 6 divides evenly by both 3 (2 tables) and 6 (1 table) — prefer 1 table.
+    expect(computeHeadcountTableFloor(6)).toBe(1);
+  });
+
+  it('uses the normalized decimal distance, not raw remainder, to pick a size', () => {
+    // Raw remainders (13 mod 3/4/6 all = 1) would tie; the decimal method
+    // clearly prefers size 6 (13/6 = 2.1667, distance .1667) over size 4
+    // (13/4 = 3.25, distance .25) or size 3 (13/3 = 4.333, distance .333).
+    expect(computeHeadcountTableFloor(13)).toBe(3);
+  });
+
+  it('prefers the larger size again when both give a perfect (0-remainder) fit', () => {
+    // 15 divides evenly by 3 (5 tables) and 5 (3 tables) — prefer 3 tables.
+    expect(computeHeadcountTableFloor(15)).toBe(3);
+  });
+
+  it('never returns fewer than 1 table for any positive headcount', () => {
+    expect(computeHeadcountTableFloor(1)).toBe(1);
+    expect(computeHeadcountTableFloor(2)).toBe(1);
+  });
+});
+
+describe('computePreferenceSplitTableFloor', () => {
+  it('returns 0 when nobody has set a preference', () => {
+    expect(computePreferenceSplitTableFloor([null, null, undefined])).toBe(0);
+  });
+
+  it('sums a per-tier floor across distinct preference tiers', () => {
+    // 3 Light + 3 Medium — each tier independently floors to 1 table.
+    const prefs = ['Light', 'Light', 'Light', 'Medium', 'Medium', 'Medium'];
+    expect(computePreferenceSplitTableFloor(prefs)).toBe(2);
+  });
+
+  it('ignores unrecognized/null preferences when tallying tiers', () => {
+    const prefs = ['Light', 'Light', 'Light', null, undefined];
+    expect(computePreferenceSplitTableFloor(prefs)).toBe(1);
+  });
+
+  it('does not double-count a single homogeneous group beyond its own floor', () => {
+    const prefs = ['Heavy', 'Heavy', 'Heavy', 'Heavy', 'Heavy', 'Heavy'];
+    expect(computePreferenceSplitTableFloor(prefs)).toBe(1);
+  });
+});
+
+describe('computeEffectiveTableCount', () => {
+  it('falls back to the config default when there are no RSVPs at all', () => {
+    expect(computeEffectiveTableCount(0, [], 2)).toBe(2);
+  });
+
+  it('uses the headcount floor when it exceeds the config default', () => {
+    expect(computeEffectiveTableCount(13, [], 1)).toBe(3);
+  });
+
+  it('uses the preference-split floor when it exceeds both the headcount floor and config default', () => {
+    const prefs = ['Light', 'Light', 'Light', 'Medium', 'Medium', 'Medium'];
+    // Headcount floor for 6 alone would be 1, but the preference split needs 2.
+    expect(computeEffectiveTableCount(6, prefs, 1)).toBe(2);
+  });
+
+  it('never goes below 1 even with a 0 config default and no RSVPs', () => {
+    expect(computeEffectiveTableCount(0, [], 0)).toBe(1);
+  });
+});
+
+describe('resolveRsvpComplexityPreferences', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-scheduler-prefs-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeMember(roleIds: string[]) {
+    return { roles: { cache: { has: (id: string) => roleIds.includes(id) } } };
+  }
+
+  it('returns an empty array without touching the client when there are no RSVPs', async () => {
+    const client = { guilds: { fetch: vi.fn() } };
+    const result = await resolveRsvpComplexityPreferences(client as any, 'guild-1', []);
+    expect(result).toEqual([]);
+    expect(client.guilds.fetch).not.toHaveBeenCalled();
+  });
+
+  it("resolves each RSVP'd member's complexity preference via their /myroles Discord roles", async () => {
+    const { addGameRole } = await import('../src/utils/gameRoles');
+    await addGameRole('guild-1', { roleId: 'role-light', name: 'Light', type: 'difficulty' });
+    await addGameRole('guild-1', { roleId: 'role-medium', name: 'Medium', type: 'difficulty' });
+
+    const guild = {
+      members: {
+        fetch: vi.fn(async (id: string) => {
+          if (id === 'u1') return makeMember(['role-light']);
+          if (id === 'u2') return makeMember(['role-medium']);
+          return makeMember([]); // u3: no preference set
+        }),
+      },
+    };
+    const client = { guilds: { fetch: vi.fn(async () => guild) } };
+
+    const result = await resolveRsvpComplexityPreferences(client as any, 'guild-1', ['u1', 'u2', 'u3']);
+    expect(result).toEqual(['Light', 'Medium', null]);
+  });
+
+  it('skips a member who has left the server rather than failing the whole lookup', async () => {
+    const guild = {
+      members: {
+        fetch: vi.fn(async (id: string) => {
+          if (id === 'left-user') throw new Error('Unknown Member');
+          return makeMember([]);
+        }),
+      },
+    };
+    const client = { guilds: { fetch: vi.fn(async () => guild) } };
+
+    const result = await resolveRsvpComplexityPreferences(client as any, 'guild-1', ['left-user', 'u2']);
+    expect(result).toHaveLength(1);
+  });
+
+  it('returns an empty array when the guild itself fails to resolve', async () => {
+    const client = { guilds: { fetch: vi.fn(async () => { throw new Error('unknown guild'); }) } };
+    const result = await resolveRsvpComplexityPreferences(client as any, 'guild-1', ['u1']);
+    expect(result).toEqual([]);
+  });
+});
+
 describe('buildScheduleEmbed', () => {
   const games = [
     { id: 'g1', title: 'Wingspan' },
@@ -833,6 +974,34 @@ describe('lockAndScheduleEvent', () => {
     expect(updated?.suggestionsLocked).toBe(true);
     expect(updated?.scheduledAt).toBeDefined();
     expect(client._channel.send).toHaveBeenCalled();
+  });
+
+  it('sizes the table count from RSVPs instead of a too-low config default, so non-conflicting games all fit in round 1', async () => {
+    const { upsertGameNight } = await import('../src/utils/storage');
+    const { upsertGame, findGame } = await import('../src/utils/gameStorage');
+    // 13 RSVPs -> computeHeadcountTableFloor(13) = 3 (see the dedicated describe
+    // block above), well above the configured default of 1.
+    const rsvpIds = Array.from({ length: 13 }, (_, i) => `rsvp-${i}`);
+    const gn = makeGameNight({ rsvps: { yes: rsvpIds, maybe: [], no: [] } });
+    await upsertGameNight(gn as any);
+    for (const [i, seats] of [['p1', 'p2'], ['p3', 'p4'], ['p5', 'p6']].entries()) {
+      await upsertGame({
+        id: `game${i + 1}`, eventId: 'gn1', channelId: 'event-channel-1', messageId: `m${i + 1}`, guildId: 'guild-1',
+        bggId: `${i + 1}`, title: `Game ${i + 1}`, bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
+        minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats, waitlist: [],
+        createdAt: new Date().toISOString(), createdBy: seats[0], complexity: 'Light',
+      } as any);
+    }
+    const client = makeClient();
+
+    await lockAndScheduleEvent(client as any, gn as any, { ...BUFFER_CONFIG, scheduleTableCount: 1 });
+
+    const games = await Promise.all(['game1', 'game2', 'game3'].map((id) => findGame(id)));
+    // All three non-conflicting games should land in round 1 across 3 tables —
+    // with the flat config default of 1 table, two of them would have been
+    // pushed to later rounds instead.
+    expect(games.every((g) => g?.scheduledRound === 1)).toBe(true);
+    expect(new Set(games.map((g) => g?.scheduledTable)).size).toBe(3);
   });
 
   it('persists scheduledRound/scheduledTable/scheduledPlayCount on each scheduled game', async () => {
@@ -1145,8 +1314,20 @@ describe('checkPendingSchedules', () => {
     expect(gn?.suggestionsLocked).toBeFalsy();
   });
 
-  it('does nothing when the lock feature is disabled (default)', async () => {
+  it('locks using the default 48h threshold when lockHoursBeforeEvent has not been explicitly configured', async () => {
     const { findGameNight } = await import('../src/utils/storage');
+    await seedNight(1); // starts in 1h, well past the default 48h threshold
+
+    await checkPendingSchedules(makeClient() as any);
+
+    const gn = await findGameNight('gn1');
+    expect(gn?.suggestionsLocked).toBe(true);
+  });
+
+  it('does nothing when the lock feature is explicitly disabled (lockHoursBeforeEvent: 0)', async () => {
+    const { updateGuildConfig } = await import('../src/utils/config');
+    const { findGameNight } = await import('../src/utils/storage');
+    await updateGuildConfig('guild-1', { lockHoursBeforeEvent: 0 });
     await seedNight(1); // starts very soon, would lock if enabled
 
     await checkPendingSchedules(makeClient() as any);
