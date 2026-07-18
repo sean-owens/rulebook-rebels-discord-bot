@@ -37,6 +37,9 @@ export interface Bid {
   status: BidStatus;
   counters: Counter[];
   negotiationThreadId?: string;
+  /** Channel + message ID of the current DM (or thread-fallback) prompt awaiting a response for this bid. */
+  dmChannelId?: string;
+  dmMessageId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -84,6 +87,17 @@ export async function getListing(
   listingId: string,
 ): Promise<MarketplaceListing | undefined> {
   return (await getListingsForGuild(guildId)).find((l) => l.id === listingId);
+}
+
+export async function findListingById(
+  listingId: string,
+): Promise<{ guildId: string; listing: MarketplaceListing } | undefined> {
+  const store = await load();
+  for (const [guildId, listings] of Object.entries(store)) {
+    const listing = listings.find((l) => l.id === listingId);
+    if (listing) return { guildId, listing };
+  }
+  return undefined;
 }
 
 export async function getActiveListingsForGuild(
@@ -175,7 +189,7 @@ export async function updateBid(
   guildId: string,
   listingId: string,
   bidId: string,
-  patch: Partial<Pick<Bid, 'status' | 'negotiationThreadId' | 'counters'>>,
+  patch: Partial<Pick<Bid, 'status' | 'negotiationThreadId' | 'counters' | 'dmChannelId' | 'dmMessageId'>>,
 ): Promise<{ listing: MarketplaceListing; bid: Bid } | undefined> {
   const store = await load();
   const listings = store[guildId] ?? [];
@@ -251,6 +265,56 @@ export async function acceptBid(
   store[guildId] = listings;
   await save(store);
   return { listing, acceptedBid: listing.bids[bidIdx], closedBids };
+}
+
+/**
+ * Buy It Now (firm listings only): creates a bid already in the 'accepted'
+ * state and marks the listing sold in one atomic step — there's no seller
+ * review to wait on since the price was already fixed. Any other open bids
+ * (e.g. someone's pending "I'm Interested" message) are closed out exactly
+ * like acceptBid() does, since the item is no longer available.
+ */
+export async function buyNow(
+  guildId: string,
+  listingId: string,
+  buyerUserId: string,
+  buyerUsername: string,
+): Promise<{ listing: MarketplaceListing; boughtBid: Bid; closedBids: Bid[] } | undefined> {
+  const store = await load();
+  const listings = store[guildId] ?? [];
+  const listingIdx = listings.findIndex((l) => l.id === listingId);
+  if (listingIdx === -1) return undefined;
+
+  const listing = listings[listingIdx];
+  if (listing.status === 'sold' || listing.status === 'closed') return undefined;
+
+  const now = new Date().toISOString();
+  const closedBids: Bid[] = [];
+  for (const bid of listing.bids) {
+    if (bid.status === 'open') {
+      bid.status = 'sold_to_other';
+      bid.updatedAt = now;
+      closedBids.push(bid);
+    }
+  }
+
+  const boughtBid: Bid = {
+    id: randomUUID(),
+    listingId,
+    userId: buyerUserId,
+    username: buyerUsername,
+    status: 'accepted',
+    counters: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+  listing.bids.push(boughtBid);
+  listing.status = 'sold';
+  listing.updatedAt = now;
+
+  store[guildId] = listings;
+  await save(store);
+  return { listing, boughtBid, closedBids };
 }
 
 export async function denyBid(

@@ -135,6 +135,14 @@ export const data = new SlashCommandBuilder()
           .setDescription('Mention everyone to add (e.g. @Alice @Bob)')
           .setRequired(true),
       ),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName('kick')
+      .setDescription('Remove someone from this private room — run inside the room channel')
+      .addUserOption((opt) =>
+        opt.setName('user').setDescription('The person to remove').setRequired(true),
+      ),
   );
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -143,6 +151,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   else if (sub === 'close') await handleClose(interaction);
   else if (sub === 'persist') await handlePersist(interaction);
   else if (sub === 'invite') await handleInvite(interaction);
+  else if (sub === 'kick') await handleKick(interaction);
 }
 
 async function handleCreate(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -461,6 +470,68 @@ async function handleInvite(interaction: ChatInputCommandInteraction): Promise<v
       ? ` (${skippedCount} mentioned ${skippedCount !== 1 ? 'people' : 'person'} couldn't be found and ${skippedCount !== 1 ? 'were' : 'was'} skipped)`
       : '';
   await interaction.editReply(`Added ${mentions} to this room${skippedNote}.`);
+}
+
+async function handleKick(interaction: ChatInputCommandInteraction): Promise<void> {
+  const room = await findRoomByChannel(interaction.channelId);
+  if (!room) {
+    await interaction.reply({
+      content: 'This command must be run inside a private room channel created by `/room create`.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  if (!canManageRoom(interaction, room)) {
+    await interaction.reply({
+      content: "Only the room's creator or a host/admin can remove people from this room.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const target = interaction.options.getUser('user', true);
+
+  if (target.id === room.createdBy) {
+    await interaction.reply({
+      content: "You can't remove the room's creator — use `/room close` to close the room instead.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  if (!room.invitedUserIds.includes(target.id)) {
+    await interaction.reply({
+      content: `${target.username} hasn't been individually invited to this room (they may only have access through a host/admin role, which this command can't remove).`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const channel = await interaction.client.channels.fetch(room.channelId);
+  if (!channel || !('permissionOverwrites' in channel) || !('send' in channel)) {
+    await interaction.editReply("Couldn't find this room's channel.");
+    return;
+  }
+  const textChannel = channel as TextChannel;
+
+  try {
+    await textChannel.permissionOverwrites.delete(target.id);
+  } catch (err) {
+    console.warn(`Could not remove permission overwrite for ${target.id} in room channel ${room.channelId}:`, err);
+    await interaction.editReply(
+      'Could not update channel permissions — check that the bot has Manage Roles/Channels permission.',
+    );
+    return;
+  }
+
+  room.invitedUserIds = room.invitedUserIds.filter((id) => id !== target.id);
+  await upsertRoom(room);
+
+  await textChannel.send(`<@${target.id}> has been removed from this private room by <@${interaction.user.id}>.`);
+  await interaction.editReply(`Removed ${target.username} from this room.`);
 }
 
 async function updateRoomChannelDisplay(client: Client, room: PrivateRoom): Promise<void> {

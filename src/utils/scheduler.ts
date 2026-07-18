@@ -9,6 +9,7 @@ import { GameSuggestion, findGamesByChannel, upsertGame } from './gameStorage';
 import { GuildConfig, getGuildConfig } from './config';
 import { GameNight, loadGameNights, upsertGameNight } from './storage';
 import { resolvePlayerNames } from './playerNames';
+import { getMemberPreferences } from './gameRoles';
 import {
   buildBgStatsPlayUrl,
   buildBgStatsButton,
@@ -479,6 +480,115 @@ async function postBgStatsButtons(
   }
 }
 
+// ── Smart table-count sizing ─────────────────────────────────────────────────
+//
+// scheduleTableCount used to be a single flat number a host had to guess at.
+// These functions instead derive an effective table count at lock time from
+// (a) how many people RSVP'd, assuming real games seat 3-6 players, and
+// (b) whether the RSVP pool's /myroles complexity preferences split into
+// distinct groups that can't share a table (a Light-only preference can't
+// play a Medium/Heavy game; Medium can't play Heavy). The configured default
+// still acts as a floor, so a host can always force a higher minimum.
+
+const ASSUMED_TABLE_SIZES = [3, 4, 5, 6];
+
+/**
+ * Given a headcount, finds which assumed table size (3-6) divides it most
+ * evenly — using the *decimal* remainder of count/size (not the raw integer
+ * remainder), so sizes are compared on a fair, normalized scale. A fraction
+ * near 0 means it divides evenly; a fraction near 1 means the last table
+ * would be nearly full anyway (also a good fit) — only fractions in the
+ * middle (an awkward half-empty last table) score poorly. Ties prefer the
+ * larger table size, since fewer/fuller tables is the actual goal.
+ */
+export function computeHeadcountTableFloor(count: number): number {
+  if (count <= 0) return 0;
+
+  let bestSize = ASSUMED_TABLE_SIZES[0];
+  let bestDistance = Infinity;
+  for (const size of ASSUMED_TABLE_SIZES) {
+    const divided = count / size;
+    const fraction = divided - Math.floor(divided);
+    const distance = Math.min(fraction, 1 - fraction);
+    if (distance <= bestDistance) {
+      bestDistance = distance;
+      bestSize = size;
+    }
+  }
+  return Math.ceil(count / bestSize);
+}
+
+/**
+ * Sums a per-tier table floor (via computeHeadcountTableFloor) across Light,
+ * Medium, and Heavy preference counts. This is deliberately a heuristic, not
+ * an exact optimizer: a lone person in a tier still reserves a full table's
+ * worth of floor, which slightly over-provisions rather than under-provisions
+ * — the safer direction for a "how many tables might we need" estimate.
+ * Preferences that are null (never set via /myroles) don't count toward any
+ * tier — they're flexible and don't force a dedicated table.
+ */
+export function computePreferenceSplitTableFloor(preferences: (string | null | undefined)[]): number {
+  const counts = { Light: 0, Medium: 0, Heavy: 0 };
+  for (const p of preferences) {
+    if (p === 'Light' || p === 'Medium' || p === 'Heavy') counts[p]++;
+  }
+  return (
+    computeHeadcountTableFloor(counts.Light) +
+    computeHeadcountTableFloor(counts.Medium) +
+    computeHeadcountTableFloor(counts.Heavy)
+  );
+}
+
+export function computeEffectiveTableCount(
+  rsvpCount: number,
+  preferences: (string | null | undefined)[],
+  configDefault: number,
+): number {
+  return Math.max(
+    computeHeadcountTableFloor(rsvpCount),
+    computePreferenceSplitTableFloor(preferences),
+    configDefault,
+    1,
+  );
+}
+
+/**
+ * Resolves each RSVP'd (yes) member's /myroles complexity preference, for
+ * feeding into computePreferenceSplitTableFloor. Skips (rather than throws
+ * on) any member who's left the server or otherwise fails to resolve —
+ * consistent with how mention/member resolution is handled elsewhere (e.g.
+ * /room invite). Short-circuits before touching the client at all when
+ * there's nobody to resolve, so callers/tests with no RSVPs never need a
+ * working `guilds.fetch`.
+ */
+export async function resolveRsvpComplexityPreferences(
+  client: Client,
+  guildId: string,
+  userIds: string[],
+): Promise<(string | null)[]> {
+  if (userIds.length === 0) return [];
+
+  let guild;
+  try {
+    guild = await client.guilds.fetch(guildId);
+  } catch {
+    return [];
+  }
+
+  const preferences: (string | null)[] = [];
+  for (const userId of userIds) {
+    try {
+      const member = await guild.members.fetch(userId);
+      const prefs = await getMemberPreferences(guildId, member);
+      preferences.push(prefs.complexity);
+    } catch {
+      // Member left the server, or preference lookup failed — skip them
+      // rather than let one bad lookup abort the whole sizing calculation.
+    }
+  }
+  return preferences;
+}
+
 export async function lockAndScheduleEvent(
   client: Client,
   gn: GameNight,
@@ -501,7 +611,9 @@ export async function lockAndScheduleEvent(
     ? (new Date(gn.endTimeISO).getTime() - new Date(gn.startTimeISO).getTime()) / 60000
     : Number.POSITIVE_INFINITY;
 
-  const result = scheduleGames(schedulable, Math.max(1, config.scheduleTableCount), windowMinutes, config);
+  const rsvpPreferences = await resolveRsvpComplexityPreferences(client, gn.guildId, gn.rsvps.yes);
+  const tableCount = computeEffectiveTableCount(gn.rsvps.yes.length, rsvpPreferences, config.scheduleTableCount);
+  const result = scheduleGames(schedulable, tableCount, windowMinutes, config);
 
   const assignmentByGame = new Map(result.assignments.map((a) => [a.gameId, a]));
   for (const game of games) {
@@ -578,7 +690,9 @@ export async function previewSchedule(interaction: ChatInputCommandInteraction):
   const windowMinutes = gn.endTimeISO
     ? (new Date(gn.endTimeISO).getTime() - new Date(gn.startTimeISO).getTime()) / 60000
     : Number.POSITIVE_INFINITY;
-  const result = scheduleGames(schedulable, Math.max(1, config.scheduleTableCount), windowMinutes, config);
+  const rsvpPreferences = await resolveRsvpComplexityPreferences(interaction.client, gn.guildId, gn.rsvps.yes);
+  const tableCount = computeEffectiveTableCount(gn.rsvps.yes.length, rsvpPreferences, config.scheduleTableCount);
+  const result = scheduleGames(schedulable, tableCount, windowMinutes, config);
 
   const embed = buildScheduleEmbed(gn, games, result)
     .setTitle(`🔍 Schedule Preview — ${gn.title ?? 'Game Night'}`)

@@ -6,6 +6,7 @@ import {
   ButtonStyle,
   ChannelType,
   ChatInputCommandInteraction,
+  Client,
   EmbedBuilder,
   ForumChannel,
   MessageFlags,
@@ -26,7 +27,9 @@ import {
   Condition,
   CONDITION_LABELS,
   getActiveListingsForGuild,
+  getListingsForGuild,
   getListing,
+  findListingById,
   getUserListings,
   createListing,
   updateListing,
@@ -34,6 +37,7 @@ import {
   updateBid,
   addCounter,
   acceptBid,
+  buyNow,
   denyBid,
   closeListing,
   reopenListing,
@@ -179,7 +183,7 @@ export const data = new SlashCommandBuilder()
           )
           .addBooleanOption((opt) =>
             opt
-              .setName('bids_allowed')
+              .setName('offers_allowed')
               .setDescription('Allow buyers to submit offers below your asking price?')
               .setRequired(true),
           )
@@ -345,7 +349,7 @@ function listingEmbed(listing: MarketplaceListing): EmbedBuilder {
     closed: '⚫',
   };
 
-  const openBids = listing.bids.filter((b) => b.status === 'open').length;
+  const openOffers = listing.bids.filter((b) => b.status === 'open').length;
 
   const embed = new EmbedBuilder()
     .setColor(listing.type === 'sell' ? 0x57f287 : 0xfee75c)
@@ -373,8 +377,18 @@ function listingEmbed(listing: MarketplaceListing): EmbedBuilder {
     const priceDisplay = listing.askingPrice != null
       ? formatPrice(listing.askingPrice)
       : 'Open to offers';
-    fields.push({ name: 'Price', value: `${priceDisplay}${listing.bidsAllowed ? ' *(bids welcome)*' : ' *(firm)*'}`, inline: true });
+    fields.push({ name: 'Price', value: priceDisplay, inline: true });
+    fields.push({
+      name: 'Negotiable?',
+      value: listing.bidsAllowed ? '💬 Open to Offers' : '🔒 Firm Price',
+      inline: true,
+    });
   } else {
+    fields.push({
+      name: 'Offering',
+      value: displayTitle,
+      inline: true,
+    });
     fields.push({
       name: 'Looking For',
       value: listing.lookingFor || 'Open to offers',
@@ -388,7 +402,7 @@ function listingEmbed(listing: MarketplaceListing): EmbedBuilder {
 
   fields.push({
     name: 'Status',
-    value: `${statusEmoji[listing.status]} ${listing.status.charAt(0).toUpperCase() + listing.status.slice(1)}${openBids > 0 ? ` (${openBids} open bid${openBids > 1 ? 's' : ''})` : ''}`,
+    value: `${statusEmoji[listing.status]} ${listing.status.charAt(0).toUpperCase() + listing.status.slice(1)}${openOffers > 0 ? ` (${openOffers} open offer${openOffers > 1 ? 's' : ''})` : ''}`,
     inline: true,
   });
 
@@ -405,19 +419,45 @@ function listingEmbed(listing: MarketplaceListing): EmbedBuilder {
   return embed;
 }
 
-function interestButton(listingId: string, disabled = false): ActionRowBuilder<ButtonBuilder> {
-  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+// Firm-price listings get a "Buy It Now" button alongside "I'm Interested" —
+// there's no price to negotiate, so a buyer who's already decided doesn't need
+// to wait on the seller reviewing an offer. Negotiable sells and trades only
+// ever show "I'm Interested" since there's no fixed price to instantly claim.
+function interestButton(
+  listing: Pick<MarketplaceListing, 'id' | 'type' | 'bidsAllowed'>,
+  disabled = false,
+): ActionRowBuilder<ButtonBuilder> {
+  const buttons: ButtonBuilder[] = [];
+  if (isFirmListing(listing)) {
+    buttons.push(
+      new ButtonBuilder()
+        .setCustomId(`mp_buynow_${listing.id}`)
+        .setLabel('Buy It Now')
+        .setStyle(ButtonStyle.Success)
+        .setEmoji('⚡')
+        .setDisabled(disabled),
+    );
+  }
+  buttons.push(
     new ButtonBuilder()
-      .setCustomId(`mp_interest_${listingId}`)
+      .setCustomId(`mp_interest_${listing.id}`)
       .setLabel("I'm Interested")
       .setStyle(ButtonStyle.Primary)
       .setEmoji('🤝')
       .setDisabled(disabled),
   );
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons);
 }
 
-function bidActionRow(listingId: string, bidId: string): ActionRowBuilder<ButtonBuilder> {
-  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+// A firm-price sell listing has no price to negotiate, so the seller only gets
+// Accept/Deny — the Counter button only makes sense when there's room to move
+// on price (negotiable sells) or on what's being exchanged (trades).
+function isFirmListing(listing: Pick<MarketplaceListing, 'type' | 'bidsAllowed'>): boolean {
+  return listing.type === 'sell' && !listing.bidsAllowed;
+}
+
+function bidActionRow(listingId: string, bidId: string, allowCounter = true): ActionRowBuilder<ButtonBuilder> {
+  const buttons = [
     new ButtonBuilder()
       .setCustomId(`mp_accept_${listingId}_${bidId}`)
       .setLabel('Accept')
@@ -426,11 +466,16 @@ function bidActionRow(listingId: string, bidId: string): ActionRowBuilder<Button
       .setCustomId(`mp_deny_${listingId}_${bidId}`)
       .setLabel('Deny')
       .setStyle(ButtonStyle.Danger),
-    new ButtonBuilder()
-      .setCustomId(`mp_counter_${listingId}_${bidId}`)
-      .setLabel('Counter')
-      .setStyle(ButtonStyle.Secondary),
-  );
+  ];
+  if (allowCounter) {
+    buttons.push(
+      new ButtonBuilder()
+        .setCustomId(`mp_counter_${listingId}_${bidId}`)
+        .setLabel('Counter')
+        .setStyle(ButtonStyle.Secondary),
+    );
+  }
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons);
 }
 
 function buyerResponseRow(listingId: string, bidId: string): ActionRowBuilder<ButtonBuilder> {
@@ -563,7 +608,7 @@ async function postListingToForum(
       await thread.send({
         embeds: [embed],
         files: [bggAttachment],
-        components: [interestButton(listing.id)],
+        components: [interestButton(listing)],
       });
     } else {
       // No thumbnail — single message with embed + BGG logo
@@ -573,7 +618,7 @@ async function postListingToForum(
         message: {
           embeds: [embed],
           files: [bggAttachment],
-          components: [interestButton(listing.id)],
+          components: [interestButton(listing)],
         },
       });
     }
@@ -583,6 +628,17 @@ async function postListingToForum(
     console.error('[marketplace] forum post failed:', err);
     return undefined;
   }
+}
+
+/** Strip buttons from a bid's outstanding DM/thread-fallback prompt and append a closing note. */
+async function lockBidDm(client: Client, bid: Bid, note: string): Promise<void> {
+  if (!bid.dmChannelId || !bid.dmMessageId) return;
+  try {
+    const channel = await client.channels.fetch(bid.dmChannelId);
+    if (!channel || !channel.isTextBased()) return;
+    const message = await channel.messages.fetch(bid.dmMessageId);
+    await message.edit({ content: `${message.content}\n\n${note}`, components: [] });
+  } catch { /* message may be gone or inaccessible */ }
 }
 
 async function updateForumPost(
@@ -623,7 +679,7 @@ async function updateForumPost(
     await embedMsg.edit({
       embeds: [embed],
       files: [bggAttachment],
-      components: isFinalised ? [] : [interestButton(listing.id)],
+      components: isFinalised ? [] : [interestButton(listing)],
     });
 
     if (isFinalised) {
@@ -649,7 +705,7 @@ async function handlePostSell(interaction: ChatInputCommandInteraction): Promise
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const rawItem = interaction.options.getString('item', true);
-  const bidsAllowed = interaction.options.getBoolean('bids_allowed', true);
+  const bidsAllowed = interaction.options.getBoolean('offers_allowed', true);
   const condition = interaction.options.getString('condition', true) as Condition;
   const notes = interaction.options.getString('notes') ?? undefined;
   const guildId = interaction.guildId!;
@@ -991,7 +1047,7 @@ async function finalizeSellListing(
     .setTitle(`Listing created — ${itemName}`)
     .addFields(
       { name: 'Price', value: price != null ? formatPrice(price) : 'Open to offers', inline: true },
-      { name: 'Bids', value: bidsAllowed ? 'Allowed' : 'Firm price', inline: true },
+      { name: 'Negotiable?', value: bidsAllowed ? '💬 Open to Offers' : '🔒 Firm Price', inline: true },
       { name: 'Condition', value: CONDITION_LABELS[condition], inline: true },
       { name: 'Listing ID', value: `\`${listing.id}\``, inline: false },
       ...(forumThreadId ? [{ name: 'Forum Post', value: `[View listing](https://discord.com/channels/${guildId}/${forumThreadId})`, inline: false }] : []),
@@ -1206,6 +1262,7 @@ async function createTradeListing(
     .setColor(0xfee75c)
     .setTitle(`Trade listing created — ${listing.itemName}`)
     .addFields(
+      { name: 'Offering', value: listing.itemName, inline: true },
       { name: 'Looking For', value: lookingFor ?? 'Open to offers', inline: true },
       { name: 'Condition', value: CONDITION_LABELS[condition], inline: true },
       { name: 'Listing ID', value: `\`${listing.id}\``, inline: false },
@@ -1273,11 +1330,11 @@ async function handleBrowse(interaction: ChatInputCommandInteraction): Promise<v
     const priceStr = l.type === 'sell'
       ? (l.askingPrice != null ? formatPrice(l.askingPrice) : 'Open to offers')
       : (l.lookingFor ?? 'Open to offers');
-    const openBids = l.bids.filter((b) => b.status === 'open').length;
+    const openOffers = l.bids.filter((b) => b.status === 'open').length;
     const threadLink = l.forumThreadId
       ? ` — [View listing](https://discord.com/channels/${guildId}/${l.forumThreadId})`
       : '';
-    return `${statusIcon} ${typeIcon} **${l.itemName}** — ${priceStr}${openBids > 0 ? ` *(${openBids} bid${openBids > 1 ? 's' : ''})*` : ''} — by ${l.username}${threadLink}`;
+    return `${statusIcon} ${typeIcon} **${l.itemName}** — ${priceStr}${openOffers > 0 ? ` *(${openOffers} offer${openOffers > 1 ? 's' : ''})*` : ''} — by ${l.username}${threadLink}`;
   });
 
   const moreNote = listings.length > PAGE_SIZE
@@ -1308,8 +1365,8 @@ async function handleMy(interaction: ChatInputCommandInteraction): Promise<void>
     const priceStr = l.type === 'sell'
       ? (l.askingPrice != null ? formatPrice(l.askingPrice) : 'Open to offers')
       : (l.lookingFor ?? 'Open to offers');
-    const openBids = l.bids.filter((b) => b.status === 'open').length;
-    return `${statusEmoji[l.status]} ${typeIcon} **${l.itemName}** — ${priceStr}${openBids > 0 ? ` *(${openBids} open bid${openBids > 1 ? 's' : ''})*` : ''}\n  ID: \`${l.id}\``;
+    const openOffers = l.bids.filter((b) => b.status === 'open').length;
+    return `${statusEmoji[l.status]} ${typeIcon} **${l.itemName}** — ${priceStr}${openOffers > 0 ? ` *(${openOffers} open offer${openOffers > 1 ? 's' : ''})*` : ''}\n  ID: \`${l.id}\``;
   });
 
   await interaction.editReply({
@@ -1482,10 +1539,26 @@ export async function handleAdminPurge(interaction: ChatInputCommandInteraction)
     statusOption === 'all' ? ['active', 'pending', 'sold', 'closed'] :
     ['sold', 'closed'];
 
+  const allListings = await getListingsForGuild(guildId);
+  const listingsToPurge = allListings.filter((l) => {
+    if (targetUser && l.userId !== targetUser.id) return false;
+    return statusFilter.includes(l.status);
+  });
+
   const removed = await purgeListings(guildId, {
     userId: targetUser?.id,
     status: statusFilter,
   });
+
+  for (const listing of listingsToPurge) {
+    if (!listing.forumThreadId) continue;
+    try {
+      const thread = await interaction.client.channels.fetch(listing.forumThreadId) as ThreadChannel;
+      await thread?.delete('Marketplace listing purged by admin');
+    } catch {
+      // thread already gone or inaccessible — nothing to clean up
+    }
+  }
 
   await appendMarketplaceLog({
     timestamp: new Date().toISOString(),
@@ -1596,13 +1669,13 @@ export async function handleInterestButton(interaction: ButtonInteraction, listi
   }
 
   if (listing.userId === interaction.user.id) {
-    await interaction.reply({ content: "You can't bid on your own listing.", flags: MessageFlags.Ephemeral });
+    await interaction.reply({ content: "You can't make an offer on your own listing.", flags: MessageFlags.Ephemeral });
     return;
   }
 
   const existingBid = getOpenBid(listing, interaction.user.id);
   if (existingBid) {
-    await interaction.reply({ content: 'You already have an open bid on this listing.', flags: MessageFlags.Ephemeral });
+    await interaction.reply({ content: 'You already have an open offer on this listing.', flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -1652,7 +1725,134 @@ export async function handleInterestButton(interaction: ButtonInteraction, listi
   await interaction.showModal(modal);
 }
 
-// ── Modal: bid submitted ─────────────────────────────────────────────────────
+// ── Button: Buy It Now (firm listings only) ──────────────────────────────────
+
+function buyNowConfirmRow(listingId: string): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`mp_buynowyes_${listingId}`)
+      .setLabel('Confirm Purchase')
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`mp_buynowno_${listingId}`)
+      .setLabel('Cancel')
+      .setStyle(ButtonStyle.Secondary),
+  );
+}
+
+export async function handleBuyNowButton(interaction: ButtonInteraction, listingId: string): Promise<void> {
+  const guildId = interaction.guildId!;
+  const listing = await getListing(guildId, listingId);
+
+  if (!listing || listing.status === 'sold' || listing.status === 'closed') {
+    await interaction.reply({ content: 'This listing is no longer available.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  if (listing.userId === interaction.user.id) {
+    await interaction.reply({ content: "You can't buy your own listing.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const priceDisplay = listing.askingPrice != null ? formatPrice(listing.askingPrice) : 'the listed price';
+  await interaction.reply({
+    content: `Confirm purchase of **${listing.itemName}** for **${priceDisplay}**? This is final — the seller won't get a chance to review it first.`,
+    components: [buyNowConfirmRow(listingId)],
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+export async function handleBuyNowCancel(interaction: ButtonInteraction): Promise<void> {
+  await interaction.update({ content: 'Purchase cancelled.', components: [] });
+}
+
+export async function handleBuyNowConfirm(interaction: ButtonInteraction, listingId: string): Promise<void> {
+  await interaction.deferUpdate();
+
+  const guildId = interaction.guildId!;
+  const listing = await getListing(guildId, listingId);
+  if (!listing || listing.status === 'sold' || listing.status === 'closed') {
+    await interaction.editReply({ content: 'Sorry, this listing is no longer available.', components: [] });
+    return;
+  }
+
+  const buyerName = interaction.member
+    ? (interaction.member as { displayName?: string }).displayName ?? interaction.user.username
+    : interaction.user.username;
+
+  const result = await buyNow(guildId, listingId, interaction.user.id, buyerName);
+  if (!result) {
+    await interaction.editReply({ content: 'Sorry, this listing is no longer available — someone else may have just bought it.', components: [] });
+    return;
+  }
+
+  await appendMarketplaceLog({
+    timestamp: new Date().toISOString(),
+    guildId,
+    event: 'bid_accepted',
+    listingId,
+    listingName: listing.itemName,
+    listingType: listing.type,
+    actorId: interaction.user.id,
+    actorUsername: interaction.user.username,
+    bidId: result.boughtBid.id,
+    details: 'buy it now',
+  });
+  await appendMarketplaceLog({
+    timestamp: new Date().toISOString(),
+    guildId,
+    event: 'listing_sold',
+    listingId,
+    listingName: listing.itemName,
+    listingType: listing.type,
+    actorId: interaction.user.id,
+    actorUsername: interaction.user.username,
+  });
+
+  // Post visible conclusion to the thread before it gets archived
+  if (result.listing.forumThreadId) {
+    try {
+      const thread = await interaction.client.channels.fetch(result.listing.forumThreadId) as ThreadChannel;
+      await thread.send(
+        `⚡ **Sold instantly!** <@${interaction.user.id}> bought **${listing.itemName}** with Buy It Now. Coordinate the exchange directly. This listing is now closed.`,
+      );
+    } catch { /* thread may be gone */ }
+  }
+
+  await updateForumPost(result.listing, interaction.client, guildId);
+
+  try {
+    const seller = await interaction.client.users.fetch(listing.userId);
+    const inLibrary = (await getGamesByUser(guildId, listing.userId)).some(
+      (e) => e.gameName.toLowerCase() === listing.itemName.toLowerCase(),
+    );
+    const priceDisplay = listing.askingPrice != null ? formatPrice(listing.askingPrice) : 'the listed price';
+    const dmBase = `⚡ <@${interaction.user.id}> (${buyerName}) just bought **${listing.itemName}** with Buy It Now for **${priceDisplay}**! Coordinate the exchange directly.`;
+    if (inLibrary) {
+      await seller.send({
+        content: `${dmBase}\n\n**${listing.itemName}** is in your library. Would you like to remove it now that it's sold?`,
+        components: [libraryRemoveRow(guildId, listing.id)],
+      });
+    } else {
+      await seller.send(dmBase);
+    }
+  } catch { /* DMs disabled */ }
+
+  for (const closedBid of result.closedBids) {
+    try {
+      const buyer = await interaction.client.users.fetch(closedBid.userId);
+      await buyer.send(`Sorry, **${listing.itemName}** has been sold to someone else via Buy It Now. Thanks for your interest!`);
+    } catch { /* DMs disabled */ }
+    await lockBidDm(interaction.client, closedBid, '_🔒 Closed — this listing has been sold to someone else._');
+  }
+
+  await interaction.editReply({
+    content: `✅ Purchase confirmed! **${listing.itemName}** is now marked as sold. Coordinate the exchange with the seller.`,
+    components: [],
+  });
+}
+
+// ── Modal: offer submitted ───────────────────────────────────────────────────
 
 export async function handleBidModal(interaction: ModalSubmitInteraction, listingId: string): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -1695,7 +1895,7 @@ export async function handleBidModal(interaction: ModalSubmitInteraction, listin
   });
 
   if (!result) {
-    await interaction.editReply({ content: 'Could not place bid.' });
+    await interaction.editReply({ content: 'Could not submit offer.' });
     return;
   }
 
@@ -1714,25 +1914,27 @@ export async function handleBidModal(interaction: ModalSubmitInteraction, listin
   });
 
   const config = await getGuildConfig(guildId);
+  const isFirm = isFirmListing(listing);
 
-  const bidLines: string[] = [`**${bidderName}** is interested in **${listing.itemName}**`];
-  if (amount != null) bidLines.push(`Bid: **${formatPrice(amount)}**`);
-  if (offerRaw) bidLines.push(`Offering: **${offerRaw}**`);
-  if (messageRaw) bidLines.push(`Message: ${messageRaw}`);
+  const offerLines: string[] = [`**${bidderName}** is interested in **${listing.itemName}**`];
+  if (amount != null) offerLines.push(`Offer: **${formatPrice(amount)}**`);
+  if (offerRaw) offerLines.push(`Offering: **${offerRaw}**`);
+  if (messageRaw) offerLines.push(`Message: ${messageRaw}`);
 
-  const sellerNotification = bidLines.join('\n');
+  const sellerNotification = offerLines.join('\n');
 
   if (config.marketplaceNegotiationMode === 'private') {
     // Private mode: negotiate via DMs. Seller gets action buttons; forum post reflects updated status only.
     try {
       const seller = await interaction.client.users.fetch(listing.userId);
-      await seller.send({
+      const sentMsg = await seller.send({
         content: [
-          `📬 **New bid on your ${listing.itemName} listing:**`,
+          `📬 **New offer on your ${listing.itemName} listing:**`,
           sellerNotification,
         ].join('\n'),
-        components: [bidActionRow(listingId, result.bid.id)],
+        components: [bidActionRow(listingId, result.bid.id, !isFirm)],
       });
+      await updateBid(guildId, listingId, result.bid.id, { dmChannelId: sentMsg.channelId, dmMessageId: sentMsg.id });
     } catch {
       // seller DMs disabled — fall back to forum post
     }
@@ -1749,7 +1951,7 @@ export async function handleBidModal(interaction: ModalSubmitInteraction, listin
     try {
       threadChannel = await interaction.client.channels.fetch(listing.forumThreadId) as ThreadChannel;
       await threadChannel.send({
-        content: `${sellerNotification}\n📬 <@${listing.userId}> — you have a new bid! Check your DMs from the bot to accept, deny, or counter.`,
+        content: `${sellerNotification}\n📬 <@${listing.userId}> — you have a new offer! Check your DMs from the bot to accept, deny, or counter.`,
       });
       await updateForumPost(result.listing, interaction.client, guildId);
     } catch (err) {
@@ -1759,24 +1961,26 @@ export async function handleBidModal(interaction: ModalSubmitInteraction, listin
     let dmSent = false;
     try {
       const seller = await interaction.client.users.fetch(listing.userId);
-      await seller.send({
+      const sentMsg = await seller.send({
         content: [
-          `📬 New bid on your **${listing.itemName}** listing:`,
+          `📬 New offer on your **${listing.itemName}** listing:`,
           sellerNotification,
         ].join('\n'),
-        components: [bidActionRow(listingId, result.bid.id)],
+        components: [bidActionRow(listingId, result.bid.id, !isFirm)],
       });
       dmSent = true;
+      await updateBid(guildId, listingId, result.bid.id, { dmChannelId: sentMsg.channelId, dmMessageId: sentMsg.id });
     } catch {
       // DMs disabled — post buttons to thread as fallback
     }
 
     if (!dmSent && threadChannel) {
       try {
-        await threadChannel.send({
+        const sentMsg = await threadChannel.send({
           content: `<@${listing.userId}> — your DMs are disabled. Use the buttons below to respond:`,
-          components: [bidActionRow(listingId, result.bid.id)],
+          components: [bidActionRow(listingId, result.bid.id, !isFirm)],
         });
+        await updateBid(guildId, listingId, result.bid.id, { dmChannelId: sentMsg.channelId, dmMessageId: sentMsg.id });
       } catch (err) {
         console.error('[marketplace] fallback button post failed:', err);
       }
@@ -1889,18 +2093,27 @@ export async function handleLibraryKeep(interaction: ButtonInteraction): Promise
   await interaction.reply({ content: 'Got it — the item stays in your library.', flags: MessageFlags.Ephemeral });
 }
 
-// ── Button: Accept bid ───────────────────────────────────────────────────────
+// ── Button: Accept offer ─────────────────────────────────────────────────────
 
 export async function handleAcceptBid(interaction: ButtonInteraction, listingId: string, bidId: string): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-  const guildId = interaction.guildId!;
-  const listing = await getListing(guildId, listingId);
-  if (!listing) { await interaction.editReply({ content: 'Listing not found.' }); return; }
-  if (listing.userId !== interaction.user.id) { await interaction.editReply({ content: 'Only the seller can accept bids.' }); return; }
+  const found = await findListingById(listingId);
+  if (!found) { await interaction.editReply({ content: 'Listing not found.' }); return; }
+  const { guildId, listing } = found;
+  const verb = listing.type === 'sell' ? 'sold' : 'traded';
+  if (listing.userId !== interaction.user.id) { await interaction.editReply({ content: 'Only the seller can accept offers.' }); return; }
+
+  const targetBid = listing.bids.find((b) => b.id === bidId);
+  if (!targetBid) { await interaction.editReply({ content: 'Offer not found.' }); return; }
+  if (targetBid.status !== 'open') {
+    await interaction.editReply({ content: 'This offer is no longer open.' });
+    try { await interaction.message.edit({ content: `${interaction.message.content}\n\n_This offer is no longer open._`, components: [] }); } catch { /* message may not be editable */ }
+    return;
+  }
 
   const result = await acceptBid(guildId, listingId, bidId);
-  if (!result) { await interaction.editReply({ content: 'Bid not found.' }); return; }
+  if (!result) { await interaction.editReply({ content: 'Offer not found.' }); return; }
 
   await appendMarketplaceLog({
     timestamp: new Date().toISOString(),
@@ -1928,7 +2141,6 @@ export async function handleAcceptBid(interaction: ButtonInteraction, listingId:
   if (result.listing.forumThreadId) {
     try {
       const thread = await interaction.client.channels.fetch(result.listing.forumThreadId) as ThreadChannel;
-      const verb = listing.type === 'sell' ? 'sold' : 'traded';
       await thread.send(
         `✅ **Deal done!** <@${listing.userId}> has accepted <@${result.acceptedBid.userId}>'s offer — **${listing.itemName}** is now ${verb}. Coordinate the exchange directly. This listing is now closed.`,
       );
@@ -1948,51 +2160,58 @@ export async function handleAcceptBid(interaction: ButtonInteraction, listingId:
   try {
     const buyer = await interaction.client.users.fetch(result.acceptedBid.userId);
     await buyer.send(
-      `✅ Your bid on **${listing.itemName}** was accepted by ${listing.username}! Coordinate the exchange in the listing thread or message the seller directly.`,
+      `✅ Your offer on **${listing.itemName}** was accepted by ${listing.username}! Coordinate the exchange in the listing thread or message the seller directly.`,
     );
   } catch { /* DMs disabled */ }
 
   for (const closedBid of result.closedBids) {
     try {
       const buyer = await interaction.client.users.fetch(closedBid.userId);
-      await buyer.send(`Sorry, **${listing.itemName}** has been sold to someone else. Thanks for your interest!`);
+      await buyer.send(`Sorry, **${listing.itemName}** has been ${verb} to someone else. Thanks for your interest!`);
     } catch { /* DMs disabled */ }
+    await lockBidDm(interaction.client, closedBid, `_🔒 Closed — this listing has been ${verb} to someone else._`);
   }
 
-  await interaction.editReply({ content: `Bid accepted! **${listing.itemName}** is now marked as sold.` });
+  await interaction.editReply({ content: `Offer accepted! **${listing.itemName}** is now marked as ${verb}.` });
 
   const inLibrary = (await getGamesByUser(guildId, listing.userId)).some(
     (e) => e.gameName.toLowerCase() === listing.itemName.toLowerCase(),
   );
   if (inLibrary) {
     await interaction.followUp({
-      content: `**${listing.itemName}** is in your library. Would you like to remove it now that it's sold?`,
+      content: `**${listing.itemName}** is in your library. Would you like to remove it now that it's ${verb}?`,
       components: [libraryRemoveRow(guildId, listingId)],
       flags: MessageFlags.Ephemeral,
     });
   }
 }
 
-// ── Button: Deny bid ─────────────────────────────────────────────────────────
+// ── Button: Deny offer ────────────────────────────────────────────────────────
 
 export async function handleDenyBid(interaction: ButtonInteraction, listingId: string, bidId: string): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-  const guildId = interaction.guildId!;
-  const listing = await getListing(guildId, listingId);
-  if (!listing) { await interaction.editReply({ content: 'Listing not found.' }); return; }
+  const found = await findListingById(listingId);
+  if (!found) { await interaction.editReply({ content: 'Listing not found.' }); return; }
+  const { guildId, listing } = found;
 
   const isSeller = listing.userId === interaction.user.id;
   const bid = listing.bids.find((b) => b.id === bidId);
   const isBuyer = bid?.userId === interaction.user.id;
 
   if (!isSeller && !isBuyer) {
-    await interaction.editReply({ content: 'Only the seller or the bidder can deny/withdraw this bid.' });
+    await interaction.editReply({ content: 'Only the seller or the other party can deny/withdraw this offer.' });
+    return;
+  }
+
+  if (bid?.status !== 'open') {
+    await interaction.editReply({ content: 'This offer is no longer open.' });
+    try { await interaction.message.edit({ content: `${interaction.message.content}\n\n_This offer is no longer open._`, components: [] }); } catch { /* message may not be editable */ }
     return;
   }
 
   const result = await denyBid(guildId, listingId, bidId);
-  if (!result) { await interaction.editReply({ content: 'Bid not found.' }); return; }
+  if (!result) { await interaction.editReply({ content: 'Offer not found.' }); return; }
 
   const event = isBuyer ? 'bid_withdrawn' : 'bid_denied';
   await appendMarketplaceLog({
@@ -2009,7 +2228,7 @@ export async function handleDenyBid(interaction: ButtonInteraction, listingId: s
 
   // Remove buttons from the DM/thread message that was clicked
   try {
-    const resultLabel = isBuyer ? '↩️ **Withdrawn** — bid withdrawn.' : '❌ **Declined** — bid denied.';
+    const resultLabel = isBuyer ? '↩️ **Withdrawn** — offer withdrawn.' : '❌ **Declined** — offer denied.';
     await interaction.message.edit({
       content: `${interaction.message.content}\n\n${resultLabel}`,
       components: [],
@@ -2021,26 +2240,37 @@ export async function handleDenyBid(interaction: ButtonInteraction, listingId: s
   if (isSeller && bid) {
     try {
       const buyer = await interaction.client.users.fetch(bid.userId);
-      await buyer.send(`Your bid on **${listing.itemName}** was declined. The listing is back to ${result.listing.status}.`);
+      await buyer.send(`Your offer on **${listing.itemName}** was declined. The listing is back to ${result.listing.status}.`);
     } catch { /* DMs disabled */ }
   }
 
-  await interaction.editReply({ content: isBuyer ? 'Your bid has been withdrawn.' : 'Bid denied. The listing is back to active.' });
+  await interaction.editReply({ content: isBuyer ? 'Your offer has been withdrawn.' : 'Offer denied. The listing is back to active.' });
 }
 
-// ── Button: Counter bid ──────────────────────────────────────────────────────
+// ── Button: Counter offer ─────────────────────────────────────────────────────
 
 export async function handleCounterButton(interaction: ButtonInteraction, listingId: string, bidId: string): Promise<void> {
-  const guildId = interaction.guildId!;
-  const listing = await getListing(guildId, listingId);
-  if (!listing) { await interaction.reply({ content: 'Listing not found.', flags: MessageFlags.Ephemeral }); return; }
+  const found = await findListingById(listingId);
+  if (!found) { await interaction.reply({ content: 'Listing not found.', flags: MessageFlags.Ephemeral }); return; }
+  const { listing } = found;
 
   const bid = listing.bids.find((b) => b.id === bidId);
   const isSeller = listing.userId === interaction.user.id;
   const isBuyer = bid?.userId === interaction.user.id;
 
   if (!isSeller && !isBuyer) {
-    await interaction.reply({ content: 'Only the seller or the bidder can counter.', flags: MessageFlags.Ephemeral });
+    await interaction.reply({ content: 'Only the seller or the other party can counter.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  if (bid?.status !== 'open') {
+    await interaction.reply({ content: 'This offer is no longer open.', flags: MessageFlags.Ephemeral });
+    try { await interaction.message.edit({ content: `${interaction.message.content}\n\n_This offer is no longer open._`, components: [] }); } catch { /* message may not be editable */ }
+    return;
+  }
+
+  if (isFirmListing(listing)) {
+    await interaction.reply({ content: "This is a firm-price listing — there's no price to counter.", flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -2107,16 +2337,26 @@ export async function handleCounterModal(
 ): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-  const guildId = interaction.guildId!;
-  const listing = await getListing(guildId, listingId);
-  if (!listing) { await interaction.editReply({ content: 'Listing not found.' }); return; }
+  const found = await findListingById(listingId);
+  if (!found) { await interaction.editReply({ content: 'Listing not found.' }); return; }
+  const { guildId, listing } = found;
 
   const bid = listing.bids.find((b) => b.id === bidId);
-  if (!bid) { await interaction.editReply({ content: 'Bid not found.' }); return; }
+  if (!bid) { await interaction.editReply({ content: 'Offer not found.' }); return; }
 
   const isSeller = listing.userId === interaction.user.id;
   const isBuyer = bid.userId === interaction.user.id;
-  if (!isSeller && !isBuyer) { await interaction.editReply({ content: 'You cannot counter this bid.' }); return; }
+  if (!isSeller && !isBuyer) { await interaction.editReply({ content: 'You cannot counter this offer.' }); return; }
+
+  if (bid.status !== 'open') {
+    await interaction.editReply({ content: 'This offer is no longer open — your counter was not submitted.' });
+    return;
+  }
+
+  if (isFirmListing(listing)) {
+    await interaction.editReply({ content: "This is a firm-price listing — there's no price to counter." });
+    return;
+  }
 
   const amountRaw = interaction.fields.getTextInputValue('counter_amount').trim();
   const offerRaw = interaction.fields.getTextInputValue('counter_offer').trim();
@@ -2163,7 +2403,7 @@ export async function handleCounterModal(
   if (messageRaw) counterLines.push(messageRaw);
 
   const targetUserId = isSeller ? bid.userId : listing.userId;
-  const responseRow = isSeller ? buyerResponseRow(listingId, bidId) : bidActionRow(listingId, bidId);
+  const responseRow = isSeller ? buyerResponseRow(listingId, bidId) : bidActionRow(listingId, bidId, !isFirmListing(listing));
   const threadId = bid.negotiationThreadId ?? listing.forumThreadId;
 
   let counterThread: ThreadChannel | null = null;
@@ -2180,17 +2420,19 @@ export async function handleCounterModal(
   let dmSent = false;
   try {
     const target = await interaction.client.users.fetch(targetUserId);
-    await target.send({ content: counterLines.join('\n'), components: [responseRow] });
+    const sentMsg = await target.send({ content: counterLines.join('\n'), components: [responseRow] });
     dmSent = true;
+    await updateBid(guildId, listingId, bidId, { dmChannelId: sentMsg.channelId, dmMessageId: sentMsg.id });
   } catch { /* DMs disabled */ }
 
   if (!dmSent && counterThread) {
     try {
       const targetMention = `<@${targetUserId}>`;
-      await counterThread.send({
+      const sentMsg = await counterThread.send({
         content: `${targetMention} — your DMs are disabled. Use the buttons below to respond:`,
         components: [responseRow],
       });
+      await updateBid(guildId, listingId, bidId, { dmChannelId: sentMsg.channelId, dmMessageId: sentMsg.id });
     } catch (err) {
       console.error('[marketplace] fallback counter button post failed:', err);
     }
@@ -2206,17 +2448,24 @@ export async function handleBuyerAcceptCounter(
   listingId: string,
   bidId: string,
 ): Promise<void> {
-  const guildId = interaction.guildId!;
-  const listing = await getListing(guildId, listingId);
-  if (!listing) { await interaction.reply({ content: 'Listing not found.', flags: MessageFlags.Ephemeral }); return; }
+  const found = await findListingById(listingId);
+  if (!found) { await interaction.reply({ content: 'Listing not found.', flags: MessageFlags.Ephemeral }); return; }
+  const { guildId, listing } = found;
 
+  const verb = listing.type === 'sell' ? 'sold' : 'traded';
   const bid = listing.bids.find((b) => b.id === bidId);
   if (!bid || bid.userId !== interaction.user.id) {
-    await interaction.reply({ content: 'You are not the bidder on this offer.', flags: MessageFlags.Ephemeral });
+    await interaction.reply({ content: 'You are not the other party on this offer.', flags: MessageFlags.Ephemeral });
     return;
   }
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  if (bid.status !== 'open') {
+    await interaction.editReply({ content: 'This offer is no longer open.' });
+    try { await interaction.message.edit({ content: `${interaction.message.content}\n\n_This offer is no longer open._`, components: [] }); } catch { /* message may not be editable */ }
+    return;
+  }
 
   const result = await acceptBid(guildId, listingId, bidId);
   if (!result) { await interaction.editReply({ content: 'Could not complete acceptance.' }); return; }
@@ -2248,7 +2497,6 @@ export async function handleBuyerAcceptCounter(
   if (result.listing.forumThreadId) {
     try {
       const thread = await interaction.client.channels.fetch(result.listing.forumThreadId) as ThreadChannel;
-      const verb = listing.type === 'sell' ? 'sold' : 'traded';
       await thread.send(
         `✅ **Deal done!** <@${bid.userId}> accepted the counter offer from <@${listing.userId}> — **${listing.itemName}** is now ${verb}. Coordinate the exchange directly. This listing is now closed.`,
       );
@@ -2270,10 +2518,10 @@ export async function handleBuyerAcceptCounter(
     const inLibrary = (await getGamesByUser(guildId, listing.userId)).some(
       (e) => e.gameName.toLowerCase() === listing.itemName.toLowerCase(),
     );
-    const dmBase = `✅ The buyer accepted your counter on **${listing.itemName}**! Coordinate the exchange in the listing thread.`;
+    const dmBase = `✅ The other party accepted your counter on **${listing.itemName}**! Coordinate the exchange in the listing thread.`;
     if (inLibrary) {
       await seller.send({
-        content: `${dmBase}\n\n**${listing.itemName}** is in your library. Would you like to remove it now that it's sold?`,
+        content: `${dmBase}\n\n**${listing.itemName}** is in your library. Would you like to remove it now that it's ${verb}?`,
         components: [libraryRemoveRow(guildId, listing.id)],
       });
     } else {
@@ -2284,9 +2532,10 @@ export async function handleBuyerAcceptCounter(
   for (const closedBid of result.closedBids) {
     try {
       const buyer = await interaction.client.users.fetch(closedBid.userId);
-      await buyer.send(`Sorry, **${listing.itemName}** has been sold to someone else.`);
+      await buyer.send(`Sorry, **${listing.itemName}** has been ${verb} to someone else.`);
     } catch { /* DMs disabled */ }
+    await lockBidDm(interaction.client, closedBid, `_🔒 Closed — this listing has been ${verb} to someone else._`);
   }
 
-  await interaction.editReply({ content: `You accepted the counter — **${listing.itemName}** is now marked as sold. Coordinate the exchange with the seller!` });
+  await interaction.editReply({ content: `You accepted the counter — **${listing.itemName}** is now marked as ${verb}. Coordinate the exchange with the seller!` });
 }

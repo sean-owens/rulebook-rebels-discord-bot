@@ -20,9 +20,8 @@ export interface GuildConfig {
   marketplaceNegotiationMode: 'public' | 'private';
   marketplaceTagIds: Record<string, string>;
   gameNightTagIds: Record<string, string>;
-  // Lineup lock + scheduler (see src/utils/scheduler.ts). 0 = disabled — this is
-  // a new behavior that adds a restriction to /game suggest, so it's opt-in
-  // rather than on by default for existing servers.
+  // Lineup lock + scheduler (see src/utils/scheduler.ts). 0 = disabled.
+  // Defaults to 48h before the event; set to 0 via /host event config to opt out.
   lockHoursBeforeEvent: number;
   scheduleTableCount: number;
   lightBufferMinutes: number;
@@ -62,20 +61,20 @@ const DEFAULT_CONFIG: GuildConfig = {
   facebookGroupUrl: '',
   bggGroupUrl: '',
   openEventChannels: false,
-  eventCategoryName: 'Game Nights',
+  eventCategoryName: 'Events',
   archiveCategoryName: 'Archive',
   archivedChannelRetentionDays: 0,
   marketplaceChannelId: '',
-  marketplaceNegotiationMode: 'public',
+  marketplaceNegotiationMode: 'private',
   marketplaceTagIds: {},
   gameNightTagIds: {},
-  lockHoursBeforeEvent: 0,
+  lockHoursBeforeEvent: 48,
   scheduleTableCount: 1,
-  lightBufferMinutes: 20,
+  lightBufferMinutes: 15,
   mediumBufferMinutes: 30,
-  heavyBufferMinutes: 40,
+  heavyBufferMinutes: 45,
   postBgStatsLinks: false,
-  heavyGameBreakMinutes: 20,
+  heavyGameBreakMinutes: 30,
   maxGameRepeats: 3,
   privateRoomCategoryName: 'Private Rooms',
   timezone: 'UTC',

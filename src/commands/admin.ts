@@ -331,11 +331,11 @@ export const data = new SlashCommandBuilder()
           .addStringOption((opt) =>
             opt
               .setName('negotiation_mode')
-              .setDescription('Where negotiations happen (default: public)')
+              .setDescription('Where negotiations happen (default: private)')
               .setRequired(false)
               .addChoices(
-                { name: 'Public — bids visible in the forum thread', value: 'public' },
-                { name: 'Private — each bid gets its own private thread', value: 'private' },
+                { name: 'Public — offers visible in the forum thread', value: 'public' },
+                { name: 'Private — each offer gets its own private thread', value: 'private' },
               ),
           ),
       )

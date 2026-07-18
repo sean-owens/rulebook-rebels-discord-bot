@@ -120,6 +120,12 @@ function formatTime(date: Date, timeZone = 'UTC'): string {
   });
 }
 
+// Surfaces the event ID in the event channel's own topic, not just the
+// announcement post footer, so a host can find it without leaving the channel.
+function buildEventChannelTopic(title: string, date: string, time: string, location: string, id: string): string {
+  return `${title} — ${date} | ${time} | ${location} | Event ID: ${id}`;
+}
+
 export async function handleCreate(interaction: ChatInputCommandInteraction): Promise<void> {
   if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageEvents)) {
     await interaction.reply({ content: 'Only hosts can schedule events.', flags: MessageFlags.Ephemeral });
@@ -205,6 +211,8 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
     console.warn('Could not find/create event category:', err);
   }
 
+  const id = randomUUID().slice(0, 8);
+
   // Create event channel, then lock it down in a separate step
   let eventChannelId: string | null = null;
   try {
@@ -213,7 +221,7 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
       name: `${slugify(shortDate)}-${slugify(title)}`.slice(0, 100),
       type: ChannelType.GuildText,
       parent: categoryId,
-      topic: `${title} — ${date} | ${time} | ${location}`,
+      topic: buildEventChannelTopic(title, date, time, location, id),
     })) as TextChannel;
     eventChannelId = eventChannel.id;
 
@@ -240,8 +248,6 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
   } catch (err) {
     console.error('Could not create or lock event channel:', err);
   }
-
-  const id = randomUUID().slice(0, 8);
 
   const gn: GameNight = {
     id,
@@ -471,7 +477,7 @@ export async function handleEdit(interaction: ChatInputCommandInteraction): Prom
       if (eventChannel) {
         const shortDate = startTime.toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone });
         await eventChannel.setName(`${slugify(shortDate)}-${slugify(title)}`.slice(0, 100));
-        await eventChannel.setTopic(`${title} — ${date} | ${time} | ${location}`);
+        await eventChannel.setTopic(buildEventChannelTopic(title, date, time, location, gn.id));
       }
     } catch (err) {
       console.warn(`Could not rename/retopic event channel for game night ${id}:`, err);
@@ -701,6 +707,7 @@ export async function handleSetGreeters(interaction: ChatInputCommandInteraction
   const clear = interaction.options.getBoolean('clear') ?? false;
   const greeter1 = interaction.options.getUser('greeter1');
   const greeter2 = interaction.options.getUser('greeter2');
+  const removeUser = interaction.options.getUser('remove');
 
   if (clear) {
     gn.greeters = [];
@@ -709,10 +716,40 @@ export async function handleSetGreeters(interaction: ChatInputCommandInteraction
     return;
   }
 
-  if (!greeter1) {
+  if (removeUser) {
+    const current = gn.greeters ?? [];
+    if (!current.includes(removeUser.id)) {
+      await interaction.reply({
+        content: `<@${removeUser.id}> isn't currently a greeter for event \`${id}\`.`,
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+    const remaining = current.filter((userId) => userId !== removeUser.id);
+    gn.greeters = remaining;
+    await upsertGameNight(gn);
+    try {
+      await updateGameListPin(interaction.client, gn.id);
+    } catch {
+      /* no event channel */
+    }
+    const remainingNote = remaining.length > 0
+      ? ` Remaining greeter: <@${remaining[0]}>.`
+      : ' No greeters remain for this event.';
     await interaction.reply({
-      content:
-        "Provide `greeter1` (and optionally `greeter2`), or set `clear:true` to remove this event's greeters.",
+      content: `Removed <@${removeUser.id}> as a greeter for event \`${id}\`.${remainingNote}`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  if (!greeter1) {
+    const current = gn.greeters ?? [];
+    const content = current.length > 0
+      ? `Current greeter(s) for event \`${id}\`: ${current.map((userId) => `<@${userId}>`).join(' and ')}.`
+      : `No greeters currently set for event \`${id}\`.`;
+    await interaction.reply({
+      content: `${content}\n\nProvide \`greeter1\` (and optionally \`greeter2\`) to set greeters, \`remove\` to remove just one, or \`clear:true\` to remove all.`,
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -800,7 +837,7 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
     const retentionDays = c.archivedChannelRetentionDays ?? 0;
     return [
       '**Event defaults:**',
-      `> Timezone: ${c.timezone}`,
+      `> Timezone: ${c.timezone}${c.timezone === 'UTC' ? ' ⚠️ *not configured — event times will display in UTC, which is likely wrong for your community. Set it with `timezone:America/New_York` (or your own IANA zone).*' : ''}`,
       `> Start time: ${c.defaultTime || '*not set*'}`,
       `> End time: ${c.defaultEndTime || '*not set*'}`,
       `> Location: ${c.defaultLocation || '*not set*'}`,

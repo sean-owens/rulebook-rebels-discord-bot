@@ -5,6 +5,7 @@ import path from 'path';
 import {
   createListing,
   getListing,
+  findListingById,
   getListingsForGuild,
   getActiveListingsForGuild,
   getUserListings,
@@ -13,6 +14,7 @@ import {
   updateBid,
   addCounter,
   acceptBid,
+  buyNow,
   denyBid,
   closeListing,
   reopenListing,
@@ -83,6 +85,22 @@ describe('marketplaceStorage', () => {
     });
   });
 
+  // ── findListingById ────────────────────────────────────────────────────────
+
+  describe('findListingById', () => {
+    it('finds a listing across guilds without knowing its guildId up front', async () => {
+      const l = await createListing('guild-2', { ...BASE_LISTING, userId: 'user-9' });
+      const found = await findListingById(l.id);
+      expect(found?.guildId).toBe('guild-2');
+      expect(found?.listing.id).toBe(l.id);
+    });
+
+    it('returns undefined for an unknown listing id', async () => {
+      await createListing('guild-1', BASE_LISTING);
+      expect(await findListingById('does-not-exist')).toBeUndefined();
+    });
+  });
+
   // ── getUserListings ────────────────────────────────────────────────────────
 
   describe('getUserListings', () => {
@@ -150,6 +168,44 @@ describe('marketplaceStorage', () => {
     it('returns undefined for non-existent bid', async () => {
       const l = await createListing('guild-1', BASE_LISTING);
       expect(await acceptBid('guild-1', l.id, 'bad-bid')).toBeUndefined();
+    });
+  });
+
+  // ── buyNow ────────────────────────────────────────────────────────────────
+
+  describe('buyNow', () => {
+    it('creates an already-accepted bid and marks the listing sold in one step', async () => {
+      const l = await createListing('guild-1', { ...BASE_LISTING, bidsAllowed: false });
+      const result = await buyNow('guild-1', l.id, 'buyer-1', 'Buyer');
+      expect(result).toBeDefined();
+      expect(result!.listing.status).toBe('sold');
+      expect(result!.boughtBid.status).toBe('accepted');
+      expect(result!.boughtBid.userId).toBe('buyer-1');
+    });
+
+    it('closes any existing open bids (e.g. a pending "I\'m Interested" message) as sold_to_other', async () => {
+      const l = await createListing('guild-1', { ...BASE_LISTING, bidsAllowed: false });
+      const existing = await addBid('guild-1', l.id, { userId: 'user-2', username: 'Bob' });
+      const result = await buyNow('guild-1', l.id, 'buyer-1', 'Buyer');
+      expect(result!.closedBids).toHaveLength(1);
+      expect(result!.closedBids[0].id).toBe(existing!.bid.id);
+      expect(result!.closedBids[0].status).toBe('sold_to_other');
+    });
+
+    it('returns undefined for a non-existent listing', async () => {
+      expect(await buyNow('guild-1', 'no-such-listing', 'buyer-1', 'Buyer')).toBeUndefined();
+    });
+
+    it('returns undefined (race lost) when the listing is already sold', async () => {
+      const l = await createListing('guild-1', { ...BASE_LISTING, bidsAllowed: false });
+      await buyNow('guild-1', l.id, 'buyer-1', 'Buyer');
+      expect(await buyNow('guild-1', l.id, 'buyer-2', 'Second Buyer')).toBeUndefined();
+    });
+
+    it('returns undefined for a closed listing', async () => {
+      const l = await createListing('guild-1', { ...BASE_LISTING, bidsAllowed: false });
+      await closeListing('guild-1', l.id);
+      expect(await buyNow('guild-1', l.id, 'buyer-1', 'Buyer')).toBeUndefined();
     });
   });
 
@@ -315,6 +371,17 @@ describe('marketplaceStorage', () => {
       expect(
         await updateBid('guild-1', l.id, 'bad-bid', { negotiationThreadId: 'x' }),
       ).toBeUndefined();
+    });
+
+    it('persists the dmChannelId/dmMessageId of the bid\'s current action prompt', async () => {
+      const l = await createListing('guild-1', BASE_LISTING);
+      const r = await addBid('guild-1', l.id, { userId: 'user-2', username: 'Bob', amount: 20 });
+      const result = await updateBid('guild-1', l.id, r!.bid.id, {
+        dmChannelId: 'dm-channel-1',
+        dmMessageId: 'dm-message-1',
+      });
+      expect(result!.bid.dmChannelId).toBe('dm-channel-1');
+      expect(result!.bid.dmMessageId).toBe('dm-message-1');
     });
   });
 

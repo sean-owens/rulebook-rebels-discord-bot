@@ -9,6 +9,7 @@ import {
   findGamesByName,
   findGameNamesByPartial,
   getGamesByUser,
+  getGamesByUserAndLinked,
   clearUserLibrary,
   loadLibrary,
   addRequest,
@@ -257,6 +258,31 @@ describe('libraryStorage', () => {
     });
   });
 
+  // ── getGamesByUserAndLinked ────────────────────────────────────────────────
+
+  describe('getGamesByUserAndLinked', () => {
+    it('includes games owned by anyone who has linked the caller as a delegate', async () => {
+      const { addLibraryLink } = await import('../src/utils/libraryLinkStorage');
+      await addGame('guild-1', 'alice', 'Wingspan');
+      await addGame('guild-1', 'bob', 'Catan');
+      await addLibraryLink('guild-1', 'alice', 'bob'); // alice shares her library with bob
+
+      const bobsView = await getGamesByUserAndLinked('guild-1', 'bob');
+      expect(bobsView.map((g) => g.gameName).sort()).toEqual(['Catan', 'Wingspan']);
+
+      // Not reciprocal — alice hasn't been granted access to bob's library.
+      const alicesView = await getGamesByUserAndLinked('guild-1', 'alice');
+      expect(alicesView.map((g) => g.gameName)).toEqual(['Wingspan']);
+    });
+
+    it('behaves exactly like getGamesByUser when there are no links', async () => {
+      await addGame('guild-1', 'alice', 'Wingspan');
+      expect(await getGamesByUserAndLinked('guild-1', 'alice')).toEqual(
+        await getGamesByUser('guild-1', 'alice'),
+      );
+    });
+  });
+
   // ── clearUserLibrary ───────────────────────────────────────────────────────
 
   describe('clearUserLibrary', () => {
@@ -464,6 +490,16 @@ describe('libraryStorage', () => {
       await addGame('guild-2', 'user1', 'Wingspan');
       await addRequest('event1', 'Wingspan', 'user2');
       expect(await confirmBring('guild-1', 'event1', 'Wingspan', 'user1')).toBe('not_owner');
+    });
+
+    it("lets a linked delegate confirm bring for the owner's game", async () => {
+      const { addLibraryLink } = await import('../src/utils/libraryLinkStorage');
+      await addGame('guild-1', 'alice', 'Wingspan');
+      await addLibraryLink('guild-1', 'alice', 'bob'); // alice shares her library with bob
+      await addRequest('event1', 'Wingspan', 'carol');
+
+      expect(await confirmBring('guild-1', 'event1', 'Wingspan', 'bob')).toBe('confirmed');
+      expect((await getRequestsForEvent('event1'))[0].confirmedBy).toBe('bob');
     });
   });
 });

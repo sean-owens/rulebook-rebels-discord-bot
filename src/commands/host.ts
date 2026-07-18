@@ -159,6 +159,12 @@ export const data = new SlashCommandBuilder()
               .setName('clear')
               .setDescription("Remove this event's greeters instead of setting them")
               .setRequired(false),
+          )
+          .addUserOption((opt) =>
+            opt
+              .setName('remove')
+              .setDescription('Remove just this one greeter, leaving any other greeter in place')
+              .setRequired(false),
           ),
       ),
   )

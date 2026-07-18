@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { parseDateTime } from '../src/commands/gamenight';
+import { parseDateTime, handleConfig } from '../src/commands/gamenight';
 
 const YEAR = new Date().getFullYear();
 
@@ -14,6 +14,59 @@ vi.mock('../src/utils/requestPin', () => ({
 vi.mock('../src/utils/pins', () => ({
   updateAnnouncementPin: vi.fn(async () => {}),
 }));
+
+describe('handleConfig — view current settings', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-gamenight-config-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeConfigInteraction(options: Record<string, string | number | boolean | null> = {}) {
+    return {
+      guildId: 'guild-config-1',
+      options: {
+        getString: (name: string) => (options[name] as string | undefined) ?? null,
+        getChannel: () => null,
+        getBoolean: (name: string) => (options[name] as boolean | undefined) ?? null,
+        getInteger: (name: string) => (options[name] as number | undefined) ?? null,
+      },
+      reply: vi.fn(async () => {}),
+    } as any;
+  }
+
+  it('warns that timezone is unconfigured (still the UTC default)', async () => {
+    const interaction = makeConfigInteraction();
+    await handleConfig(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('Timezone: UTC ⚠️ *not configured'),
+      }),
+    );
+  });
+
+  it('does not warn once a real timezone has been set', async () => {
+    await handleConfig(makeConfigInteraction({ timezone: 'America/New_York' }));
+
+    const viewInteraction = makeConfigInteraction();
+    await handleConfig(viewInteraction);
+
+    expect(viewInteraction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('Timezone: America/New_York') }),
+    );
+    expect(viewInteraction.reply).not.toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('not configured') }),
+    );
+  });
+});
 
 describe('parseDateTime', () => {
   // Default timezone is UTC (see src/utils/timezone.ts), so assertions use the
@@ -247,6 +300,21 @@ describe('handleCreate', () => {
     const sendCall = guild._announcementChannel.send.mock.calls[0][0];
     const embedTitle = sendCall.embeds[0].data.title;
     expect(embedTitle).toMatch(/^Trivia Night — .*August 22/);
+  });
+
+  it('includes the event ID in the event channel topic, matching the stored GameNight record', async () => {
+    const { handleCreate } = await import('../src/commands/gamenight');
+    const { loadGameNights } = await import('../src/utils/storage');
+    const guild = makeGuild();
+    const interaction = makeCreateInteraction('Board Game Bash', guild);
+
+    await handleCreate(interaction);
+
+    const nights = await loadGameNights();
+    const topicArg = guild.channels.create.mock.calls.find(
+      (call: any[]) => call[0].type === 0,
+    )![0].topic as string;
+    expect(topicArg).toContain(`Event ID: ${nights[0].id}`);
   });
 });
 
@@ -574,6 +642,7 @@ describe('handleEdit', () => {
 
     expect(client._eventChannel.setName).toHaveBeenCalledWith('august-22-trivia-night');
     expect(client._eventChannel.setTopic).toHaveBeenCalledWith(expect.stringContaining('Trivia Night'));
+    expect(client._eventChannel.setTopic).toHaveBeenCalledWith(expect.stringContaining('Event ID: gn-edit-1'));
   });
 
   it('syncs the Discord scheduled event', async () => {
@@ -942,7 +1011,7 @@ describe('handleSetGreeters', () => {
   }
 
   function makeGreetersInteraction(
-    options: { id: string; greeter1?: string | null; greeter2?: string | null; clear?: boolean | null },
+    options: { id: string; greeter1?: string | null; greeter2?: string | null; clear?: boolean | null; remove?: string | null },
     client: ReturnType<typeof makeClientForGreeters>,
   ) {
     return {
@@ -953,7 +1022,10 @@ describe('handleSetGreeters', () => {
       options: {
         getString: (name: string) => (name === 'id' ? options.id : null),
         getUser: (name: string) => {
-          const val = name === 'greeter1' ? options.greeter1 : name === 'greeter2' ? options.greeter2 : null;
+          const val = name === 'greeter1' ? options.greeter1
+            : name === 'greeter2' ? options.greeter2
+            : name === 'remove' ? options.remove
+            : null;
           return val ? { id: val } : null;
         },
         getBoolean: (name: string) => (name === 'clear' ? (options.clear ?? null) : null),
@@ -1013,7 +1085,7 @@ describe('handleSetGreeters', () => {
     );
   });
 
-  it('errors when neither greeter1 nor clear is provided', async () => {
+  it('shows a "no greeters set" view plus usage hint when no options are given and none are set', async () => {
     const { handleSetGreeters } = await import('../src/commands/gamenight');
     await seedGameNight();
     const client = makeClientForGreeters();
@@ -1022,9 +1094,79 @@ describe('handleSetGreeters', () => {
     await handleSetGreeters(interaction);
 
     expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('No greeters currently set'),
+      }),
+    );
+    expect(interaction.reply).toHaveBeenCalledWith(
       expect.objectContaining({ content: expect.stringContaining('Provide `greeter1`') }),
     );
     expect(interaction.deferReply).not.toHaveBeenCalled();
+  });
+
+  it('shows the current greeters when no options are given and some are already set', async () => {
+    const { handleSetGreeters } = await import('../src/commands/gamenight');
+    await seedGameNight({ greeters: ['greeter-a', 'greeter-b'] });
+    const client = makeClientForGreeters();
+    const interaction = makeGreetersInteraction({ id: 'gn-greeters-1' }, client);
+
+    await handleSetGreeters(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('Current greeter(s) for event `gn-greeters-1`: <@greeter-a> and <@greeter-b>'),
+      }),
+    );
+  });
+
+  it('removes just one greeter, leaving the other in place', async () => {
+    const { handleSetGreeters } = await import('../src/commands/gamenight');
+    const { findGameNight } = await import('../src/utils/storage');
+    await seedGameNight({ greeters: ['greeter-a', 'greeter-b'] });
+    const client = makeClientForGreeters();
+    const interaction = makeGreetersInteraction({ id: 'gn-greeters-1', remove: 'greeter-a' }, client);
+
+    await handleSetGreeters(interaction);
+
+    const gn = await findGameNight('gn-greeters-1');
+    expect(gn?.greeters).toEqual(['greeter-b']);
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('Removed <@greeter-a>'),
+      }),
+    );
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('Remaining greeter: <@greeter-b>') }),
+    );
+  });
+
+  it('removing the last greeter leaves none remaining', async () => {
+    const { handleSetGreeters } = await import('../src/commands/gamenight');
+    const { findGameNight } = await import('../src/utils/storage');
+    await seedGameNight({ greeters: ['greeter-a'] });
+    const client = makeClientForGreeters();
+    const interaction = makeGreetersInteraction({ id: 'gn-greeters-1', remove: 'greeter-a' }, client);
+
+    await handleSetGreeters(interaction);
+
+    const gn = await findGameNight('gn-greeters-1');
+    expect(gn?.greeters).toEqual([]);
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('No greeters remain for this event') }),
+    );
+  });
+
+  it('errors when trying to remove someone who is not currently a greeter', async () => {
+    const { handleSetGreeters } = await import('../src/commands/gamenight');
+    await seedGameNight({ greeters: ['greeter-a'] });
+    const client = makeClientForGreeters();
+    const interaction = makeGreetersInteraction({ id: 'gn-greeters-1', remove: 'not-a-greeter' }, client);
+
+    await handleSetGreeters(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining("isn't currently a greeter") }),
+    );
   });
 
   it('errors when greeter1 and greeter2 are the same user', async () => {

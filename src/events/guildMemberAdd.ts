@@ -19,8 +19,8 @@ export async function handleGuildMemberAdd(member: GuildMember): Promise<void> {
       }
 
       fields.push({
-        name: '🎮 Game Nights',
-        value: `Check out <#${config.announcementsChannelId || 'announcements'}> for upcoming game nights. Click **Going** or **Maybe** on any event post to RSVP — you'll automatically get access to that event's private channel!`,
+        name: '🎮 Events',
+        value: `Check out <#${config.announcementsChannelId || 'announcements'}> for upcoming events. Click **Going** or **Maybe** on any event post to RSVP — you'll automatically get access to that event's private channel!`,
       });
 
       fields.push({

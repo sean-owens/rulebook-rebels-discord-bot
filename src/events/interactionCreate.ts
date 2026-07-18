@@ -43,6 +43,9 @@ import {
   execute as executeMarketplace,
   handleAutocomplete as handleMarketplaceAutocomplete,
   handleInterestButton,
+  handleBuyNowButton,
+  handleBuyNowConfirm,
+  handleBuyNowCancel,
   handleBidModal,
   handleAcceptBid,
   handleDenyBid,
@@ -241,6 +244,12 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handlePriceCustomButton(interaction, id.slice('mp_price_custom_'.length));
       } else if (id.startsWith('mp_interest_')) {
         await handleInterestButton(interaction, id.slice('mp_interest_'.length));
+      } else if (id.startsWith('mp_buynowyes_')) {
+        await handleBuyNowConfirm(interaction, id.slice('mp_buynowyes_'.length));
+      } else if (id.startsWith('mp_buynowno_')) {
+        await handleBuyNowCancel(interaction);
+      } else if (id.startsWith('mp_buynow_')) {
+        await handleBuyNowButton(interaction, id.slice('mp_buynow_'.length));
       } else if (id.startsWith('mp_accept_')) {
         const rest = id.slice('mp_accept_'.length);
         const sep = rest.indexOf('_');
