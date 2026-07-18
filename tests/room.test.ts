@@ -17,7 +17,7 @@ function makeGuild(opts: { existingCategory?: boolean; unresolvableIds?: string[
   const eventChannel: any = {
     id: 'room-channel-1',
     name: 'room-channel-1',
-    permissionOverwrites: { create: vi.fn(async () => {}) },
+    permissionOverwrites: { create: vi.fn(async () => {}), delete: vi.fn(async () => {}) },
     send: vi.fn(async () => {}),
     setTopic: vi.fn(async () => {}),
   };
@@ -72,6 +72,7 @@ function makeInteraction(
     date?: string | null;
     persist?: boolean | null;
     enabled?: boolean | null;
+    targetUserId?: string | null;
     sub: string;
   },
   guild: ReturnType<typeof makeGuild>,
@@ -101,6 +102,10 @@ function makeInteraction(
       getSubcommand: () => options.sub,
       getString: (name: string) => values[name] ?? null,
       getBoolean: (name: string) => booleans[name] ?? null,
+      getUser: (name: string) =>
+        name === 'user' && options.targetUserId
+          ? { id: options.targetUserId, username: `user-${options.targetUserId}` }
+          : null,
     },
     reply: vi.fn(async () => {}),
     deferReply: vi.fn(async () => {}),
@@ -816,6 +821,142 @@ describe('/room invite', () => {
   it('replies with a clear error when run outside a private room channel', async () => {
     const guild = makeGuild();
     const interaction = makeInteraction({ sub: 'invite', people: '<@333>' }, guild, 'creator-1', 'general-channel');
+
+    await execute(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('must be run inside a private room channel') }),
+    );
+  });
+});
+
+describe('/room kick', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-room-kick-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  async function createRoomWithInvitee(guild: ReturnType<typeof makeGuild>, creatorId = 'creator-1') {
+    const createInteraction = makeInteraction({ sub: 'create', people: '<@111>' }, guild, creatorId);
+    await execute(createInteraction);
+  }
+
+  it('lets the creator remove an invited person, revoking channel access and updating the room record', async () => {
+    const guild = makeGuild();
+    await createRoomWithInvitee(guild, 'creator-1');
+    const interaction = makeInteraction(
+      { sub: 'kick', targetUserId: '111' },
+      guild,
+      'creator-1',
+      'room-channel-1',
+    );
+
+    await execute(interaction);
+
+    expect(guild._eventChannel.permissionOverwrites.delete).toHaveBeenCalledWith('111');
+    const rooms = await loadRooms();
+    expect(rooms[0].invitedUserIds).not.toContain('111');
+    expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining('Removed'));
+  });
+
+  it('announces the removal in the room channel', async () => {
+    const guild = makeGuild();
+    await createRoomWithInvitee(guild, 'creator-1');
+    const interaction = makeInteraction(
+      { sub: 'kick', targetUserId: '111' },
+      guild,
+      'creator-1',
+      'room-channel-1',
+    );
+
+    await execute(interaction);
+
+    expect(guild._eventChannel.send).toHaveBeenCalledWith(expect.stringContaining('<@111>'));
+  });
+
+  it('lets a host kick someone from a room they did not create', async () => {
+    const guild = makeGuild();
+    await createRoomWithInvitee(guild, 'creator-1');
+    const interaction = makeInteraction(
+      { sub: 'kick', targetUserId: '111' },
+      guild,
+      'some-host',
+      'room-channel-1',
+    );
+    interaction.memberPermissions = { has: (p: bigint) => p === PermissionFlagsBits.ManageEvents };
+
+    await execute(interaction);
+
+    const rooms = await loadRooms();
+    expect(rooms[0].invitedUserIds).not.toContain('111');
+  });
+
+  it('blocks an unprivileged non-creator from kicking people', async () => {
+    const guild = makeGuild();
+    await createRoomWithInvitee(guild, 'creator-1');
+    const interaction = makeInteraction(
+      { sub: 'kick', targetUserId: '111' },
+      guild,
+      'random-user',
+      'room-channel-1',
+    );
+
+    await execute(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining("creator or a host/admin can remove people") }),
+    );
+    const rooms = await loadRooms();
+    expect(rooms[0].invitedUserIds).toContain('111');
+  });
+
+  it("refuses to kick the room's creator", async () => {
+    const guild = makeGuild();
+    await createRoomWithInvitee(guild, 'creator-1');
+    const interaction = makeInteraction(
+      { sub: 'kick', targetUserId: 'creator-1' },
+      guild,
+      'creator-1',
+      'room-channel-1',
+    );
+
+    await execute(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining("can't remove the room's creator") }),
+    );
+    expect(guild._eventChannel.permissionOverwrites.delete).not.toHaveBeenCalled();
+  });
+
+  it('rejects kicking someone who was never invited to this room', async () => {
+    const guild = makeGuild();
+    await createRoomWithInvitee(guild, 'creator-1');
+    const interaction = makeInteraction(
+      { sub: 'kick', targetUserId: '999' },
+      guild,
+      'creator-1',
+      'room-channel-1',
+    );
+
+    await execute(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining("hasn't been individually invited") }),
+    );
+    expect(guild._eventChannel.permissionOverwrites.delete).not.toHaveBeenCalled();
+  });
+
+  it('replies with a clear error when run outside a private room channel', async () => {
+    const guild = makeGuild();
+    const interaction = makeInteraction({ sub: 'kick', targetUserId: '111' }, guild, 'creator-1', 'general-channel');
 
     await execute(interaction);
 
