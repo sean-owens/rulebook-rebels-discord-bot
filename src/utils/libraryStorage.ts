@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { readJson, writeJson } from './db';
 import { GENRE_TAG_DEFINITIONS } from './tagDefinitions';
 import { matchesFuzzy } from './bggCatalog';
+import { getEffectiveOwnerIds } from './libraryLinkStorage';
 
 const LIBRARY_FILE = 'library.json';
 const REQUESTS_FILE = 'library_requests.json';
@@ -140,6 +141,18 @@ export async function getGamesByUser(guildId: string, userId: string): Promise<L
   return (await loadLibrary()).filter((e) => e.guildId === guildId && e.userId === userId);
 }
 
+/**
+ * Like getGamesByUser, but also includes games owned by anyone who has
+ * linked `userId` as a delegate via /library link — i.e. the caller's own
+ * entries plus their effective "shared household" collection.
+ */
+export async function getGamesByUserAndLinked(guildId: string, userId: string): Promise<LibraryEntry[]> {
+  const effectiveOwnerIds = await getEffectiveOwnerIds(guildId, userId);
+  return (await loadLibrary()).filter(
+    (e) => e.guildId === guildId && effectiveOwnerIds.includes(e.userId),
+  );
+}
+
 export async function loadRequests(): Promise<GameRequest[]> {
   return readJson<GameRequest[]>(REQUESTS_FILE, []);
 }
@@ -224,10 +237,11 @@ export async function confirmBring(
   );
   if (idx === -1) return 'not_requested';
 
+  const effectiveOwnerIds = await getEffectiveOwnerIds(guildId, userId);
   const owns = (await loadLibrary()).some(
     (e) =>
       e.guildId === guildId &&
-      e.userId === userId &&
+      effectiveOwnerIds.includes(e.userId) &&
       e.gameName.toLowerCase() === gameName.toLowerCase(),
   );
   if (!owns) return 'not_owner';

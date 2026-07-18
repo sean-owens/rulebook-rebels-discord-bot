@@ -142,6 +142,24 @@ describe('/library add — step ordering', () => {
     );
   });
 
+  // --- Step 1a (linked accounts): shared library recognition ---
+
+  it('step 1a: recognizes a linked delegate\'s game as already "in your library" instead of offering to add a duplicate copy', async () => {
+    const { addLibraryLink } = await import('../src/utils/libraryLinkStorage');
+    await addGame('g1', 'u2', 'Wingspan');
+    await addLibraryLink('g1', 'u2', 'u1'); // u2 shares their library with u1
+    const interaction = makeAddInteraction('Wingspan', 'g1', 'u1');
+    await execute(interaction);
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('already in your library (shared from'),
+      }),
+    );
+    expect(interaction.reply).not.toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('already in the group library') }),
+    );
+  });
+
   // --- Step 2: partial match in guild library ---
 
   it('step 2: shows library partial select when similar game exists', async () => {

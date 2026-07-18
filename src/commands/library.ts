@@ -23,6 +23,7 @@ import {
   removeGame,
   clearUserLibrary,
   getGamesByUser,
+  getGamesByUserAndLinked,
   findGamesByName,
   findGameNamesByPartial,
   getGameInfo,
@@ -39,6 +40,12 @@ import {
   confirmBring,
   GameRequest,
 } from '../utils/libraryStorage';
+import {
+  addLibraryLink,
+  removeLibraryLink,
+  getEffectiveOwnerIds,
+  getLibraryLinksForGuild,
+} from '../utils/libraryLinkStorage';
 import { loadGameNights } from '../utils/storage';
 import { getGameRoles, getMemberPreferences } from '../utils/gameRoles';
 import { updateRequestPin } from '../utils/requestPin';
@@ -82,6 +89,25 @@ interface PendingRequestConfirm {
 }
 const pendingRequestConfirms = new Map<string, PendingRequestConfirm>();
 
+/**
+ * An owner "counts" as attending if they themselves RSVP'd yes/maybe, OR
+ * anyone they've linked as a delegate (via /library link) did — a delegate
+ * attending the event can bring the owner's copy on their behalf even if the
+ * owner isn't there.
+ */
+async function resolveAttendingOwnerIds(
+  guildId: string,
+  ownerIds: string[],
+  rsvps: { yes: string[]; maybe: string[] },
+): Promise<string[]> {
+  const links = await getLibraryLinksForGuild(guildId);
+  const isAttending = (id: string) => rsvps.yes.includes(id) || rsvps.maybe.includes(id);
+  return ownerIds.filter((ownerId) => {
+    const delegateIds = links.filter((l) => l.ownerId === ownerId).map((l) => l.delegateId);
+    return isAttending(ownerId) || delegateIds.some(isAttending);
+  });
+}
+
 async function pickPreferredOwner(eventId: string, attendingOwnerIds: string[]): Promise<string> {
   const requests = await getRequestsForEvent(eventId);
   const bringCounts = new Map<string, number>(attendingOwnerIds.map((id) => [id, 0]));
@@ -105,9 +131,10 @@ async function buildExpansionNote(guildId: string, userId: string, gameName: str
   const info = await getGameInfo(gameName);
   if (!info?.bggExpansions?.length) return '';
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const effectiveOwnerIds = await getEffectiveOwnerIds(guildId, userId);
   const userExpNames = new Set(
     (await loadLibraryForGuild(guildId))
-      .filter((e) => e.userId === userId && e.isExpansion)
+      .filter((e) => effectiveOwnerIds.includes(e.userId) && e.isExpansion)
       .map((e) => norm(e.gameName)),
   );
   const ownedExps = info.bggExpansions.filter((name) => userExpNames.has(norm(name)));
@@ -237,6 +264,22 @@ export const data = new SlashCommandBuilder()
   )
   .addSubcommand((sub) =>
     sub
+      .setName('link')
+      .setDescription("Share your library with another member — they can view it, request from it, and bring your games")
+      .addUserOption((opt) =>
+        opt.setName('user').setDescription('The member to give access to your library').setRequired(true),
+      ),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName('unlink')
+      .setDescription('Remove a library link with another member (works either direction)')
+      .addUserOption((opt) =>
+        opt.setName('user').setDescription('The member to unlink').setRequired(true),
+      ),
+  )
+  .addSubcommand((sub) =>
+    sub
       .setName('bring')
       .setDescription("See which of your games are requested — or confirm you're bringing one")
       .addStringOption((opt) =>
@@ -359,10 +402,11 @@ async function buildBringLines(
   requests: GameRequest[],
   userId: string,
 ): Promise<string[]> {
+  const effectiveOwnerIds = await getEffectiveOwnerIds(guildId, userId);
   const filtered: GameRequest[] = [];
   for (const req of requests) {
-    if (!(await findGamesByName(guildId, req.gameName)).some((e) => e.userId === userId)) continue;
-    if (req.preferredOwnerId && req.preferredOwnerId !== userId) continue;
+    if (!(await findGamesByName(guildId, req.gameName)).some((e) => effectiveOwnerIds.includes(e.userId))) continue;
+    if (req.preferredOwnerId && !effectiveOwnerIds.includes(req.preferredOwnerId)) continue;
     filtered.push(req);
   }
 
@@ -372,7 +416,7 @@ async function buildBringLines(
     const confirmed = req.confirmedBy === userId ? ' ✅ confirmed' : '';
     const copiesNote = copies > 1 ? ` *(${copies} copies needed)*` : '';
     const expansionNote =
-      req.preferredOwnerId === userId
+      req.preferredOwnerId && effectiveOwnerIds.includes(req.preferredOwnerId)
         ? await buildExpansionNote(guildId, userId, req.gameName)
         : '';
     lines.push(`• **${req.gameName}**${expansionNote}${copiesNote}${confirmed}`);
@@ -702,6 +746,62 @@ export async function handleAdminLibraryClear(
   });
 }
 
+// ── Library account linking ──────────────────────────────────────────────────
+//
+// One-directional grant: linking gives the other member delegate access to
+// YOUR library (viewing, request/bring eligibility) — it never touches their
+// data, so no accept/confirm step is needed. For two people to fully share
+// with each other (e.g. a couple), each runs /library link once naming the
+// other. Write operations (add/remove/edit/clear) always stay scoped to
+// whoever literally owns the row, link or no link.
+
+async function handleLink(interaction: ChatInputCommandInteraction): Promise<void> {
+  const target = interaction.options.getUser('user', true);
+  const guildId = interaction.guildId!;
+  const userId = interaction.user.id;
+
+  if (target.id === userId) {
+    await interaction.reply({ content: "You can't link your own account to itself.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+  if (target.bot) {
+    await interaction.reply({ content: "You can't link a bot account.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const existingLinks = await getLibraryLinksForGuild(guildId);
+  const alreadyLinked = existingLinks.some((l) => l.ownerId === userId && l.delegateId === target.id);
+  if (alreadyLinked) {
+    await interaction.reply({
+      content: `<@${target.id}> can already view and manage bringing for your library.`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  await addLibraryLink(guildId, userId, target.id);
+  await interaction.reply({
+    content:
+      `<@${target.id}> can now see your games in their \`/library mine\`, and can request/confirm bringing them. ` +
+      `This only shares *your* library with them — if you'd like the same access to theirs, they'll need to run \`/library link user:@you\`.`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+async function handleUnlink(interaction: ChatInputCommandInteraction): Promise<void> {
+  const target = interaction.options.getUser('user', true);
+  const guildId = interaction.guildId!;
+  const userId = interaction.user.id;
+
+  const removed = await removeLibraryLink(guildId, userId, target.id);
+  await interaction.reply({
+    content: removed
+      ? `Library link with <@${target.id}> removed.`
+      : `You don't have a library link with <@${target.id}>.`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   const group = interaction.options.getSubcommandGroup(false);
   const sub = interaction.options.getSubcommand();
@@ -724,6 +824,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   else if (sub === 'unrequest') await handleUnrequest(interaction);
   else if (sub === 'search') await handleSearch(interaction);
   else if (sub === 'random') await handleRandom(interaction);
+  else if (sub === 'link') await handleLink(interaction);
+  else if (sub === 'unlink') await handleUnlink(interaction);
 }
 
 interface ListSession {
@@ -1248,9 +1350,9 @@ export async function handleLibraryViewSelect(
 }
 
 async function handleMine(interaction: ChatInputCommandInteraction): Promise<void> {
-  const entries = (await getGamesByUser(interaction.guildId!, interaction.user.id)).filter(
-    (e) => !e.isExpansion,
-  );
+  const guildId = interaction.guildId!;
+  const userId = interaction.user.id;
+  const entries = (await getGamesByUserAndLinked(guildId, userId)).filter((e) => !e.isExpansion);
 
   if (entries.length === 0) {
     await interaction.reply({
@@ -1265,7 +1367,11 @@ async function handleMine(interaction: ChatInputCommandInteraction): Promise<voi
   const embed = new EmbedBuilder()
     .setTitle('Your Games')
     .setColor(0x5865f2)
-    .setDescription(sorted.map((e) => `• ${e.gameName}`).join('\n'))
+    .setDescription(
+      sorted
+        .map((e) => `• ${e.gameName}${e.userId !== userId ? ` *(shared from <@${e.userId}>)*` : ''}`)
+        .join('\n'),
+    )
     .setFooter({ text: `${sorted.length} game${sorted.length !== 1 ? 's' : ''}` });
 
   await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
@@ -1450,13 +1556,15 @@ async function handleAdd(interaction: ChatInputCommandInteraction): Promise<void
 
   const guildId = interaction.guildId!;
   const userId = interaction.user.id;
-  const userGames = await getGamesByUser(guildId, userId);
+  const userGames = await getGamesByUserAndLinked(guildId, userId);
   const library = await loadLibraryForGuild(guildId);
 
-  // 1a. Exact match in the user's own library
-  if (userGames.some((e) => e.gameName.toLowerCase() === gameName.toLowerCase())) {
+  // 1a. Exact match in the user's own (or linked) library
+  const ownMatch = userGames.find((e) => e.gameName.toLowerCase() === gameName.toLowerCase());
+  if (ownMatch) {
+    const sharedNote = ownMatch.userId !== userId ? ` (shared from <@${ownMatch.userId}>'s library)` : '';
     await interaction.reply({
-      content: `**${gameName}** is already in your library.`,
+      content: `**${gameName}** is already in your library${sharedNote}.`,
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -1525,9 +1633,11 @@ async function handleAdd(interaction: ChatInputCommandInteraction): Promise<void
       const top = catalogResults[0];
       if (normalizeName(top.name) === normalizeName(gameName)) {
         // Exact canonical match — re-check library with resolved name (catches punctuation differences like "brass birmingham" → "Brass: Birmingham")
-        if (userGames.some((e) => e.gameName.toLowerCase() === top.name.toLowerCase())) {
+        const canonicalOwnMatch = userGames.find((e) => e.gameName.toLowerCase() === top.name.toLowerCase());
+        if (canonicalOwnMatch) {
+          const sharedNote = canonicalOwnMatch.userId !== userId ? ` (shared from <@${canonicalOwnMatch.userId}>'s library)` : '';
           await interaction.reply({
-            content: `**${top.name}** is already in your library.`,
+            content: `**${top.name}** is already in your library${sharedNote}.`,
             flags: MessageFlags.Ephemeral,
           });
           return;
@@ -1605,10 +1715,12 @@ export async function handleLibraryAddPartialSelect(
 
   // User picked a game from the library partial list — add their copy
   const name = value.startsWith('lib|') ? value.slice(4) : value;
-  const userGames = await getGamesByUser(guildId, userId);
-  if (userGames.some((e) => e.gameName.toLowerCase() === name.toLowerCase())) {
+  const userGames = await getGamesByUserAndLinked(guildId, userId);
+  const ownMatch = userGames.find((e) => e.gameName.toLowerCase() === name.toLowerCase());
+  if (ownMatch) {
+    const sharedNote = ownMatch.userId !== userId ? ` (shared from <@${ownMatch.userId}>'s library)` : '';
     await interaction.update({
-      content: `**${name}** is already in your library.`,
+      content: `**${name}** is already in your library${sharedNote}.`,
       components: [],
     });
     return;
@@ -1709,11 +1821,13 @@ export async function handleAddBggSelect(interaction: StringSelectMenuInteractio
 
   const [id, name] = value.split('|', 2);
 
-  // Check if user already owns the selected game
-  const userGames = await getGamesByUser(interaction.guildId!, interaction.user.id);
-  if (userGames.some((e) => e.gameName.toLowerCase() === name.toLowerCase())) {
+  // Check if user already owns (or has linked access to) the selected game
+  const userGames = await getGamesByUserAndLinked(interaction.guildId!, interaction.user.id);
+  const ownMatch = userGames.find((e) => e.gameName.toLowerCase() === name.toLowerCase());
+  if (ownMatch) {
+    const sharedNote = ownMatch.userId !== interaction.user.id ? ` (shared from <@${ownMatch.userId}>'s library)` : '';
     await interaction.update({
-      content: `**${name}** is already in your library.`,
+      content: `**${name}** is already in your library${sharedNote}.`,
       components: [],
     });
     return;
@@ -1959,9 +2073,7 @@ async function handleRequest(interaction: ChatInputCommandInteraction): Promise<
 
   const canonicalName = matches[0].gameName;
   const ownerIds = matches.map((e) => e.userId);
-  const attendingOwnerIds = ownerIds.filter(
-    (id) => event.rsvps.yes.includes(id) || event.rsvps.maybe.includes(id),
-  );
+  const attendingOwnerIds = await resolveAttendingOwnerIds(interaction.guildId!, ownerIds, event.rsvps);
 
   if (attendingOwnerIds.length === 0) {
     await interaction.reply({
@@ -2037,9 +2149,7 @@ export async function handleLibraryRequestSelect(
 
   const canonicalName = matches[0]?.gameName ?? gameName;
   const ownerIds = matches.map((e) => e.userId);
-  const attendingOwnerIds = ownerIds.filter(
-    (id) => event.rsvps.yes.includes(id) || event.rsvps.maybe.includes(id),
-  );
+  const attendingOwnerIds = await resolveAttendingOwnerIds(interaction.guildId!, ownerIds, event.rsvps);
 
   if (attendingOwnerIds.length === 0) {
     await interaction.update({
