@@ -61,6 +61,7 @@ export interface MarketplaceListing {
   lookingFor?: string;
   expansions?: { bggId: string; name: string }[];
   parentItem?: { bggId: string; name: string };
+  includesBaseGame?: boolean;
   status: ListingStatus;
   forumThreadId?: string;
   bids: Bid[];

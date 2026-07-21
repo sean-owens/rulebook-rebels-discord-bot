@@ -502,6 +502,9 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Confirm "Powered by BGG" logo appears in the forum post embed
 - [ ] Run when no marketplace channel is configured — confirm listing is still created, response notes no channel configured
 - [ ] Run with an item that has expansions — confirm expansion select step appears; selecting expansions shows combined price estimate
+- [ ] Run with an item that IS an expansion (e.g. `Wingspan: European Expansion`) — confirm the expansion-select step is **skipped**; instead a prompt asks whether to include the base game, with "✅ Include `<Base Game>`" and "➡️ Just the Expansion" buttons
+- [ ] Choose to include the base game — confirm the price screen title includes "+ Base Game" and combines pricing for both items; the resulting listing embed's title also shows "+ Base Game" and includes an "Includes Base Game" field
+- [ ] Choose "Just the Expansion" — confirm the listing posts normally with no base-game bundling; the embed still shows a "Base game on BGG" reference link, marked "(not included)"
 
 #### Custom / non-BGG items
 - [ ] Start typing an item name that has no BGG match, then select the "📝 not on BGG / custom item" autocomplete option — confirm no BGG price screen appears and you're instead prompted to add a reference link (**Add Link** / **Skip** buttons)
@@ -518,6 +521,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run without `looking_for` — confirm listing shows "Open to offers"
 - [ ] Confirm "I'm Interested" button appears on the forum post
 - [ ] Select the "📝 not on BGG / custom item" autocomplete option — confirm the same Add Link / Skip reference-link flow as `/marketplace post sell` (see 1.7a) applies here too
+- [ ] Run with an item that IS an expansion — confirm the same include-base-game prompt from `/marketplace post sell` (see 1.7a) appears before the trade listing is created
 
 ### 1.7c `/marketplace price`
 
@@ -525,6 +529,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 - [ ] Run `/marketplace price item:Wingspan` — confirm ephemeral embed shows price range, median, avg, distribution histogram, and "Powered by BGG" logo
 - [ ] Run with an item that has expansions — confirm expansion select step appears; selecting expansions shows per-item breakdown and combined estimate with total listing count
+- [ ] Run with an item that IS an expansion — confirm the include-base-game prompt appears instead of an expansion-select step; choosing to include the base game shows a per-item price breakdown including the base game
 - [ ] Run with a custom/non-BGG item (type a name not in the catalog) — confirm "not in the BGG catalog" error
 - [ ] Confirm no listing is created and nothing is posted to the marketplace channel
 
@@ -604,7 +609,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Tap "📦 Sell an Item" — confirm a modal asks for an item name
 - [ ] Submit the modal — confirm a condition select appears (New / Like New / Very Good / Good / Acceptable)
 - [ ] Select a condition — confirm "✅ Allow Offers" / "🔒 Firm Price" buttons appear
-- [ ] Tap either offers button — confirm it proceeds exactly like `/marketplace post sell` would from that point (BGG match → expansion select or price screen; no BGG match → reference-link prompt)
+- [ ] Tap either offers button — confirm it proceeds exactly like `/marketplace post sell` would from that point (BGG match on a base game → expansion select; BGG match on an expansion → include-base-game prompt; otherwise → price screen; no BGG match → reference-link prompt)
 - [ ] Tap "🔄 Propose a Trade" — confirm a modal asks for an item name
 - [ ] Submit the modal and select a condition — confirm it proceeds directly to the listing flow with **no** offers-allowed step, unlike the Sell wizard
 - [ ] Tap "🔍 Browse Listings" — confirm it shows the same output as `/marketplace browse` with no type filter (all sell + trade listings)
@@ -1139,6 +1144,9 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Confirm "Powered by BGG" logo appears in the forum post embed
 - [ ] Run when no marketplace channel is configured — confirm listing is still created, response notes no channel configured
 - [ ] Run with an item that has expansions — confirm expansion select step appears; selecting expansions shows combined price estimate
+- [ ] Run with an item that IS an expansion (e.g. `Wingspan: European Expansion`) — confirm the expansion-select step is **skipped**; instead a prompt asks whether to include the base game, with "✅ Include `<Base Game>`" and "➡️ Just the Expansion" buttons
+- [ ] Choose to include the base game — confirm the price screen title includes "+ Base Game" and combines pricing for both items; the resulting listing embed's title also shows "+ Base Game" and includes an "Includes Base Game" field
+- [ ] Choose "Just the Expansion" — confirm the listing posts normally with no base-game bundling; the embed still shows a "Base game on BGG" reference link, marked "(not included)"
 
 #### Custom / non-BGG items
 - [ ] Start typing an item name that has no BGG match, then select the "📝 not on BGG / custom item" autocomplete option — confirm no BGG price screen appears and you're instead prompted to add a reference link (**Add Link** / **Skip** buttons)
@@ -1155,6 +1163,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run without `looking_for` — confirm listing shows "Open to offers"
 - [ ] Confirm "I'm Interested" button appears on the forum post
 - [ ] Select the "📝 not on BGG / custom item" autocomplete option — confirm the same Add Link / Skip reference-link flow as `/marketplace post sell` (see 2.7a) applies here too
+- [ ] Run with an item that IS an expansion — confirm the same include-base-game prompt from `/marketplace post sell` (see 2.7a) appears before the trade listing is created
 
 ### 2.7c `/marketplace price`
 
@@ -1162,6 +1171,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 - [ ] Run `/marketplace price item:Wingspan` — confirm ephemeral embed shows price range, median, avg, distribution histogram, and "Powered by BGG" logo
 - [ ] Run with an item that has expansions — confirm expansion select step appears; selecting expansions shows per-item breakdown and combined estimate with total listing count
+- [ ] Run with an item that IS an expansion — confirm the include-base-game prompt appears instead of an expansion-select step; choosing to include the base game shows a per-item price breakdown including the base game
 - [ ] Run with a custom/non-BGG item (type a name not in the catalog) — confirm "not in the BGG catalog" error
 - [ ] Confirm no listing is created and nothing is posted to the marketplace channel
 
@@ -1241,7 +1251,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Tap "📦 Sell an Item" — confirm a modal asks for an item name
 - [ ] Submit the modal — confirm a condition select appears (New / Like New / Very Good / Good / Acceptable)
 - [ ] Select a condition — confirm "✅ Allow Offers" / "🔒 Firm Price" buttons appear
-- [ ] Tap either offers button — confirm it proceeds exactly like `/marketplace post sell` would from that point (BGG match → expansion select or price screen; no BGG match → reference-link prompt)
+- [ ] Tap either offers button — confirm it proceeds exactly like `/marketplace post sell` would from that point (BGG match on a base game → expansion select; BGG match on an expansion → include-base-game prompt; otherwise → price screen; no BGG match → reference-link prompt)
 - [ ] Tap "🔄 Propose a Trade" — confirm a modal asks for an item name
 - [ ] Submit the modal and select a condition — confirm it proceeds directly to the listing flow with **no** offers-allowed step, unlike the Sell wizard
 - [ ] Tap "🔍 Browse Listings" — confirm it shows the same output as `/marketplace browse` with no type filter (all sell + trade listings)
@@ -1875,6 +1885,9 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Confirm "Powered by BGG" logo appears in the forum post embed
 - [ ] Run when no marketplace channel is configured — confirm listing is still created, response notes no channel configured
 - [ ] Run with an item that has expansions — confirm expansion select step appears; selecting expansions shows combined price estimate
+- [ ] Run with an item that IS an expansion (e.g. `Wingspan: European Expansion`) — confirm the expansion-select step is **skipped**; instead a prompt asks whether to include the base game, with "✅ Include `<Base Game>`" and "➡️ Just the Expansion" buttons
+- [ ] Choose to include the base game — confirm the price screen title includes "+ Base Game" and combines pricing for both items; the resulting listing embed's title also shows "+ Base Game" and includes an "Includes Base Game" field
+- [ ] Choose "Just the Expansion" — confirm the listing posts normally with no base-game bundling; the embed still shows a "Base game on BGG" reference link, marked "(not included)"
 
 #### Custom / non-BGG items
 - [ ] Start typing an item name that has no BGG match, then select the "📝 not on BGG / custom item" autocomplete option — confirm no BGG price screen appears and you're instead prompted to add a reference link (**Add Link** / **Skip** buttons)
@@ -1891,6 +1904,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run without `looking_for` — confirm listing shows "Open to offers"
 - [ ] Confirm "I'm Interested" button appears on the forum post
 - [ ] Select the "📝 not on BGG / custom item" autocomplete option — confirm the same Add Link / Skip reference-link flow as `/marketplace post sell` (see 3.7a) applies here too
+- [ ] Run with an item that IS an expansion — confirm the same include-base-game prompt from `/marketplace post sell` (see 3.7a) appears before the trade listing is created
 
 ### 3.7c `/marketplace price`
 
@@ -1898,6 +1912,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 - [ ] Run `/marketplace price item:Wingspan` — confirm ephemeral embed shows price range, median, avg, distribution histogram, and "Powered by BGG" logo
 - [ ] Run with an item that has expansions — confirm expansion select step appears; selecting expansions shows per-item breakdown and combined estimate with total listing count
+- [ ] Run with an item that IS an expansion — confirm the include-base-game prompt appears instead of an expansion-select step; choosing to include the base game shows a per-item price breakdown including the base game
 - [ ] Run with a custom/non-BGG item (type a name not in the catalog) — confirm "not in the BGG catalog" error
 - [ ] Confirm no listing is created and nothing is posted to the marketplace channel
 

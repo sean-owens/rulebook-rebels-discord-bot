@@ -21,6 +21,9 @@ import {
   handleHubMarketplaceOffersYes,
   handleHubMarketplaceBrowseButton,
   handleHubMarketplaceMyButton,
+  handleIncludeBaseGameYes,
+  handleIncludeBaseGameNo,
+  handlePriceNone,
 } from '../src/commands/marketplace';
 import {
   createListing,
@@ -30,6 +33,36 @@ import {
   closeListing,
 } from '../src/utils/marketplaceStorage';
 import { updateGuildConfig, getGuildConfig } from '../src/utils/config';
+import { _loadFromCsvText, _resetCatalog } from '../src/utils/bggCatalog';
+
+const EXPANSION_TEST_CSV = `id,name,yearpublished,rank,bayesaverage,average,usersrated,is_expansion,abstracts_rank
+266192,Wingspan,2019,5,8.01,8.10,80000,0,
+266192001,"Wingspan: European Expansion",2019,,,,5000,1,`;
+
+vi.mock('../src/utils/bgg', async () => {
+  const actual = await vi.importActual<typeof import('../src/utils/bgg')>('../src/utils/bgg');
+  return {
+    ...actual,
+    fetchBGGMarketplacePrices: vi.fn(async () => null),
+    getBGGGame: vi.fn(async (id: string) => {
+      if (id === '266192001') {
+        return {
+          id, name: 'Wingspan: European Expansion', bggLink: '', minPlayers: 1, maxPlayers: 5,
+          suggestedPlayers: 2, minPlaytime: 40, maxPlaytime: 70, weight: null, thumbnail: null,
+          expansions: [], parentGame: { id: '266192', name: 'Wingspan' }, tags: [], howToPlayUrl: null,
+        };
+      }
+      if (id === '266192') {
+        return {
+          id, name: 'Wingspan', bggLink: '', minPlayers: 1, maxPlayers: 5,
+          suggestedPlayers: 2, minPlaytime: 40, maxPlaytime: 70, weight: null, thumbnail: null,
+          expansions: [{ id: '266192001', name: 'Wingspan: European Expansion' }], parentGame: undefined, tags: [], howToPlayUrl: null,
+        };
+      }
+      throw new Error(`unexpected BGG id in test: ${id}`);
+    }),
+  };
+});
 
 const BASE_LISTING = {
   guildId: 'guild-1',
@@ -695,6 +728,89 @@ describe('marketplace "Quick Actions" hub', () => {
       expect(interaction.editReply).toHaveBeenCalledWith(
         expect.objectContaining({ content: expect.stringContaining("don't have any listings") }),
       );
+    });
+  });
+
+  describe('Expansion / base-game bundling', () => {
+    beforeEach(() => {
+      _resetCatalog();
+      _loadFromCsvText(EXPANSION_TEST_CSV);
+    });
+
+    afterEach(() => {
+      _resetCatalog();
+    });
+
+    it('offers the expansion-select step (not the base-game prompt) when selling the base game', async () => {
+      await handleHubMarketplaceSellModal(makeModalInteraction('base-1', 'Wingspan', {}));
+      await handleHubMarketplaceConditionSelect(makeSelectInteraction('base-1', 'good', {}));
+      const interaction = makeButtonInteraction('base-1', {});
+
+      await handleHubMarketplaceOffersYes(interaction);
+
+      const call = interaction.editReply.mock.calls[0][0];
+      expect(call.embeds[0].data.title).toContain('Expansions for Wingspan');
+      expect(call.components[0].components[0].data.custom_id).toMatch(/^mp_exp_select_/);
+    });
+
+    it('offers to include the base game (not an expansion-select) when selling an expansion', async () => {
+      await handleHubMarketplaceSellModal(makeModalInteraction('exp-1', 'Wingspan: European Expansion', {}));
+      await handleHubMarketplaceConditionSelect(makeSelectInteraction('exp-1', 'good', {}));
+      const interaction = makeButtonInteraction('exp-1', {});
+
+      await handleHubMarketplaceOffersYes(interaction);
+
+      const call = interaction.editReply.mock.calls[0][0];
+      expect(call.embeds[0].data.title).toBe('Wingspan: European Expansion is an expansion');
+      const customIds = call.components[0].components.map((c: any) => c.data.custom_id);
+      expect(customIds[0]).toMatch(/^mp_base_yes_/);
+      expect(customIds[1]).toMatch(/^mp_base_no_/);
+    });
+
+    it('including the base game carries through to the price screen title and the final listing', async () => {
+      await handleHubMarketplaceSellModal(makeModalInteraction('exp-2', 'Wingspan: European Expansion', {}));
+      await handleHubMarketplaceConditionSelect(makeSelectInteraction('exp-2', 'good', {}));
+      const promptInteraction = makeButtonInteraction('exp-2', {});
+      await handleHubMarketplaceOffersYes(promptInteraction);
+      const draftId = promptInteraction.editReply.mock.calls[0][0].components[0].components[0].data.custom_id.slice('mp_base_yes_'.length);
+
+      const yesInteraction = makeButtonInteraction('exp-2', {});
+      await handleIncludeBaseGameYes(yesInteraction, draftId);
+
+      const priceCall = yesInteraction.editReply.mock.calls[0][0];
+      expect(priceCall.embeds[0].data.title).toContain('Wingspan: European Expansion + Base Game');
+
+      // "List as open to offers" finalizes the listing without needing a real price lookup
+      const noneButton = priceCall.components[0].components.find((c: any) => c.data.custom_id.startsWith('mp_price_none_'));
+      const finalizeInteraction = makeButtonInteraction('exp-2', {});
+      await handlePriceNone(finalizeInteraction, noneButton.data.custom_id.slice('mp_price_none_'.length));
+
+      const listings = await getListingsForGuild('guild-1');
+      const created = listings.find((l) => l.itemName === 'Wingspan: European Expansion');
+      expect(created?.includesBaseGame).toBe(true);
+      expect(created?.parentItem).toEqual({ bggId: '266192', name: 'Wingspan' });
+    });
+
+    it('declining the base game leaves it out of the final listing', async () => {
+      await handleHubMarketplaceSellModal(makeModalInteraction('exp-3', 'Wingspan: European Expansion', {}));
+      await handleHubMarketplaceConditionSelect(makeSelectInteraction('exp-3', 'good', {}));
+      const promptInteraction = makeButtonInteraction('exp-3', {});
+      await handleHubMarketplaceOffersYes(promptInteraction);
+      const draftId = promptInteraction.editReply.mock.calls[0][0].components[0].components[1].data.custom_id.slice('mp_base_no_'.length);
+
+      const noInteraction = makeButtonInteraction('exp-3', {});
+      await handleIncludeBaseGameNo(noInteraction, draftId);
+
+      const priceCall = noInteraction.editReply.mock.calls[0][0];
+      expect(priceCall.embeds[0].data.title).not.toContain('Base Game');
+
+      const noneButton = priceCall.components[0].components.find((c: any) => c.data.custom_id.startsWith('mp_price_none_'));
+      const finalizeInteraction = makeButtonInteraction('exp-3', {});
+      await handlePriceNone(finalizeInteraction, noneButton.data.custom_id.slice('mp_price_none_'.length));
+
+      const listings = await getListingsForGuild('guild-1');
+      const created = listings.find((l) => l.itemName === 'Wingspan: European Expansion' && l.userId === 'exp-3');
+      expect(created?.includesBaseGame).toBe(false);
     });
   });
 });

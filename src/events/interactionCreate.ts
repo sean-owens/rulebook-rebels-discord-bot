@@ -74,6 +74,8 @@ import {
   handleRefModal,
   handleExpansionSelect as handleMarketplaceExpansionSelect,
   handleSkipExpansions,
+  handleIncludeBaseGameYes,
+  handleIncludeBaseGameNo,
   handleHubMarketplaceSellButton,
   handleHubMarketplaceSellModal,
   handleHubMarketplaceTradeButton,
@@ -369,6 +371,10 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handleSkipRefButton(interaction, id.slice('mp_ref_skip_'.length));
       } else if (id.startsWith('mp_exp_skip_')) {
         await handleSkipExpansions(interaction, id.slice('mp_exp_skip_'.length));
+      } else if (id.startsWith('mp_base_yes_')) {
+        await handleIncludeBaseGameYes(interaction, id.slice('mp_base_yes_'.length));
+      } else if (id.startsWith('mp_base_no_')) {
+        await handleIncludeBaseGameNo(interaction, id.slice('mp_base_no_'.length));
       }
     }
   } catch (err) {
