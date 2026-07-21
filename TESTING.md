@@ -2216,20 +2216,22 @@ See 2.8f for the full checklist — this Admin-tier pass just confirms Admins re
 
 #### Text-channel mode (comparison checklist)
 
-Text channels have no forum tags, so status/type visibility is provided by a pinned "🛒 Marketplace Listings" index message instead — a single message listing every active listing grouped by For Sale / For Trade, each linking to its post, refreshed automatically whenever a listing is created, closed, reopened, or sold.
+Text channels have no forum tags and no thread is created for a listing — each listing is a single plain message (embed + button) in the channel. Status/type visibility is provided by a pinned "🛒 Marketplace Listings" index message instead, grouped by For Sale / For Trade and linking to each listing message, refreshed automatically whenever a listing is created, closed, reopened, or sold. Follow-up activity that would post into a forum thread (new-offer notifications, DM-disabled fallback buttons, sold/closed announcements) is instead posted as a **reply** to the listing message.
 
 - [ ] Run `/admin marketplace config channel:#marketplace-text` pointing at a **Text channel** — confirm it's accepted (no "must be a Forum Channel" error) and the reply shows "Quick Actions hub and listing index posted"
 - [ ] Confirm a pinned "🎮 Quick Actions" **message** (not a thread) appears in the text channel, with the same Sell/Trade/Browse/My Listings buttons as the forum hub
 - [ ] Confirm a pinned "🛒 Marketplace Listings" message appears, initially reading "No active listings right now"
-- [ ] Post a sell listing (via `/marketplace post sell` or the hub's "📦 Sell an Item" button) — confirm it posts as a message + thread in the text channel (not a forum post), and the pinned listing index updates to include it under "🏷️ For Sale" with a working link
+- [ ] Post a sell listing (via `/marketplace post sell` or the hub's "📦 Sell an Item" button) — confirm it posts as a single plain message in the text channel (embed + "I'm Interested"/"Buy It Now" button, no thread created), and the pinned listing index updates to include it under "🏷️ For Sale" with a working link
 - [ ] Post a trade listing — confirm it appears under "🔄 For Trade" in the pinned index
-- [ ] Close, then reopen, a text-mode listing — confirm the thread locks/archives (and unlocks/unarchives on reopen) exactly as in forum mode, and the pinned index drops/re-adds the listing accordingly
-- [ ] Sell a text-mode listing via Buy It Now or Accept Offer — confirm the pinned index removes it and the thread is locked/archived with the "sold" closing message
-- [ ] Reconfigure the marketplace channel from Text back to Forum (or vice versa) — confirm the previously-configured mode's pinned messages/threads are left untouched (not deleted) and the newly configured mode's hub/tags or hub/index are set up fresh
+- [ ] With negotiation mode set to Public, submit an offer on a text-mode listing — confirm the "new offer" notification appears as a **reply** to the listing message (not a new top-level message, no thread), and the seller still gets DM action buttons
+- [ ] Temporarily disable DMs from server members, submit an offer on a text-mode listing — confirm the DM-fallback response buttons are posted as a reply to the listing message
+- [ ] Close, then reopen, a text-mode listing — confirm the button is removed/restored on the listing message on each transition (no lock/archive, since there's no thread), and the pinned index drops/re-adds the listing accordingly
+- [ ] Sell a text-mode listing via Buy It Now or Accept Offer — confirm the pinned index removes it, the listing message's button is removed, and a "sold" reply is posted to the listing message
+- [ ] Reconfigure the marketplace channel from Text back to Forum (or vice versa) — confirm the previously-configured mode's pinned messages/posts are left untouched (not deleted) and the newly configured mode's hub/tags or hub/index are set up fresh
 
 ### 3.9n `/admin marketplace purge`
 
-**What it does:** Admin bulk-deletes listings by status, with an optional user filter. Any thread backing a purged listing is deleted too (forum post thread or text-channel listing thread), so purged listings don't linger as posts in the marketplace channel; in text-channel mode the pinned listing index is also refreshed to drop purged listings.
+**What it does:** Admin bulk-deletes listings by status, with an optional user filter. Any thread or message backing a purged listing is deleted too (forum post thread, or the plain listing message in text-channel mode), so purged listings don't linger as posts in the marketplace channel; in text-channel mode the pinned listing index is also refreshed to drop purged listings.
 
 - [ ] 👑 Run as non-admin — confirm "requires Manage Server permission"
 - [ ] Run as admin with no options — confirm sold + closed listings deleted, active/pending remain; reply shows `(filter: sold_closed)`
@@ -2240,7 +2242,7 @@ Text channels have no forum tags, so status/type visibility is provided by a pin
 - [ ] Confirm purge count and filter label are reported accurately in the reply
 - [ ] For a purged listing that has a forum post, confirm its forum thread is deleted from the marketplace channel (not just archived/left behind)
 - [ ] For a purged listing with no forum thread (e.g. never posted), confirm the purge still completes cleanly with no error
-- [ ] In text-channel mode, purge an active listing — confirm its thread is deleted and it disappears from the pinned listing index
+- [ ] In text-channel mode, purge an active listing — confirm its listing message is deleted and it disappears from the pinned listing index
 - [ ] After an admin purge, open `data/marketplace_log.jsonl` — confirm an `admin_purge` entry with count in `details`
 
 ### 3.9o `/admin room config`

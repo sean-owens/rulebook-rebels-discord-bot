@@ -19,7 +19,6 @@ import {
   TextChannel,
   TextInputBuilder,
   TextInputStyle,
-  ThreadAutoArchiveDuration,
   ThreadChannel,
   AutocompleteInteraction,
   ChannelFlags,
@@ -660,12 +659,13 @@ async function postListingToForum(
   }
 }
 
-// Text-channel equivalent of postListingToForum — no forum tags, so the
-// starter message is sent directly to the channel and threaded off of
-// afterward instead of created via ForumChannel.threads.create. Discord gives
-// a thread started from a message the same ID as that message, so downstream
-// code (updateListingPost's "fetch the embed message at thread.id" lookup)
-// works identically for both channel types.
+// Text-channel equivalent of postListingToForum — unlike forum mode, no
+// Discord thread is created. The listing is a single plain message (the
+// thumbnail, if any, is already embedded via listingEmbed's setThumbnail —
+// the forum version's separate thumbnail-only starter message exists purely
+// to feed Discord's forum card preview, which has no text-channel
+// equivalent). Follow-up activity is posted as a reply to this message
+// instead of into a thread — see postListingFollowup.
 async function postListingToTextChannel(
   listing: MarketplaceListing,
   textChannel: TextChannel,
@@ -676,67 +676,62 @@ async function postListingToTextChannel(
     const embed = listingEmbed(listing);
     embed.setImage('attachment://powered_by_BGG_01_SM.png');
 
-    const thumbBuffer = listing.thumbnail ? await fetchImageBuffer(listing.thumbnail) : null;
-
-    let starterMessage;
-    if (thumbBuffer) {
-      starterMessage = await textChannel.send({
-        files: [new AttachmentBuilder(thumbBuffer, { name: 'thumbnail.jpg' })],
-      });
-    } else {
-      starterMessage = await textChannel.send({
-        embeds: [embed],
-        files: [bggAttachment],
-        components: [interestButton(listing)],
-      });
-    }
-
-    const thread = await starterMessage.startThread({
-      name: buildThreadTitle(listing),
-      autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
+    const message = await textChannel.send({
+      embeds: [embed],
+      files: [bggAttachment],
+      components: [interestButton(listing)],
     });
-
-    if (thumbBuffer) {
-      await thread.send({
-        embeds: [embed],
-        files: [bggAttachment],
-        components: [interestButton(listing)],
-      });
-    }
 
     await updateMarketplaceListingIndex(textChannel.client, guildId);
 
-    return thread.id;
+    return message.id;
   } catch (err) {
     console.error('[marketplace] text channel post failed:', err);
     return undefined;
   }
 }
 
+type ListingPostRef = Partial<Pick<MarketplaceListing, 'forumThreadId' | 'listingMessageId' | 'listingChannelId'>>;
+
 // Shared by finalizeSellListing and its trade equivalent — resolves the
 // configured marketplace channel and dispatches to the Forum or Text poster
 // based on its live type, so a listing can be created regardless of which
-// mode a guild has configured.
+// mode a guild has configured. Returns the mode-appropriate id(s) to persist
+// on the listing (see updateListing's patch type).
 async function postListingToChannel(
   listing: MarketplaceListing,
   guildId: string,
   client: Client,
-): Promise<string | undefined> {
+): Promise<ListingPostRef | undefined> {
   const config = await getGuildConfig(guildId);
   if (!config.marketplaceChannelId) return undefined;
   try {
     const channel = await client.channels.fetch(config.marketplaceChannelId);
     if (channel?.type === ChannelType.GuildForum) {
-      return postListingToForum(listing, channel as ForumChannel, guildId);
+      const threadId = await postListingToForum(listing, channel as ForumChannel, guildId);
+      return threadId ? { forumThreadId: threadId } : undefined;
     }
     if (channel?.type === ChannelType.GuildText) {
-      return postListingToTextChannel(listing, channel as TextChannel, guildId);
+      const messageId = await postListingToTextChannel(listing, channel as TextChannel, guildId);
+      return messageId ? { listingMessageId: messageId, listingChannelId: channel.id } : undefined;
     }
     return undefined;
   } catch (err) {
     console.error('[marketplace] marketplace channel fetch failed:', err);
     return undefined;
   }
+}
+
+// Builds the "View listing" URL for either mode, or undefined if the listing
+// was never posted (e.g. no marketplace channel configured at creation time).
+function listingLink(ref: ListingPostRef, guildId: string): string | undefined {
+  if (ref.forumThreadId) {
+    return `https://discord.com/channels/${guildId}/${ref.forumThreadId}`;
+  }
+  if (ref.listingMessageId && ref.listingChannelId) {
+    return `https://discord.com/channels/${guildId}/${ref.listingChannelId}/${ref.listingMessageId}`;
+  }
+  return undefined;
 }
 
 /** Strip buttons from a bid's outstanding DM/thread-fallback prompt and append a closing note. */
@@ -750,14 +745,63 @@ async function lockBidDm(client: Client, bid: Bid, note: string): Promise<void> 
   } catch { /* message may be gone or inaccessible */ }
 }
 
+// Posts a follow-up visible to everyone watching the listing — a new-offer
+// notification, a DM-disabled fallback with response buttons, or a sold/
+// closed announcement. Forum mode posts into the listing's thread; Text mode
+// has no thread, so it replies to the listing message instead (same visual
+// grouping via Discord's reply UI, no thread channel created). Returns the
+// sent message's channel+id so callers can persist it as a bid's DM-fallback
+// location via updateBid, or null if there's nowhere to post (no marketplace
+// channel configured, or the listing/thread/message is gone).
+async function postListingFollowup(
+  listing: MarketplaceListing,
+  client: Client,
+  payload: { content: string; components?: ActionRowBuilder<ButtonBuilder>[] },
+): Promise<{ channelId: string; id: string } | null> {
+  try {
+    if (listing.forumThreadId) {
+      const thread = await client.channels.fetch(listing.forumThreadId) as ThreadChannel;
+      if (!thread) return null;
+      const sent = await thread.send(payload);
+      return { channelId: sent.channelId, id: sent.id };
+    }
+    if (listing.listingMessageId && listing.listingChannelId) {
+      const channel = await client.channels.fetch(listing.listingChannelId);
+      if (!channel || !channel.isTextBased()) return null;
+      const message = await channel.messages.fetch(listing.listingMessageId).catch(() => null);
+      if (!message) return null;
+      const sent = await message.reply(payload);
+      return { channelId: sent.channelId, id: sent.id };
+    }
+  } catch (err) {
+    console.error('[marketplace] listing followup post failed:', err);
+  }
+  return null;
+}
+
 // Channel-agnostic: works whether listing.forumThreadId is a forum post's own
 // thread or a thread started off a message in a Text channel (see
 // postListingToChannel). Forum-only steps (tag updates) are skipped when the
 // thread's parent isn't a forum channel; Text-only steps (the listing index
 // pin) are refreshed when it is a text channel.
+// Dispatches to the Forum-thread or Text-message updater based on which id(s)
+// are populated on the listing — set once at creation time by
+// postListingToChannel and never mixed on a single listing.
 async function updateListingPost(
   listing: MarketplaceListing,
-  client: ForumChannel['client'],
+  client: Client,
+  guildId: string,
+): Promise<void> {
+  if (listing.forumThreadId) {
+    await updateForumThreadPost(listing, client, guildId);
+  } else if (listing.listingMessageId && listing.listingChannelId) {
+    await updateTextChannelListingMessage(listing, client, guildId);
+  }
+}
+
+async function updateForumThreadPost(
+  listing: MarketplaceListing,
+  client: Client,
   guildId: string,
 ): Promise<void> {
   if (!listing.forumThreadId) return;
@@ -765,16 +809,11 @@ async function updateListingPost(
     const thread = await client.channels.fetch(listing.forumThreadId) as ThreadChannel;
     if (!thread) return;
 
-    const parent = thread.parentId ? await client.channels.fetch(thread.parentId).catch(() => null) : null;
-    const isForumThread = parent?.type === ChannelType.GuildForum;
-
-    if (isForumThread) {
-      // Update applied tags to reflect current status
-      const config = await getGuildConfig(guildId);
-      const tags = resolvedTags(config.marketplaceTagIds, listing.type, listing.status);
-      if (tags.length > 0) {
-        await (thread as any).setAppliedTags(tags);
-      }
+    // Update applied tags to reflect current status
+    const config = await getGuildConfig(guildId);
+    const tags = resolvedTags(config.marketplaceTagIds, listing.type, listing.status);
+    if (tags.length > 0) {
+      await (thread as any).setAppliedTags(tags);
     }
 
     // When a thumbnail is present, the starter message is just the image and the
@@ -813,12 +852,48 @@ async function updateListingPost(
       await thread.setArchived(false);
       await thread.setLocked(false);
     }
+  } catch (err) {
+    console.error('[marketplace] forum thread update failed:', err);
+  }
+}
 
-    if (!isForumThread) {
-      await updateMarketplaceListingIndex(client, guildId);
+// Text-mode equivalent — edits the single listing message in place; there's
+// no thread to lock/archive, so "closed" is communicated by dropping the
+// button and posting a reply, and "reopened" by the button simply coming
+// back on the next edit.
+async function updateTextChannelListingMessage(
+  listing: MarketplaceListing,
+  client: Client,
+  guildId: string,
+): Promise<void> {
+  if (!listing.listingMessageId || !listing.listingChannelId) return;
+  try {
+    const channel = await client.channels.fetch(listing.listingChannelId);
+    if (!channel || !channel.isTextBased()) return;
+    const message = await channel.messages.fetch(listing.listingMessageId).catch(() => null);
+    if (!message || message.author.id !== client.user!.id) return;
+
+    const bggAttachment = new AttachmentBuilder('BGG/images/powered_by_BGG_01_SM.png');
+    const embed = listingEmbed(listing);
+    embed.setImage('attachment://powered_by_BGG_01_SM.png');
+
+    const isFinalised = listing.status === 'sold' || listing.status === 'closed';
+    await message.edit({
+      embeds: [embed],
+      files: [bggAttachment],
+      components: isFinalised ? [] : [interestButton(listing)],
+    });
+
+    if (isFinalised) {
+      const closingMessage = listing.status === 'sold'
+        ? `🔴 **This listing has been sold.** Thank you for using the marketplace!`
+        : `⚫ **This listing has been closed** and is no longer available.`;
+      await message.reply(closingMessage);
     }
   } catch (err) {
-    console.error('[marketplace] listing post update failed:', err);
+    console.error('[marketplace] text channel listing update failed:', err);
+  } finally {
+    await updateMarketplaceListingIndex(client, guildId).catch(() => null);
   }
 }
 
@@ -1244,13 +1319,12 @@ async function finalizeSellListing(
   });
 
   let listingPosted = false;
-  let listingThreadId: string | undefined;
-  const threadId = await postListingToChannel(listing, guildId, interaction.client);
-  if (threadId) {
-    await updateListing(guildId, listing.id, { forumThreadId: threadId });
+  const posted = await postListingToChannel(listing, guildId, interaction.client);
+  if (posted) {
+    await updateListing(guildId, listing.id, posted);
     listingPosted = true;
-    listingThreadId = threadId;
   }
+  const postedLink = posted ? listingLink(posted, guildId) : undefined;
 
   const responseEmbed = new EmbedBuilder()
     .setColor(0x57f287)
@@ -1260,7 +1334,7 @@ async function finalizeSellListing(
       { name: 'Negotiable?', value: bidsAllowed ? '💬 Open to Offers' : '🔒 Firm Price', inline: true },
       { name: 'Condition', value: CONDITION_LABELS[condition], inline: true },
       { name: 'Listing ID', value: `\`${listing.id}\``, inline: false },
-      ...(listingThreadId ? [{ name: 'Marketplace Post', value: `[View listing](https://discord.com/channels/${guildId}/${listingThreadId})`, inline: false }] : []),
+      ...(postedLink ? [{ name: 'Marketplace Post', value: `[View listing](${postedLink})`, inline: false }] : []),
     )
     .setFooter({ text: listingPosted ? 'Posted to marketplace channel.' : 'No marketplace channel configured — use /admin marketplace config to set one.' });
 
@@ -1488,13 +1562,12 @@ async function createTradeListing(
   });
 
   let listingPosted = false;
-  let listingThreadId: string | undefined;
-  const threadId = await postListingToChannel(listing, guildId, interaction.client);
-  if (threadId) {
-    await updateListing(guildId, listing.id, { forumThreadId: threadId });
+  const posted = await postListingToChannel(listing, guildId, interaction.client);
+  if (posted) {
+    await updateListing(guildId, listing.id, posted);
     listingPosted = true;
-    listingThreadId = threadId;
   }
+  const postedLink = posted ? listingLink(posted, guildId) : undefined;
 
   const responseEmbed = new EmbedBuilder()
     .setColor(0xfee75c)
@@ -1504,7 +1577,7 @@ async function createTradeListing(
       { name: 'Looking For', value: lookingFor ?? 'Open to offers', inline: true },
       { name: 'Condition', value: CONDITION_LABELS[condition], inline: true },
       { name: 'Listing ID', value: `\`${listing.id}\``, inline: false },
-      ...(listingThreadId ? [{ name: 'Marketplace Post', value: `[View listing](https://discord.com/channels/${guildId}/${listingThreadId})`, inline: false }] : []),
+      ...(postedLink ? [{ name: 'Marketplace Post', value: `[View listing](${postedLink})`, inline: false }] : []),
     )
     .setFooter({ text: listingPosted ? 'Posted to marketplace channel.' : 'No marketplace channel configured.' });
 
@@ -1570,9 +1643,8 @@ async function handleBrowse(interaction: ChatInputCommandInteraction | ButtonInt
       ? (l.askingPrice != null ? formatPrice(l.askingPrice) : 'Open to offers')
       : (l.lookingFor ?? 'Open to offers');
     const openOffers = l.bids.filter((b) => b.status === 'open').length;
-    const threadLink = l.forumThreadId
-      ? ` — [View listing](https://discord.com/channels/${guildId}/${l.forumThreadId})`
-      : '';
+    const link = listingLink(l, guildId);
+    const threadLink = link ? ` — [View listing](${link})` : '';
     return `${statusIcon} ${typeIcon} **${l.itemName}** — ${priceStr}${openOffers > 0 ? ` *(${openOffers} offer${openOffers > 1 ? 's' : ''})*` : ''} — by ${l.username}${threadLink}`;
   });
 
@@ -1838,9 +1910,8 @@ function buildMarketplaceListingIndexEmbed(guildId: string, listings: Marketplac
       ? (l.askingPrice != null ? formatPrice(l.askingPrice) : 'Open to offers')
       : (l.lookingFor ?? 'Open to offers');
     const statusIcon = l.status === 'pending' ? '🟡' : '🟢';
-    const title = l.forumThreadId
-      ? `[${l.itemName}](https://discord.com/channels/${guildId}/${l.forumThreadId})`
-      : l.itemName;
+    const link = listingLink(l, guildId);
+    const title = link ? `[${l.itemName}](${link})` : l.itemName;
     return `${statusIcon} **${title}** — ${priceStr} — by ${l.username}`;
   };
 
@@ -2158,12 +2229,19 @@ export async function handleAdminPurge(interaction: ChatInputCommandInteraction)
   });
 
   for (const listing of listingsToPurge) {
-    if (!listing.forumThreadId) continue;
     try {
-      const thread = await interaction.client.channels.fetch(listing.forumThreadId) as ThreadChannel;
-      await thread?.delete('Marketplace listing purged by admin');
+      if (listing.forumThreadId) {
+        const thread = await interaction.client.channels.fetch(listing.forumThreadId) as ThreadChannel;
+        await thread?.delete('Marketplace listing purged by admin');
+      } else if (listing.listingMessageId && listing.listingChannelId) {
+        const channel = await interaction.client.channels.fetch(listing.listingChannelId);
+        if (channel?.isTextBased()) {
+          const message = await channel.messages.fetch(listing.listingMessageId).catch(() => null);
+          await message?.delete();
+        }
+      }
     } catch {
-      // thread already gone or inaccessible — nothing to clean up
+      // thread/message already gone or inaccessible — nothing to clean up
     }
   }
   await updateMarketplaceListingIndex(interaction.client, guildId).catch(() => null);
@@ -2417,15 +2495,10 @@ export async function handleBuyNowConfirm(interaction: ButtonInteraction, listin
     actorUsername: interaction.user.username,
   });
 
-  // Post visible conclusion to the thread before it gets archived
-  if (result.listing.forumThreadId) {
-    try {
-      const thread = await interaction.client.channels.fetch(result.listing.forumThreadId) as ThreadChannel;
-      await thread.send(
-        `⚡ **Sold instantly!** <@${interaction.user.id}> bought **${listing.itemName}** with Buy It Now. Coordinate the exchange directly. This listing is now closed.`,
-      );
-    } catch { /* thread may be gone */ }
-  }
+  // Post visible conclusion before the listing post gets locked/finalized
+  await postListingFollowup(result.listing, interaction.client, {
+    content: `⚡ **Sold instantly!** <@${interaction.user.id}> bought **${listing.itemName}** with Buy It Now. Coordinate the exchange directly. This listing is now closed.`,
+  });
 
   await updateListingPost(result.listing, interaction.client, guildId);
 
@@ -2532,7 +2605,7 @@ export async function handleBidModal(interaction: ModalSubmitInteraction, listin
   const sellerNotification = offerLines.join('\n');
 
   if (config.marketplaceNegotiationMode === 'private') {
-    // Private mode: negotiate via DMs. Seller gets action buttons; forum post reflects updated status only.
+    // Private mode: negotiate via DMs. Seller gets action buttons; the listing post reflects updated status only.
     try {
       const seller = await interaction.client.users.fetch(listing.userId);
       const sentMsg = await seller.send({
@@ -2544,26 +2617,22 @@ export async function handleBidModal(interaction: ModalSubmitInteraction, listin
       });
       await updateBid(guildId, listingId, result.bid.id, { dmChannelId: sentMsg.channelId, dmMessageId: sentMsg.id });
     } catch {
-      // seller DMs disabled — fall back to forum post
+      // seller DMs disabled — fall back to the listing post
     }
-    if (listing.forumThreadId) {
-      try {
-        await updateListingPost(result.listing, interaction.client, guildId);
-      } catch (err) {
-        console.error('[marketplace] private mode forum update failed:', err);
-      }
-    }
-  } else if (listing.forumThreadId) {
-    // Forum mode: post text-only notification to thread, send action buttons via DM
-    let threadChannel: ThreadChannel | null = null;
     try {
-      threadChannel = await interaction.client.channels.fetch(listing.forumThreadId) as ThreadChannel;
-      await threadChannel.send({
+      await updateListingPost(result.listing, interaction.client, guildId);
+    } catch (err) {
+      console.error('[marketplace] private mode listing update failed:', err);
+    }
+  } else {
+    // Public mode: post a text-only notification to the listing post, send action buttons via DM
+    try {
+      await postListingFollowup(listing, interaction.client, {
         content: `${sellerNotification}\n📬 <@${listing.userId}> — you have a new offer! Check your DMs from the bot to accept, deny, or counter.`,
       });
       await updateListingPost(result.listing, interaction.client, guildId);
     } catch (err) {
-      console.error('[marketplace] forum thread post failed:', err);
+      console.error('[marketplace] public offer notification failed:', err);
     }
 
     let dmSent = false;
@@ -2579,18 +2648,16 @@ export async function handleBidModal(interaction: ModalSubmitInteraction, listin
       dmSent = true;
       await updateBid(guildId, listingId, result.bid.id, { dmChannelId: sentMsg.channelId, dmMessageId: sentMsg.id });
     } catch {
-      // DMs disabled — post buttons to thread as fallback
+      // DMs disabled — post buttons to the listing post as fallback
     }
 
-    if (!dmSent && threadChannel) {
-      try {
-        const sentMsg = await threadChannel.send({
-          content: `<@${listing.userId}> — your DMs are disabled. Use the buttons below to respond:`,
-          components: [bidActionRow(listingId, result.bid.id, !isFirm)],
-        });
-        await updateBid(guildId, listingId, result.bid.id, { dmChannelId: sentMsg.channelId, dmMessageId: sentMsg.id });
-      } catch (err) {
-        console.error('[marketplace] fallback button post failed:', err);
+    if (!dmSent) {
+      const fallback = await postListingFollowup(listing, interaction.client, {
+        content: `<@${listing.userId}> — your DMs are disabled. Use the buttons below to respond:`,
+        components: [bidActionRow(listingId, result.bid.id, !isFirm)],
+      });
+      if (fallback) {
+        await updateBid(guildId, listingId, result.bid.id, { dmChannelId: fallback.channelId, dmMessageId: fallback.id });
       }
     }
   }
@@ -2601,7 +2668,7 @@ export async function handleBidModal(interaction: ModalSubmitInteraction, listin
 
   const modeNote = config.marketplaceNegotiationMode === 'private'
     ? 'The seller has been notified via DM.'
-    : 'Check the listing thread for updates.';
+    : 'Check the listing post for updates.';
   await interaction.editReply({ content: `Your interest has been sent to the seller. ${modeNote}` });
 }
 
@@ -2745,15 +2812,10 @@ export async function handleAcceptBid(interaction: ButtonInteraction, listingId:
     actorUsername: interaction.user.username,
   });
 
-  // Post visible conclusion to the thread before it gets archived
-  if (result.listing.forumThreadId) {
-    try {
-      const thread = await interaction.client.channels.fetch(result.listing.forumThreadId) as ThreadChannel;
-      await thread.send(
-        `✅ **Deal done!** <@${listing.userId}> has accepted <@${result.acceptedBid.userId}>'s offer — **${listing.itemName}** is now ${verb}. Coordinate the exchange directly. This listing is now closed.`,
-      );
-    } catch { /* thread may be gone */ }
-  }
+  // Post visible conclusion before the listing post gets locked/finalized
+  await postListingFollowup(result.listing, interaction.client, {
+    content: `✅ **Deal done!** <@${listing.userId}> has accepted <@${result.acceptedBid.userId}>'s offer — **${listing.itemName}** is now ${verb}. Coordinate the exchange directly. This listing is now closed.`,
+  });
 
   // Remove buttons from the DM/thread message that was clicked
   try {
@@ -3012,18 +3074,11 @@ export async function handleCounterModal(
 
   const targetUserId = isSeller ? bid.userId : listing.userId;
   const responseRow = isSeller ? buyerResponseRow(listingId, bidId) : bidActionRow(listingId, bidId, !isFirmListing(listing));
-  const threadId = bid.negotiationThreadId ?? listing.forumThreadId;
 
-  let counterThread: ThreadChannel | null = null;
-  if (threadId) {
-    try {
-      counterThread = await interaction.client.channels.fetch(threadId) as ThreadChannel;
-      // Post text-only to thread; buttons go to the recipient via DM
-      await counterThread.send({ content: `${counterLines.join('\n')}\n📬 <@${targetUserId}> — check your DMs from the bot to respond.` });
-    } catch (err) {
-      console.error('[marketplace] counter post to thread failed:', err);
-    }
-  }
+  // Post text-only to the listing post; buttons go to the recipient via DM
+  await postListingFollowup(listing, interaction.client, {
+    content: `${counterLines.join('\n')}\n📬 <@${targetUserId}> — check your DMs from the bot to respond.`,
+  });
 
   let dmSent = false;
   try {
@@ -3033,16 +3088,13 @@ export async function handleCounterModal(
     await updateBid(guildId, listingId, bidId, { dmChannelId: sentMsg.channelId, dmMessageId: sentMsg.id });
   } catch { /* DMs disabled */ }
 
-  if (!dmSent && counterThread) {
-    try {
-      const targetMention = `<@${targetUserId}>`;
-      const sentMsg = await counterThread.send({
-        content: `${targetMention} — your DMs are disabled. Use the buttons below to respond:`,
-        components: [responseRow],
-      });
-      await updateBid(guildId, listingId, bidId, { dmChannelId: sentMsg.channelId, dmMessageId: sentMsg.id });
-    } catch (err) {
-      console.error('[marketplace] fallback counter button post failed:', err);
+  if (!dmSent) {
+    const fallback = await postListingFollowup(listing, interaction.client, {
+      content: `<@${targetUserId}> — your DMs are disabled. Use the buttons below to respond:`,
+      components: [responseRow],
+    });
+    if (fallback) {
+      await updateBid(guildId, listingId, bidId, { dmChannelId: fallback.channelId, dmMessageId: fallback.id });
     }
   }
 
@@ -3101,15 +3153,10 @@ export async function handleBuyerAcceptCounter(
     actorUsername: interaction.user.username,
   });
 
-  // Post visible conclusion to the thread before it gets archived
-  if (result.listing.forumThreadId) {
-    try {
-      const thread = await interaction.client.channels.fetch(result.listing.forumThreadId) as ThreadChannel;
-      await thread.send(
-        `✅ **Deal done!** <@${bid.userId}> accepted the counter offer from <@${listing.userId}> — **${listing.itemName}** is now ${verb}. Coordinate the exchange directly. This listing is now closed.`,
-      );
-    } catch { /* thread may be gone */ }
-  }
+  // Post visible conclusion before the listing post gets locked/finalized
+  await postListingFollowup(result.listing, interaction.client, {
+    content: `✅ **Deal done!** <@${bid.userId}> accepted the counter offer from <@${listing.userId}> — **${listing.itemName}** is now ${verb}. Coordinate the exchange directly. This listing is now closed.`,
+  });
 
   // Remove buttons from the DM message that was clicked
   try {

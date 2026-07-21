@@ -36,8 +36,7 @@ export interface Bid {
   message?: string;
   status: BidStatus;
   counters: Counter[];
-  negotiationThreadId?: string;
-  /** Channel + message ID of the current DM (or thread-fallback) prompt awaiting a response for this bid. */
+  /** Channel + message ID of the current DM (or thread/reply-fallback) prompt awaiting a response for this bid. */
   dmChannelId?: string;
   dmMessageId?: string;
   createdAt: string;
@@ -63,11 +62,16 @@ export interface MarketplaceListing {
   parentItem?: { bggId: string; name: string };
   includesBaseGame?: boolean;
   status: ListingStatus;
-  // The Discord thread holding this listing's embed/button, whether that's a
-  // forum post's own thread or a thread started off a message in a Text
-  // channel — both marketplace channel modes are supported (see
-  // postListingToChannel in marketplace.ts).
+  // Forum-mode only: the forum post's own thread, holding this listing's
+  // embed/button (see postListingToChannel in marketplace.ts).
   forumThreadId?: string;
+  // Text-mode only: the listing's embed/button lives in a plain message
+  // (listingMessageId) in the configured Text channel (listingChannelId) — no
+  // Discord thread is created. Follow-up activity (offer notifications, DM
+  // fallback, sold/closed announcements) is posted as a reply to this message
+  // instead of into a thread (see postListingFollowup in marketplace.ts).
+  listingMessageId?: string;
+  listingChannelId?: string;
   bids: Bid[];
   createdAt: string;
   updatedAt: string;
@@ -144,7 +148,7 @@ export async function createListing(
 export async function updateListing(
   guildId: string,
   listingId: string,
-  patch: Partial<Pick<MarketplaceListing, 'status' | 'forumThreadId' | 'bids' | 'updatedAt'>>,
+  patch: Partial<Pick<MarketplaceListing, 'status' | 'forumThreadId' | 'listingMessageId' | 'listingChannelId' | 'bids' | 'updatedAt'>>,
 ): Promise<MarketplaceListing | undefined> {
   const store = await load();
   const listings = store[guildId] ?? [];
@@ -194,7 +198,7 @@ export async function updateBid(
   guildId: string,
   listingId: string,
   bidId: string,
-  patch: Partial<Pick<Bid, 'status' | 'negotiationThreadId' | 'counters' | 'dmChannelId' | 'dmMessageId'>>,
+  patch: Partial<Pick<Bid, 'status' | 'counters' | 'dmChannelId' | 'dmMessageId'>>,
 ): Promise<{ listing: MarketplaceListing; bid: Bid } | undefined> {
   const store = await load();
   const listings = store[guildId] ?? [];
