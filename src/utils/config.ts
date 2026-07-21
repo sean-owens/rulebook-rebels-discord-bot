@@ -22,12 +22,25 @@ export interface GuildConfig {
   eventCategoryName: string;
   archiveCategoryName: string;
   archivedChannelRetentionDays: number; // 0 = never auto-delete
+  // marketplaceChannelId may point at either a Forum channel or a Text channel —
+  // both are supported (see postListingToChannel in marketplace.ts), decided by
+  // checking the live channel's type rather than a cached mode flag here.
   marketplaceChannelId: string;
   // "Quick Actions" button hub (see updateMarketplaceHubThread in marketplace.ts) —
   // a pinned forum post with Sell/Trade/Browse/My Listings buttons, kept in sync
   // whenever marketplaceChannelId is (re)configured via /admin marketplace config.
+  // Forum-mode only — see marketplaceHubMessageId for the Text-channel equivalent.
   marketplaceHubThreadId?: string;
+  // Text-channel equivalent of marketplaceHubThreadId — same Quick Actions embed/
+  // buttons, but as a plain pinned message rather than a forum thread (see
+  // updateMarketplaceHubMessage in marketplace.ts).
+  marketplaceHubMessageId?: string;
+  // Text-channel-only pinned message listing all active listings grouped by
+  // type, substituting for forum tags' status/type filtering (see
+  // updateMarketplaceListingIndex in marketplace.ts).
+  marketplaceListingIndexMessageId?: string;
   marketplaceNegotiationMode: 'public' | 'private';
+  // Forum-mode only — unused when marketplaceChannelId is a Text channel.
   marketplaceTagIds: Record<string, string>;
   gameNightTagIds: Record<string, string>;
   // Lineup lock + scheduler (see src/utils/scheduler.ts). 0 = disabled.

@@ -63,6 +63,10 @@ export interface MarketplaceListing {
   parentItem?: { bggId: string; name: string };
   includesBaseGame?: boolean;
   status: ListingStatus;
+  // The Discord thread holding this listing's embed/button, whether that's a
+  // forum post's own thread or a thread started off a message in a Text
+  // channel — both marketplace channel modes are supported (see
+  // postListingToChannel in marketplace.ts).
   forumThreadId?: string;
   bids: Bid[];
   createdAt: string;
