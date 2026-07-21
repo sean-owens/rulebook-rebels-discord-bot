@@ -1,4 +1,4 @@
-import { Client, EmbedBuilder, TextChannel } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Client, EmbedBuilder, TextChannel } from 'discord.js';
 import { loadGameNights, upsertGameNight } from './storage';
 import { getRequestsForEvent, loadLibraryForGuild, GameRequest } from './libraryStorage';
 import { findGamesByChannel, GameSuggestion } from './gameStorage';
@@ -16,11 +16,10 @@ export async function buildRequestEmbed(
 
   for (const req of requests) {
     const copies = req.copiesNeeded ?? 1;
-    const confirmed = req.confirmedBy ? ' ✅' : '';
     const label =
       copies > 1
-        ? `${req.gameName} *(${copies} copies needed)*${confirmed}`
-        : `${req.gameName}${confirmed}`;
+        ? `${req.gameName} *(${req.confirmations.length}/${copies} copies confirmed)*`
+        : `${req.gameName}${req.confirmations.length > 0 ? ' ✅' : ''}`;
     const owners = [
       ...new Set(
         library
@@ -200,5 +199,73 @@ export async function updateRequestPin(client: Client, eventId: string): Promise
   }
 
   gameNight.requestPinMessageId = msg.id;
+  await upsertGameNight(gameNight);
+}
+
+export function buildHubEmbed(): EmbedBuilder {
+  return new EmbedBuilder()
+    .setTitle('🎮 Quick Actions')
+    .setColor(0x57f287)
+    .setDescription(
+      "Prefer tapping over typing? Use the buttons below instead of slash commands.",
+    )
+    .addFields(
+      { name: '🎲 Suggest a Game', value: "Add a game to this event's lineup." },
+      { name: '🙋 Request a Game to Bring', value: 'Ask an owner to bring a specific game.' },
+      { name: '📋 My Games to Bring', value: "See which of your games have been requested." },
+    );
+}
+
+export function buildHubButtons(): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId('hub_suggest').setLabel('🎲 Suggest a Game').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('hub_request').setLabel('🙋 Request a Game to Bring').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('hub_bring').setLabel('📋 My Games to Bring').setStyle(ButtonStyle.Secondary),
+  );
+}
+
+// Posted once at event-channel creation (see handleCreate in gamenight.ts) —
+// unlike the other pins here, this doesn't wait for a suggest/request to
+// happen first, since its whole purpose is to be the discovery mechanism for
+// members who wouldn't otherwise know those commands exist.
+export async function updateHubPin(client: Client, eventId: string): Promise<void> {
+  const all = await loadGameNights();
+  const gameNight = all.find((gn) => gn.id === eventId);
+  if (!gameNight?.eventChannelId) return;
+
+  let channel: TextChannel;
+  try {
+    channel = (await client.channels.fetch(gameNight.eventChannelId)) as TextChannel;
+  } catch {
+    return;
+  }
+
+  const payload = { embeds: [buildHubEmbed()], components: [buildHubButtons()] };
+
+  if (gameNight.hubPinMessageId) {
+    try {
+      const msg = await channel.messages.fetch(gameNight.hubPinMessageId);
+      await msg.edit(payload);
+      if (!msg.pinned) {
+        try {
+          await msg.pin();
+        } catch (err) {
+          console.warn(`Could not re-pin hub message in channel ${gameNight.eventChannelId}:`, err);
+        }
+      }
+      return;
+    } catch {
+      /* message was deleted — fall through and repost */
+    }
+  }
+
+  const msg = await channel.send(payload);
+  try {
+    await msg.pin();
+  } catch (err) {
+    console.warn(`Could not pin hub message in channel ${gameNight.eventChannelId}:`, err);
+  }
+
+  gameNight.hubPinMessageId = msg.id;
   await upsertGameNight(gameNight);
 }

@@ -28,6 +28,7 @@ import {
   handleAdminPurge as handleMarketplacePurge,
 } from './marketplace';
 import { handleRoomConfig } from './room';
+import { handleGeneralHubConfig } from '../utils/generalHub';
 
 export const data = new SlashCommandBuilder()
   .setName('admin')
@@ -376,6 +377,23 @@ export const data = new SlashCommandBuilder()
               .setRequired(false),
           ),
       ),
+  )
+  // ── general group ────────────────────────────────────────────────────────────
+  .addSubcommandGroup((group) =>
+    group
+      .setName('general')
+      .setDescription('General chat "Quick Actions" hub administration')
+      .addSubcommand((sub) =>
+        sub
+          .setName('config')
+          .setDescription('Set the channel for the general chat "Quick Actions" button hub')
+          .addChannelOption((opt) =>
+            opt
+              .setName('channel')
+              .setDescription('Text channel to post the Quick Actions hub in (e.g. #general)')
+              .setRequired(false),
+          ),
+      ),
   );
 
 export async function handleAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
@@ -424,6 +442,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     else if (sub === 'purge') await handleMarketplacePurge(interaction);
   } else if (group === 'room') {
     if (sub === 'config') await handleRoomConfig(interaction);
+  } else if (group === 'general') {
+    if (sub === 'config') await handleGeneralHubConfig(interaction);
   }
 }
 

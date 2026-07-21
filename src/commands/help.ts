@@ -134,6 +134,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
                 '`/admin marketplace config` — Set the marketplace forum channel and negotiation mode',
                 '`/admin marketplace purge` — Delete old/closed marketplace listings',
                 '`/admin room config` — Set the Discord category used for /room private channels',
+                '`/admin general config` — Set the channel for the general chat "Quick Actions" button hub',
                 '`/admin usage` — Show which commands are used on this server, and how often',
               ].join('\n'),
             },

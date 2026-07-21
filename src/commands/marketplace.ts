@@ -20,6 +20,7 @@ import {
   TextInputStyle,
   ThreadChannel,
   AutocompleteInteraction,
+  ChannelFlags,
 } from 'discord.js';
 import {
   MarketplaceListing,
@@ -102,6 +103,18 @@ function updateDraft(draftId: string, patch: Partial<SellDraft>): SellDraft | un
   );
   return updated;
 }
+
+// In-memory only (unlike sellDrafts, this only tracks the first couple of
+// wizard steps — item name + listing type — before a real, persisted draft
+// exists), keyed by userId, mirroring pendingLibrarySuggest/pendingBrings-style
+// maps elsewhere in this codebase. Lost on a redeploy mid-wizard; the user just
+// restarts from the hub button, same as those other short-lived flows.
+interface PendingHubListing {
+  listingType: 'sell' | 'trade';
+  itemName: string;
+  condition?: Condition;
+}
+const pendingHubListings = new Map<string, PendingHubListing>();
 
 
 function formatPrice(amount: number): string {
@@ -722,13 +735,43 @@ async function handlePostSell(interaction: ChatInputCommandInteraction): Promise
     ? (interaction.member as { displayName?: string }).displayName ?? interaction.user.username
     : interaction.user.username;
 
+  await createSellDraftAndContinue(
+    interaction,
+    guildId,
+    interaction.user.id,
+    displayName,
+    itemName,
+    isCustomItem,
+    condition,
+    notes,
+    bidsAllowed,
+  );
+}
+
+// Shared by the slash command above and the marketplace hub's Sell wizard
+// (see handleHubMarketplaceOffersButton below) — everything after the item
+// name/condition/offers-allowed choice is resolved identically regardless of
+// how those were collected. skipCatalogSearch mirrors the slash command's
+// "__custom__:" sentinel — the hub wizard always attempts a catalog match
+// (there's no autocomplete step to have picked "use as custom text" from).
+async function createSellDraftAndContinue(
+  interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction,
+  guildId: string,
+  userId: string,
+  displayName: string,
+  itemName: string,
+  skipCatalogSearch: boolean,
+  condition: Condition,
+  notes: string | undefined,
+  bidsAllowed: boolean,
+): Promise<void> {
   let bggId: string | undefined;
   let thumbnail: string | undefined;
   let isExpansion = false;
   let availableExpansions: { bggId: string; name: string }[] = [];
   let parentItem: { bggId: string; name: string } | undefined;
 
-  if (!isCustomItem) {
+  if (!skipCatalogSearch) {
     try {
       const results = searchCatalog(itemName);
       if (results.length > 0) {
@@ -752,7 +795,7 @@ async function handlePostSell(interaction: ChatInputCommandInteraction): Promise
   const draft: Omit<SellDraft, 'expiresAt'> = {
     listingType: 'sell',
     guildId,
-    userId: interaction.user.id,
+    userId,
     username: displayName,
     itemName,
     bggId,
@@ -778,7 +821,7 @@ async function handlePostSell(interaction: ChatInputCommandInteraction): Promise
 }
 
 async function showExpansionSelect(
-  interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction,
+  interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction,
   draft: SellDraft,
   draftId: string,
 ): Promise<void> {
@@ -972,7 +1015,7 @@ async function showPriceScreen(
 }
 
 async function showNoBggPrompt(
-  interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction,
+  interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction,
   itemName: string,
   draftId: string,
 ): Promise<void> {
@@ -1087,13 +1130,40 @@ async function handlePostTrade(interaction: ChatInputCommandInteraction): Promis
     ? (interaction.member as { displayName?: string }).displayName ?? interaction.user.username
     : interaction.user.username;
 
+  await createTradeDraftAndContinue(
+    interaction,
+    guildId,
+    interaction.user.id,
+    username,
+    itemName,
+    isCustomItem,
+    condition,
+    notes,
+    lookingFor,
+  );
+}
+
+// Shared by the slash command above and the marketplace hub's Trade wizard
+// (see handleHubMarketplaceTradeModal below) — see createSellDraftAndContinue
+// above for why skipCatalogSearch exists.
+async function createTradeDraftAndContinue(
+  interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction,
+  guildId: string,
+  userId: string,
+  username: string,
+  itemName: string,
+  skipCatalogSearch: boolean,
+  condition: Condition,
+  notes: string | undefined,
+  lookingFor: string | undefined,
+): Promise<void> {
   let bggId: string | undefined;
   let thumbnail: string | undefined;
   let isExpansion = false;
   let availableExpansions: { bggId: string; name: string }[] = [];
   let parentItem: { bggId: string; name: string } | undefined;
 
-  if (!isCustomItem) {
+  if (!skipCatalogSearch) {
     try {
       const results = searchCatalog(itemName);
       if (results.length > 0) {
@@ -1117,7 +1187,7 @@ async function handlePostTrade(interaction: ChatInputCommandInteraction): Promis
   const draft: Omit<SellDraft, 'expiresAt'> = {
     listingType: 'trade',
     guildId,
-    userId: interaction.user.id,
+    userId,
     username,
     itemName,
     bggId,
@@ -1308,11 +1378,12 @@ async function handleConditions(interaction: ChatInputCommandInteraction): Promi
 
 // ── /marketplace browse ─────────────────────────────────────────────────────
 
-async function handleBrowse(interaction: ChatInputCommandInteraction): Promise<void> {
+async function handleBrowse(interaction: ChatInputCommandInteraction | ButtonInteraction): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const guildId = interaction.guildId!;
-  const typeFilter = interaction.options.getString('type') as 'sell' | 'trade' | null;
+  // The hub's "Browse Listings" button has no type filter — it always shows everything.
+  const typeFilter = interaction.isChatInputCommand() ? (interaction.options.getString('type') as 'sell' | 'trade' | null) : null;
 
   let listings = await getActiveListingsForGuild(guildId);
   if (typeFilter) listings = listings.filter((l) => l.type === typeFilter);
@@ -1348,7 +1419,7 @@ async function handleBrowse(interaction: ChatInputCommandInteraction): Promise<v
 
 // ── /marketplace my ─────────────────────────────────────────────────────────
 
-async function handleMy(interaction: ChatInputCommandInteraction): Promise<void> {
+async function handleMy(interaction: ChatInputCommandInteraction | ButtonInteraction): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const guildId = interaction.guildId!;
@@ -1455,6 +1526,240 @@ async function handleReopen(interaction: ChatInputCommandInteraction): Promise<v
   await interaction.editReply({ content: `Listing **${listing.itemName}** has been reopened and is now ${updated.status}.` });
 }
 
+// ── "Quick Actions" button hub ────────────────────────────────────────────────
+// Unlike the per-event/per-room hubs, the marketplace forum is one shared
+// channel per guild — so the hub lives as a single **pinned forum post**
+// (thread) rather than a plain pinned message, using discord.js's ThreadChannel
+// pin()/unpin() (forum-only; backed by Discord's ChannelFlags.Pinned bit).
+
+function buildMarketplaceHubEmbed(): EmbedBuilder {
+  return new EmbedBuilder()
+    .setTitle('🎯 Quick Actions')
+    .setColor(0x57f287)
+    .setDescription('Prefer tapping over typing? Use the buttons below instead of slash commands.')
+    .addFields(
+      { name: '📦 Sell an Item', value: 'List something you want to sell.' },
+      { name: '🔄 Propose a Trade', value: "List something you'd trade away." },
+      { name: '🔍 Browse Listings', value: 'See what other members are selling or trading.' },
+      { name: '📋 My Listings', value: 'See your own active listings and offers.' },
+    );
+}
+
+function buildMarketplaceHubButtons(): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId('hub_mp_sell').setLabel('📦 Sell an Item').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('hub_mp_trade').setLabel('🔄 Propose a Trade').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('hub_mp_browse').setLabel('🔍 Browse Listings').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('hub_mp_my').setLabel('📋 My Listings').setStyle(ButtonStyle.Secondary),
+  );
+}
+
+// Called whenever the marketplace channel is (re)configured via /admin
+// marketplace config — analogous to the eager tag creation right after this
+// call, so the hub is ready before any listing is ever posted.
+export async function updateMarketplaceHubThread(client: Client, guildId: string): Promise<void> {
+  const config = await getGuildConfig(guildId);
+  if (!config.marketplaceChannelId) return;
+
+  let forumChannel: ForumChannel;
+  try {
+    const ch = await client.channels.fetch(config.marketplaceChannelId);
+    if (ch?.type !== ChannelType.GuildForum) return;
+    forumChannel = ch as ForumChannel;
+  } catch {
+    return;
+  }
+
+  const payload = { embeds: [buildMarketplaceHubEmbed()], components: [buildMarketplaceHubButtons()] };
+
+  if (config.marketplaceHubThreadId) {
+    try {
+      const thread = await forumChannel.threads.fetch(config.marketplaceHubThreadId);
+      if (thread) {
+        const starterMsg = await thread.fetchStarterMessage();
+        if (starterMsg) await starterMsg.edit(payload);
+        if (!thread.flags.has(ChannelFlags.Pinned)) {
+          try {
+            await thread.pin();
+          } catch (err) {
+            console.warn(`Could not re-pin marketplace hub thread in guild ${guildId}:`, err);
+          }
+        }
+        return;
+      }
+    } catch {
+      /* thread was deleted — fall through and recreate */
+    }
+  }
+
+  let thread: ThreadChannel;
+  try {
+    thread = await forumChannel.threads.create({ name: '🎯 Quick Actions', message: payload });
+  } catch (err) {
+    console.warn(`Could not create marketplace hub thread in guild ${guildId}:`, err);
+    return;
+  }
+  try {
+    await thread.pin();
+  } catch (err) {
+    console.warn(`Could not pin marketplace hub thread in guild ${guildId}:`, err);
+  }
+
+  await updateGuildConfig(guildId, { marketplaceHubThreadId: thread.id });
+}
+
+// ── Hub wizard: "📦 Sell an Item" / "🔄 Propose a Trade" ────────────────────
+// A modal collects only the item name (no autocomplete is possible in a
+// modal), then condition (native select) and — sell only — offers-allowed
+// (native buttons) are collected as separate steps before handing off to the
+// exact same createSellDraftAndContinue/createTradeDraftAndContinue used by
+// the slash commands. Trades skip the offers-allowed step entirely (trades
+// are always open to offers, mirroring /marketplace post trade).
+
+function buildHubItemNameModal(customId: string, title: string): ModalBuilder {
+  return new ModalBuilder()
+    .setCustomId(customId)
+    .setTitle(title)
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('item')
+          .setLabel('Item name')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('e.g. Wingspan')
+          .setRequired(true)
+          .setMaxLength(100),
+      ),
+    );
+}
+
+export async function handleHubMarketplaceSellButton(interaction: ButtonInteraction): Promise<void> {
+  await interaction.showModal(buildHubItemNameModal('hub_mp_sell_modal', 'Sell an Item'));
+}
+
+export async function handleHubMarketplaceTradeButton(interaction: ButtonInteraction): Promise<void> {
+  await interaction.showModal(buildHubItemNameModal('hub_mp_trade_modal', 'Propose a Trade'));
+}
+
+async function showHubConditionSelect(interaction: ModalSubmitInteraction): Promise<void> {
+  const select = new StringSelectMenuBuilder()
+    .setCustomId('hub_mp_condition_select')
+    .setPlaceholder("Select the item's condition…")
+    .addOptions(
+      (Object.keys(CONDITION_LABELS) as Condition[]).map((value) => ({
+        label: CONDITION_LABELS[value],
+        value,
+      })),
+    );
+  await interaction.reply({
+    content: 'What condition is it in?',
+    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+export async function handleHubMarketplaceSellModal(interaction: ModalSubmitInteraction): Promise<void> {
+  const itemName = interaction.fields.getTextInputValue('item').trim();
+  pendingHubListings.set(interaction.user.id, { listingType: 'sell', itemName });
+  await showHubConditionSelect(interaction);
+}
+
+export async function handleHubMarketplaceTradeModal(interaction: ModalSubmitInteraction): Promise<void> {
+  const itemName = interaction.fields.getTextInputValue('item').trim();
+  pendingHubListings.set(interaction.user.id, { listingType: 'trade', itemName });
+  await showHubConditionSelect(interaction);
+}
+
+function hubDisplayName(interaction: { member: unknown; user: { username: string } }): string {
+  return interaction.member
+    ? ((interaction.member as { displayName?: string }).displayName ?? interaction.user.username)
+    : interaction.user.username;
+}
+
+export async function handleHubMarketplaceConditionSelect(interaction: StringSelectMenuInteraction): Promise<void> {
+  const pending = pendingHubListings.get(interaction.user.id);
+  if (!pending) {
+    await interaction.update({
+      content: 'This session has expired — tap a button in Quick Actions to start again.',
+      components: [],
+    });
+    return;
+  }
+  const condition = interaction.values[0] as Condition;
+
+  if (pending.listingType === 'trade') {
+    pendingHubListings.delete(interaction.user.id);
+    await interaction.deferUpdate();
+    await createTradeDraftAndContinue(
+      interaction,
+      interaction.guildId!,
+      interaction.user.id,
+      hubDisplayName(interaction),
+      pending.itemName,
+      false,
+      condition,
+      undefined,
+      undefined,
+    );
+    return;
+  }
+
+  pendingHubListings.set(interaction.user.id, { ...pending, condition });
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId('hub_mp_offers_yes').setLabel('✅ Allow Offers').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('hub_mp_offers_no').setLabel('🔒 Firm Price').setStyle(ButtonStyle.Secondary),
+  );
+  await interaction.update({
+    content: 'Should other members be able to make offers, or is the price firm?',
+    components: [row],
+  });
+}
+
+async function handleHubMarketplaceOffers(interaction: ButtonInteraction, bidsAllowed: boolean): Promise<void> {
+  const pending = pendingHubListings.get(interaction.user.id);
+  if (!pending || pending.listingType !== 'sell' || !pending.condition) {
+    await interaction.update({
+      content: 'This session has expired — tap a button in Quick Actions to start again.',
+      components: [],
+    });
+    return;
+  }
+  pendingHubListings.delete(interaction.user.id);
+  await interaction.deferUpdate();
+
+  await createSellDraftAndContinue(
+    interaction,
+    interaction.guildId!,
+    interaction.user.id,
+    hubDisplayName(interaction),
+    pending.itemName,
+    false,
+    pending.condition,
+    undefined,
+    bidsAllowed,
+  );
+}
+
+export async function handleHubMarketplaceOffersYes(interaction: ButtonInteraction): Promise<void> {
+  await handleHubMarketplaceOffers(interaction, true);
+}
+
+export async function handleHubMarketplaceOffersNo(interaction: ButtonInteraction): Promise<void> {
+  await handleHubMarketplaceOffers(interaction, false);
+}
+
+// ── Hub buttons: "🔍 Browse Listings" / "📋 My Listings" ────────────────────
+// Run the exact same logic as their slash-command equivalents, minus the
+// optional type filter (browse) that only the slash command's option exposes.
+
+export async function handleHubMarketplaceBrowseButton(interaction: ButtonInteraction): Promise<void> {
+  await handleBrowse(interaction);
+}
+
+export async function handleHubMarketplaceMyButton(interaction: ButtonInteraction): Promise<void> {
+  await handleMy(interaction);
+}
+
 // ── /admin marketplace config ───────────────────────────────────────────────
 
 export async function handleAdminConfig(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -1495,7 +1800,8 @@ export async function handleAdminConfig(interaction: ChatInputCommandInteraction
   await updateGuildConfig(guildId, patch as Parameters<typeof updateGuildConfig>[1]);
   const config = await getGuildConfig(guildId);
 
-  // Eagerly create forum tags so they're ready before any listing is posted
+  // Eagerly create forum tags and the Quick Actions hub so they're ready
+  // before any listing is ever posted
   if (patch.marketplaceChannelId && config.marketplaceChannelId) {
     try {
       const forumChannel = await interaction.client.channels.fetch(config.marketplaceChannelId);
@@ -1505,6 +1811,7 @@ export async function handleAdminConfig(interaction: ChatInputCommandInteraction
     } catch {
       // non-fatal — tags will be created lazily on first listing post
     }
+    await updateMarketplaceHubThread(interaction.client, guildId).catch(() => null);
   }
 
   await interaction.editReply({

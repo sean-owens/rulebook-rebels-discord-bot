@@ -10,6 +10,9 @@ import { GuildConfig, getGuildConfig } from './config';
 import { GameNight, loadGameNights, upsertGameNight } from './storage';
 import { resolvePlayerNames } from './playerNames';
 import { getMemberPreferences } from './gameRoles';
+import { removeZeroSignupRequests, getRequestsForEvent, buildExpansionNote } from './libraryStorage';
+import { updateRequestPin } from './requestPin';
+import { sendBringReminderDm, invalidateBringDm } from './libraryBringDm';
 import {
   buildBgStatsPlayUrl,
   buildBgStatsButton,
@@ -42,11 +45,19 @@ export interface ScheduleAssignment {
   gameId: string;
   round: number; // 1-indexed
   table: number; // 1-indexed
-  playCount: number; // how many times this game is played within this round's slot
+  playCount: number; // how many times this game is played within its own chain slot
   // True if this game's round is projected to start and/or run past the
   // event's end time — a heads-up that starting it probably won't leave
   // enough time to finish before the event wraps up.
   mayNotFinish: boolean;
+  // A table can now chain multiple different games back-to-back within one
+  // round, converging with the other tables once the round's longest chain
+  // finishes — see the round-filling loop in scheduleGames(). slotIndex is
+  // this game's 0-based position in its table's chain for this round;
+  // startOffsetMinutes is how far into the round (after any within-chain
+  // Heavy-break) this slot begins.
+  slotIndex: number;
+  startOffsetMinutes: number;
 }
 
 export interface UnscheduledGame {
@@ -108,14 +119,32 @@ export function toSchedulableGame(
   };
 }
 
+// A table's slate for one round — a sequence of games played back-to-back,
+// converging with every other table once the round's longest chain finishes.
+// A round with no duration disparity between tables ends up with exactly one
+// slot per chain, matching the old one-game-per-table-per-round behavior.
+interface TableChain {
+  slots: string[]; // gameIds in play order, earliest first
+  usedMinutes: number; // cumulative effective duration + any intra-chain Heavy breaks already inserted
+}
+
 interface RoundBin {
-  tables: (string | null)[]; // gameId per table slot
-  playersUsed: Set<string>;
+  // Fixed the moment the round opens, to whichever game's effective duration
+  // opened it (the "anchor") — every other table's chain fills leftover time
+  // up to this same target so all tables reconvene together.
+  targetMinutes: number;
+  tables: TableChain[];
+  playersUsed: Set<string>; // shared across every table/slot in the round — no player double-booked per round
 }
 
 /**
  * Detects a table playing two Heavy-complexity games in directly-adjacent
- * rounds and returns, per round, how many break minutes to insert beforehand.
+ * rounds (the last game of one round's chain vs. the first game of the next
+ * round's chain, same table) and returns, per round, how many break minutes
+ * to insert beforehand. Heavy-Heavy adjacency *within* the same chain (two
+ * Heavy games back-to-back at the same table in the same round) is handled
+ * separately, inline during placement in scheduleGames() — this function
+ * only covers the cross-round case.
  *
  * v1 limitation: only literally-adjacent round indices (r, r+1) are checked —
  * a table idle in round r+1 with Heavy games in r and r+2 is not detected.
@@ -134,8 +163,10 @@ function computeHeavyBreaks(
   for (let r = 0; r < rounds.length - 1; r++) {
     const tableCount = rounds[r].tables.length;
     for (let t = 0; t < tableCount; t++) {
-      const a = rounds[r].tables[t];
-      const b = rounds[r + 1].tables[t];
+      const aChain = rounds[r].tables[t];
+      const bChain = rounds[r + 1].tables[t];
+      const a = aChain.slots[aChain.slots.length - 1];
+      const b = bChain.slots[0];
       if (!a || !b) continue;
       if (gameById.get(a)?.complexity === 'Heavy' && gameById.get(b)?.complexity === 'Heavy') {
         breaks[r + 1] = breakMinutes;
@@ -147,30 +178,37 @@ function computeHeavyBreaks(
 }
 
 /**
- * Opportunistically fills leftover time within a table's already-decided
- * round slot with repeat plays of that same short game — never restructures
- * placement or extends the round's own duration, only uses time already
- * allocated because another table's game runs longer that round.
+ * Opportunistically repeats the LAST game in each table's chain to fill any
+ * remaining leftover time in that round — the only slot with genuinely
+ * trailing dead time that doesn't disturb any slot after it. Never
+ * restructures placement or extends the round's own duration, only uses time
+ * already allocated because another table's chain runs longer that round.
  */
 function applyRepeatFill(
   assignments: ScheduleAssignment[],
-  roundDurationsMinutes: number[],
+  rounds: RoundBin[],
   gameById: Map<string, SchedulableGame>,
   maxGameRepeats: number,
 ): void {
-  for (const a of assignments) {
-    a.playCount = 1;
-    const game = gameById.get(a.gameId);
-    if (!game) continue;
-    if (game.rawMaxPlaytime <= 0 || game.rawMaxPlaytime >= SHORT_GAME_MAX_RAW_MINUTES) continue;
+  for (const a of assignments) a.playCount = 1;
 
-    const roundDuration = roundDurationsMinutes[a.round - 1];
-    const leftover = roundDuration - game.effectiveDurationMinutes;
-    // Repeats skip the complexity buffer — the group already knows the game.
-    if (leftover < game.rawMaxPlaytime) continue;
+  const assignmentByGame = new Map(assignments.map((a) => [a.gameId, a]));
+  for (const round of rounds) {
+    for (const chain of round.tables) {
+      if (chain.slots.length === 0) continue;
+      const lastGameId = chain.slots[chain.slots.length - 1];
+      const game = gameById.get(lastGameId);
+      if (!game) continue;
+      if (game.rawMaxPlaytime <= 0 || game.rawMaxPlaytime >= SHORT_GAME_MAX_RAW_MINUTES) continue;
 
-    const extraPlays = Math.floor(leftover / game.rawMaxPlaytime);
-    a.playCount = Math.min(maxGameRepeats, 1 + extraPlays);
+      const leftover = round.targetMinutes - chain.usedMinutes;
+      // Repeats skip the complexity buffer — the group already knows the game.
+      if (leftover < game.rawMaxPlaytime) continue;
+
+      const extraPlays = Math.floor(leftover / game.rawMaxPlaytime);
+      const assignment = assignmentByGame.get(lastGameId);
+      if (assignment) assignment.playCount = Math.min(maxGameRepeats, 1 + extraPlays);
+    }
   }
 }
 
@@ -229,36 +267,71 @@ export function scheduleGames(
     return b.seatedPlayers.length - a.seatedPlayers.length;
   });
 
+  const gameById = new Map(viable.map((g) => [g.id, g]));
+  const heavyBreakMinutes = Math.max(0, config.heavyGameBreakMinutes);
+
   const rounds: RoundBin[] = [];
   const assignments: ScheduleAssignment[] = [];
 
   for (const game of ordered) {
     let placed = false;
+
     for (let r = 0; r < rounds.length && !placed; r++) {
       const round = rounds[r];
-      const tableIdx = round.tables.indexOf(null);
-      if (tableIdx === -1) continue; // round is full
-      const conflicts = game.seatedPlayers.some((p) => round.playersUsed.has(p));
-      if (conflicts) continue;
+      if (game.seatedPlayers.some((p) => round.playersUsed.has(p))) continue;
 
-      round.tables[tableIdx] = game.id;
-      game.seatedPlayers.forEach((p) => round.playersUsed.add(p));
+      // Best-fit: among every table whose leftover round time (round target
+      // minus what's already chained there, minus a Heavy-break if this game
+      // would follow a Heavy game at that table) can fit this game, pick the
+      // one that leaves the least time behind — packs existing chains tight
+      // before spreading onto a still-empty table (whose "leftover" is the
+      // whole round target, and so only wins the fit when nothing tighter fits).
+      let bestTableIdx = -1;
+      let bestBreakBefore = 0;
+      let bestLeftoverAfter = Infinity;
+      for (let t = 0; t < round.tables.length; t++) {
+        const chain = round.tables[t];
+        const lastGameId = chain.slots[chain.slots.length - 1];
+        const lastGame = lastGameId ? gameById.get(lastGameId) : undefined;
+        const breakBefore =
+          lastGame?.complexity === 'Heavy' && game.complexity === 'Heavy' ? heavyBreakMinutes : 0;
+        const neededMinutes = game.effectiveDurationMinutes + breakBefore;
+        const leftover = round.targetMinutes - chain.usedMinutes;
+        if (neededMinutes > leftover) continue;
+
+        const leftoverAfter = leftover - neededMinutes;
+        if (leftoverAfter < bestLeftoverAfter) {
+          bestLeftoverAfter = leftoverAfter;
+          bestTableIdx = t;
+          bestBreakBefore = breakBefore;
+        }
+      }
+
+      if (bestTableIdx === -1) continue; // doesn't fit this round at all — try the next one
+
+      const chain = round.tables[bestTableIdx];
       assignments.push({
         gameId: game.id,
         round: r + 1,
-        table: tableIdx + 1,
+        table: bestTableIdx + 1,
         playCount: 1,
         mayNotFinish: false,
+        slotIndex: chain.slots.length,
+        startOffsetMinutes: chain.usedMinutes + bestBreakBefore,
       });
+      chain.usedMinutes += bestBreakBefore + game.effectiveDurationMinutes;
+      chain.slots.push(game.id);
+      game.seatedPlayers.forEach((p) => round.playersUsed.add(p));
       placed = true;
     }
 
     if (!placed) {
       const newRound: RoundBin = {
-        tables: new Array(tableCount).fill(null),
+        targetMinutes: game.effectiveDurationMinutes,
+        tables: Array.from({ length: tableCount }, () => ({ slots: [], usedMinutes: 0 })),
         playersUsed: new Set(),
       };
-      newRound.tables[0] = game.id;
+      newRound.tables[0] = { slots: [game.id], usedMinutes: game.effectiveDurationMinutes };
       game.seatedPlayers.forEach((p) => newRound.playersUsed.add(p));
       rounds.push(newRound);
       assignments.push({
@@ -267,21 +340,15 @@ export function scheduleGames(
         table: 1,
         playCount: 1,
         mayNotFinish: false,
+        slotIndex: 0,
+        startOffsetMinutes: 0,
       });
     }
   }
 
-  const gameById = new Map(viable.map((g) => [g.id, g]));
-  const roundDurationsMinutes = rounds.map((round) =>
-    Math.max(
-      0,
-      ...round.tables
-        .filter((gameId): gameId is string => gameId !== null)
-        .map((gameId) => gameById.get(gameId)!.effectiveDurationMinutes),
-    ),
-  );
+  const roundDurationsMinutes = rounds.map((round) => round.targetMinutes);
 
-  const roundBreakMinutesBefore = computeHeavyBreaks(rounds, gameById, config.heavyGameBreakMinutes);
+  const roundBreakMinutesBefore = computeHeavyBreaks(rounds, gameById, heavyBreakMinutes);
 
   // A round "may not finish" if its own end — cumulative time from the event's
   // start, including every break and round before it — runs past the window.
@@ -297,7 +364,7 @@ export function scheduleGames(
     a.mayNotFinish = roundExceedsWindow[a.round - 1] ?? false;
   }
 
-  applyRepeatFill(assignments, roundDurationsMinutes, gameById, Math.max(1, config.maxGameRepeats));
+  applyRepeatFill(assignments, rounds, gameById, Math.max(1, config.maxGameRepeats));
 
   const totalDurationMinutes =
     roundDurationsMinutes.reduce((sum, m) => sum + m, 0) +
@@ -335,7 +402,7 @@ export function computeRoundClocks(
 
 export function buildScheduleEmbed(
   gn: Pick<GameNight, 'title' | 'startTimeISO' | 'greeters'>,
-  games: Pick<GameSuggestion, 'id' | 'title'>[],
+  games: Pick<GameSuggestion, 'id' | 'title' | 'seats'>[],
   result: ScheduleResult,
 ): EmbedBuilder {
   const gameById = new Map(games.map((g) => [g.id, g]));
@@ -358,22 +425,52 @@ export function buildScheduleEmbed(
 
   for (let r = 1; r <= roundCount; r++) {
     const clock = clocks[r - 1];
+    const roundDuration = result.roundDurationsMinutes[r - 1];
     const breakMinutes = result.roundBreakMinutesBefore[r - 1] ?? 0;
     const breakNote = breakMinutes > 0 ? `*⏸ ${breakMinutes}-minute break beforehand*\n` : '';
-    const roundAssignments = result.assignments
-      .filter((a) => a.round === r)
-      .sort((a, b) => a.table - b.table);
+    const roundAssignments = result.assignments.filter((a) => a.round === r);
     const mayNotFinish = roundAssignments.some((a) => a.mayNotFinish);
     const lateNote = mayNotFinish
       ? "*⚠️ This round is projected to start and/or run past the event's end time*\n"
       : '';
-    const tablesInRound = roundAssignments
-      .map((a) => {
-        const title = gameById.get(a.gameId)?.title ?? 'Unknown game';
-        const repeatNote = a.playCount > 1 ? ` (${a.playCount}x)` : '';
-        return `Table ${a.table}: **${title}**${repeatNote}`;
+
+    const byTable = new Map<number, ScheduleAssignment[]>();
+    for (const a of roundAssignments) {
+      const slots = byTable.get(a.table) ?? [];
+      slots.push(a);
+      byTable.set(a.table, slots);
+    }
+
+    const tablesInRound = [...byTable.entries()]
+      .sort(([tableA], [tableB]) => tableA - tableB)
+      .map(([table, slots]) => {
+        slots.sort((a, b) => a.slotIndex - b.slotIndex);
+        // A table with just one game keeps the plain "Table N: Title" line —
+        // its timing is already covered by the round header. A chained table
+        // (multiple different games back-to-back) gets each its own
+        // start/end time, computed from where the next slot begins (or the
+        // round's own end, for the chain's last slot).
+        return slots
+          .map((a, i) => {
+            const game = gameById.get(a.gameId);
+            const title = game?.title ?? 'Unknown game';
+            const repeatNote = a.playCount > 1 ? ` (${a.playCount}x)` : '';
+            const playersNote =
+              game && game.seats.length > 0
+                ? ` — ${game.seats.map((id) => `<@${id}>`).join(', ')}`
+                : '';
+            if (slots.length === 1) {
+              return `Table ${table}: **${title}**${repeatNote}${playersNote}`;
+            }
+            const endOffset = i + 1 < slots.length ? slots[i + 1].startOffsetMinutes : roundDuration;
+            const startUnix = clock.startUnix + a.startOffsetMinutes * 60;
+            const endUnix = clock.startUnix + endOffset * 60;
+            return `Table ${table}: **${title}**${repeatNote} (<t:${startUnix}:t>–<t:${endUnix}:t>)${playersNote}`;
+          })
+          .join('\n');
       })
       .join('\n');
+
     embed.addFields({
       name: `Round ${r} (<t:${clock.startUnix}:t> – <t:${clock.endUnix}:t>)`,
       value: breakNote + lateNote + (tablesInRound || '*(empty)*'),
@@ -629,6 +726,35 @@ export async function lockAndScheduleEvent(
 
   gn.scheduledAt = new Date().toISOString();
   await upsertGameNight(gn);
+
+  // "Games to bring" cleanup + owner notification happens before the public
+  // schedule post, so that post reflects the final state: drop any request
+  // nobody signed up to play, then remind owners of whatever's left that's
+  // still unconfirmed.
+  const zeroSignupTitles = games.filter((g) => g.seats.length === 0).map((g) => g.title);
+  if (zeroSignupTitles.length > 0) {
+    const dropped = await removeZeroSignupRequests(gn.id, zeroSignupTitles);
+    for (const req of dropped) {
+      for (const ask of req.pendingAsks) {
+        await invalidateBringDm(client, ask, 'No longer needed — nobody signed up to play it.');
+      }
+    }
+    if (dropped.length > 0) {
+      try {
+        await updateRequestPin(client, gn.id);
+      } catch (err) {
+        console.warn(`Could not refresh request pin for game night ${gn.id}:`, err);
+      }
+    }
+  }
+
+  const remainingRequests = await getRequestsForEvent(gn.id);
+  for (const req of remainingRequests) {
+    for (const ask of req.pendingAsks) {
+      const expansionNote = await buildExpansionNote(gn.guildId, ask.ownerId, req.gameName);
+      await sendBringReminderDm(client, req, ask.ownerId, gn.date, expansionNote);
+    }
+  }
 
   if (gn.eventChannelId) {
     try {

@@ -144,6 +144,66 @@ describe('updateGameListPin', () => {
   });
 });
 
+describe('buildRequestEmbed', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-requestembed-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('shows a plain checkmark for a single-copy request once confirmed', async () => {
+    const { addGame, addRequest, confirmBring, getRequestsForEvent } = await import('../src/utils/libraryStorage');
+    const { buildRequestEmbed } = await import('../src/utils/requestPin');
+    await addGame('g1', 'alice', 'Wingspan');
+    await addRequest('event1', 'Wingspan', 'user1');
+    await confirmBring('g1', 'event1', 'Wingspan', 'alice');
+    const requests = await getRequestsForEvent('event1');
+
+    const embed = (await buildRequestEmbed('g1', requests, { alice: 'Alice' })).toJSON();
+
+    expect(embed.fields?.[0].value).toContain('Wingspan ✅');
+  });
+
+  it('shows no checkmark for an unconfirmed single-copy request', async () => {
+    const { addGame, addRequest, getRequestsForEvent } = await import('../src/utils/libraryStorage');
+    const { buildRequestEmbed } = await import('../src/utils/requestPin');
+    await addGame('g1', 'alice', 'Wingspan');
+    await addRequest('event1', 'Wingspan', 'user1');
+    const requests = await getRequestsForEvent('event1');
+
+    const embed = (await buildRequestEmbed('g1', requests, { alice: 'Alice' })).toJSON();
+
+    expect(embed.fields?.[0].value).toContain('Wingspan');
+    expect(embed.fields?.[0].value).not.toContain('✅');
+  });
+
+  it('shows an X/Y confirmed count for a multi-copy request instead of a single checkmark', async () => {
+    const { addGame, addRequest, updateRequestCopies, confirmBring, getRequestsForEvent } = await import(
+      '../src/utils/libraryStorage'
+    );
+    const { buildRequestEmbed } = await import('../src/utils/requestPin');
+    await addGame('g1', 'alice', 'Wingspan');
+    await addGame('g1', 'bob', 'Wingspan');
+    await addRequest('event1', 'Wingspan', 'user1');
+    await updateRequestCopies('event1', 'Wingspan', 2);
+    await confirmBring('g1', 'event1', 'Wingspan', 'alice');
+    const requests = await getRequestsForEvent('event1');
+
+    const embed = (await buildRequestEmbed('g1', requests, { alice: 'Alice', bob: 'Bob' })).toJSON();
+
+    const allText = embed.fields?.map((f) => f.value).join('\n') ?? '';
+    expect(allText).toContain('1/2 copies confirmed');
+    expect(allText).not.toContain('✅');
+  });
+});
+
 describe('updateRequestPin', () => {
   let tmpDir: string;
   let cwdSpy: ReturnType<typeof vi.spyOn>;
@@ -197,6 +257,93 @@ describe('updateRequestPin', () => {
     msg.pinned = false; // simulates a mod/host manually unpinning it
 
     await updateRequestPin(client as any, 'gn1');
+    expect(msg.pin).toHaveBeenCalledTimes(2);
+    expect(msg.pinned).toBe(true);
+  });
+});
+
+describe('updateHubPin', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-hubpin-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    warnSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('sends and pins the hub message on first call, storing the message id', async () => {
+    const { updateHubPin } = await import('../src/utils/requestPin');
+    await upsertGameNight(makeGameNight());
+    const client = makeClient();
+
+    await updateHubPin(client as any, 'gn1');
+
+    expect(client._channel.send).toHaveBeenCalledTimes(1);
+    const sendCall = client._channel.send.mock.calls[0][0];
+    expect(sendCall.embeds[0].data.title).toBe('🎮 Quick Actions');
+    expect(sendCall.components).toHaveLength(1);
+    const gn = await findGameNight('gn1');
+    expect(gn?.hubPinMessageId).toBe('msg-1');
+  });
+
+  it('does nothing when the game night has no event channel', async () => {
+    const { updateHubPin } = await import('../src/utils/requestPin');
+    await upsertGameNight(makeGameNight({ eventChannelId: null }));
+    const client = makeClient();
+
+    await updateHubPin(client as any, 'gn1');
+
+    expect(client._channel.send).not.toHaveBeenCalled();
+  });
+
+  it('still sends and records the message even when pinning fails, and logs a warning', async () => {
+    const { updateHubPin } = await import('../src/utils/requestPin');
+    await upsertGameNight(makeGameNight());
+    const client = makeClient(async () => {
+      throw new Error('Missing Permissions');
+    });
+
+    await updateHubPin(client as any, 'gn1');
+
+    const gn = await findGameNight('gn1');
+    expect(gn?.hubPinMessageId).toBe('msg-1');
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Could not pin hub message'),
+      expect.any(Error),
+    );
+  });
+
+  it('edits the existing hub message on a subsequent call instead of posting a new one', async () => {
+    const { updateHubPin } = await import('../src/utils/requestPin');
+    await upsertGameNight(makeGameNight());
+    const client = makeClient();
+
+    await updateHubPin(client as any, 'gn1');
+    await updateHubPin(client as any, 'gn1');
+
+    expect(client._channel.send).toHaveBeenCalledTimes(1);
+    const msg = await client._channel.messages.fetch('msg-1');
+    expect(msg.edit).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-pins a hub message that was unpinned since the last update', async () => {
+    const { updateHubPin } = await import('../src/utils/requestPin');
+    await upsertGameNight(makeGameNight());
+    const client = makeClient();
+
+    await updateHubPin(client as any, 'gn1');
+    const msg = await client._channel.messages.fetch('msg-1');
+    msg.pinned = false;
+
+    await updateHubPin(client as any, 'gn1');
     expect(msg.pin).toHaveBeenCalledTimes(2);
     expect(msg.pinned).toBe(true);
   });

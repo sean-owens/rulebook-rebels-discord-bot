@@ -56,6 +56,7 @@ import {
   GAME_TAGS,
 } from '../utils/libraryStorage';
 import { updateRequestPin, updateGameListPin } from '../utils/requestPin';
+import { invalidateBringDm, reconcileRequestCopies } from '../utils/libraryBringDm';
 import { enrichFromBGG } from './library';
 import { getGuildConfig } from '../utils/config';
 import {
@@ -449,7 +450,7 @@ async function handleSuggest(interaction: ChatInputCommandInteraction): Promise<
 // a library match, partial match, or falls through to a BGG search, once we already know which
 // GameNight (real or room-adapted) the suggestion is going into.
 async function resolveSuggestFlow(
-  interaction: ChatInputCommandInteraction,
+  interaction: ChatInputCommandInteraction | ModalSubmitInteraction,
   gameNight: GameNight,
   title: string,
   withExpansions: boolean,
@@ -512,6 +513,52 @@ async function resolveSuggestFlow(
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   await interaction.editReply(await buildBGGSearchReply(interaction.user.id, title, withExpansions));
+}
+
+// ── Hub button: "🎲 Suggest a Game" ────────────────────────────────────────
+// Unlike /game suggest, the hub only ever lives inside a known event channel
+// (see updateHubPin in requestPin.ts) — so there's no event picker branch and
+// no private-room adapter here, both of which only exist to handle the
+// slash command being run without that channel context already established.
+
+export async function handleHubSuggestButton(interaction: ButtonInteraction): Promise<void> {
+  const modal = new ModalBuilder()
+    .setCustomId('hub_suggest_modal')
+    .setTitle('Suggest a Game')
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('title')
+          .setLabel('Game title')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('e.g. Wingspan')
+          .setRequired(true)
+          .setMaxLength(100),
+      ),
+    );
+  await interaction.showModal(modal);
+}
+
+export async function handleHubSuggestModal(interaction: ModalSubmitInteraction): Promise<void> {
+  const title = interaction.fields.getTextInputValue('title').trim();
+
+  const room = await findRoomByChannel(interaction.channelId!);
+  if (room) {
+    await resolveSuggestFlow(interaction, roomToGameNightAdapter(room), title, false);
+    return;
+  }
+
+  const gameNight = (await loadGameNights()).find(
+    (gn) => gn.eventChannelId === interaction.channelId && !gn.cancelled && !gn.archived,
+  );
+  if (!gameNight) {
+    await interaction.reply({
+      content: "Could not find this event — it may have been cancelled or archived.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  await resolveSuggestFlow(interaction, gameNight, title, false);
 }
 
 // ── Event picker: continues suggest flow after user picks which event ─────────
@@ -888,13 +935,13 @@ export async function handleHostGameCancel(
 // ── Library match: expansion picker ──────────────────────────────────────────
 
 async function showLibraryExpansionPicker(
-  interaction: ChatInputCommandInteraction | StringSelectMenuInteraction,
+  interaction: ChatInputCommandInteraction | StringSelectMenuInteraction | ModalSubmitInteraction,
   gameNight: GameNight,
   gameName: string,
   info: GameInfo,
   ownerIds: string[],
 ): Promise<void> {
-  if (interaction.isChatInputCommand()) {
+  if (interaction.isChatInputCommand() || interaction.isModalSubmit()) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   } else {
     await interaction.deferUpdate();
@@ -980,7 +1027,7 @@ export async function handleLibraryExpansionSelect(
 // ── Library match: post directly ──────────────────────────────────────────────
 
 async function postLibraryGame(
-  interaction: ChatInputCommandInteraction | StringSelectMenuInteraction,
+  interaction: ChatInputCommandInteraction | StringSelectMenuInteraction | ModalSubmitInteraction,
   gameNight: GameNight,
   gameName: string,
   info: GameInfo | null,
@@ -990,7 +1037,7 @@ async function postLibraryGame(
   const duplicate = await findDuplicateGame(gameNight.id, gameName);
   if (duplicate) {
     const msg = duplicateReply(duplicate);
-    if (interaction.isChatInputCommand()) {
+    if (interaction.isChatInputCommand() || interaction.isModalSubmit()) {
       await interaction.reply({ content: msg, flags: MessageFlags.Ephemeral });
     } else {
       await interaction.update({ content: msg, components: [] });
@@ -1003,7 +1050,7 @@ async function postLibraryGame(
   );
   if (!ownerAttending) {
     const msg = `None of the owners of **${gameName}** are attending this event, so it can't be suggested.`;
-    if (interaction.isChatInputCommand()) {
+    if (interaction.isChatInputCommand() || interaction.isModalSubmit()) {
       await interaction.reply({ content: msg, flags: MessageFlags.Ephemeral });
     } else {
       await interaction.update({ content: msg, components: [] });
@@ -1012,7 +1059,7 @@ async function postLibraryGame(
   }
 
   if (!interaction.deferred && !interaction.replied) {
-    if (interaction.isChatInputCommand()) {
+    if (interaction.isChatInputCommand() || interaction.isModalSubmit()) {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     } else {
       await interaction.deferUpdate();
@@ -1453,11 +1500,14 @@ export async function handleGameLeave(
   if (promotedUserId) {
     const nowHasGroup2 = (game.waitlist ?? []).length >= game.minPlayers;
     if (prevHadGroup2 && !nowHasGroup2) {
-      await updateRequestCopies(game.eventId, game.title, 1);
+      const updatedReq = await updateRequestCopies(game.eventId, game.title, 1);
       try {
         await updateRequestPin(interaction.client, game.eventId);
       } catch {
         /* no event channel */
+      }
+      if (updatedReq && gameNight) {
+        await reconcileRequestCopies(interaction.client, gameNight.guildId, gameNight.rsvps, updatedReq, gameNight.date);
       }
     }
     try {
@@ -1532,11 +1582,14 @@ export async function handleWaitlistJoin(
 
   const nowHasGroup2 = game.waitlist.length >= game.minPlayers;
   if (nowHasGroup2 && !prevHadGroup2) {
-    await updateRequestCopies(game.eventId, game.title, 2);
+    const updatedReq = await updateRequestCopies(game.eventId, game.title, 2);
     try {
       await updateRequestPin(interaction.client, game.eventId);
     } catch {
       /* no event channel */
+    }
+    if (updatedReq && gameNight) {
+      await reconcileRequestCopies(interaction.client, gameNight.guildId, gameNight.rsvps, updatedReq, gameNight.date);
     }
   }
 
@@ -1578,11 +1631,14 @@ export async function handleWaitlistLeave(
 
   const nowHasGroup2 = game.waitlist.length >= game.minPlayers;
   if (prevHadGroup2 && !nowHasGroup2) {
-    await updateRequestCopies(game.eventId, game.title, 1);
+    const updatedReq = await updateRequestCopies(game.eventId, game.title, 1);
     try {
       await updateRequestPin(interaction.client, game.eventId);
     } catch {
       /* no event channel */
+    }
+    if (updatedReq && gameNight) {
+      await reconcileRequestCopies(interaction.client, gameNight.guildId, gameNight.rsvps, updatedReq, gameNight.date);
     }
   }
 
@@ -1870,11 +1926,24 @@ export async function handleBringConfirm(interaction: ButtonInteraction): Promis
   await addGame(interaction.guildId!, interaction.user.id, pending.gameName, pending.objectid);
   // confirmBring checks library ownership — addGame above ensures it passes
   const confirmed = await confirmBring(interaction.guildId!, pending.eventId, pending.gameName, interaction.user.id);
-  if (confirmed === 'confirmed') {
+  if (confirmed.status === 'confirmed') {
     try {
       await updateRequestPin(interaction.client, pending.eventId);
     } catch {
       /* channel may not be accessible */
+    }
+
+    const gameNight = await findGameNight(pending.eventId);
+    if (gameNight) {
+      if (confirmed.invalidatedAsk) {
+        await invalidateBringDm(interaction.client, confirmed.invalidatedAsk, 'Confirmed via /library bring — thanks!');
+      }
+      const updatedReq = (await getRequestsForEvent(pending.eventId)).find(
+        (r) => r.gameName.toLowerCase() === pending.gameName.toLowerCase(),
+      );
+      if (updatedReq) {
+        await reconcileRequestCopies(interaction.client, gameNight.guildId, gameNight.rsvps, updatedReq, gameNight.date);
+      }
     }
   }
   await interaction.update({

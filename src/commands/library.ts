@@ -35,9 +35,14 @@ import {
   Complexity,
   addRequest,
   getRequestsForEvent,
+  getRequestById,
   removeRequests,
   removeAllRequestsForEvent,
   confirmBring,
+  declineBring,
+  buildExpansionNote,
+  resolveAttendingOwnerIds,
+  pickPreferredOwner,
   GameRequest,
 } from '../utils/libraryStorage';
 import {
@@ -46,9 +51,10 @@ import {
   getEffectiveOwnerIds,
   getLibraryLinksForGuild,
 } from '../utils/libraryLinkStorage';
-import { loadGameNights } from '../utils/storage';
+import { loadGameNights, findGameNight, GameNight } from '../utils/storage';
 import { getGameRoles, getMemberPreferences } from '../utils/gameRoles';
 import { updateRequestPin } from '../utils/requestPin';
+import { sendBringRequestDm, invalidateBringDm, reconcileRequestCopies } from '../utils/libraryBringDm';
 import AdmZip from 'adm-zip';
 import { getBGGGame, getBGGGamesBatch, BGGGame, weightTag, fetchBggOwnedCollection } from '../utils/bgg';
 import { getGuildConfig } from '../utils/config';
@@ -88,59 +94,6 @@ interface PendingRequestConfirm {
   attendingOwnerIds: string[];
 }
 const pendingRequestConfirms = new Map<string, PendingRequestConfirm>();
-
-/**
- * An owner "counts" as attending if they themselves RSVP'd yes/maybe, OR
- * anyone they've linked as a delegate (via /library link) did — a delegate
- * attending the event can bring the owner's copy on their behalf even if the
- * owner isn't there.
- */
-async function resolveAttendingOwnerIds(
-  guildId: string,
-  ownerIds: string[],
-  rsvps: { yes: string[]; maybe: string[] },
-): Promise<string[]> {
-  const links = await getLibraryLinksForGuild(guildId);
-  const isAttending = (id: string) => rsvps.yes.includes(id) || rsvps.maybe.includes(id);
-  return ownerIds.filter((ownerId) => {
-    const delegateIds = links.filter((l) => l.ownerId === ownerId).map((l) => l.delegateId);
-    return isAttending(ownerId) || delegateIds.some(isAttending);
-  });
-}
-
-async function pickPreferredOwner(eventId: string, attendingOwnerIds: string[]): Promise<string> {
-  const requests = await getRequestsForEvent(eventId);
-  const bringCounts = new Map<string, number>(attendingOwnerIds.map((id) => [id, 0]));
-  for (const req of requests) {
-    if (req.confirmedBy && bringCounts.has(req.confirmedBy)) {
-      bringCounts.set(req.confirmedBy, (bringCounts.get(req.confirmedBy) ?? 0) + 1);
-    }
-  }
-  let minCount = Infinity,
-    chosen = attendingOwnerIds[0];
-  for (const [id, count] of bringCounts) {
-    if (count < minCount) {
-      minCount = count;
-      chosen = id;
-    }
-  }
-  return chosen;
-}
-
-async function buildExpansionNote(guildId: string, userId: string, gameName: string): Promise<string> {
-  const info = await getGameInfo(gameName);
-  if (!info?.bggExpansions?.length) return '';
-  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
-  const effectiveOwnerIds = await getEffectiveOwnerIds(guildId, userId);
-  const userExpNames = new Set(
-    (await loadLibraryForGuild(guildId))
-      .filter((e) => effectiveOwnerIds.includes(e.userId) && e.isExpansion)
-      .map((e) => norm(e.gameName)),
-  );
-  const ownedExps = info.bggExpansions.filter((name) => userExpNames.has(norm(name)));
-  if (ownedExps.length === 0) return '';
-  return ` (with ${ownedExps.join(', ')})`;
-}
 
 function fuzzyMatchComplexity(input: string): Complexity | null {
   const s = input.toLowerCase().trim();
@@ -413,8 +366,8 @@ async function buildBringLines(
   const lines: string[] = [];
   for (const req of filtered) {
     const copies = req.copiesNeeded ?? 1;
-    const confirmed = req.confirmedBy === userId ? ' ✅ confirmed' : '';
-    const copiesNote = copies > 1 ? ` *(${copies} copies needed)*` : '';
+    const confirmed = req.confirmations.some((c) => c.ownerId === userId) ? ' ✅ confirmed' : '';
+    const copiesNote = copies > 1 ? ` *(${req.confirmations.length}/${copies} copies confirmed)*` : '';
     const expansionNote =
       req.preferredOwnerId && effectiveOwnerIds.includes(req.preferredOwnerId)
         ? await buildExpansionNote(guildId, userId, req.gameName)
@@ -422,6 +375,35 @@ async function buildBringLines(
     lines.push(`• **${req.gameName}**${expansionNote}${copiesNote}${confirmed}`);
   }
   return lines;
+}
+
+// Shared by /library bring's view mode (no game param) and the hub's
+// "📋 My Games to Bring" button (handleHubBringButton below) — both already
+// know exactly which event's channel they're in, so neither needs the
+// no-channel-context "loop over every upcoming event" fallback that plain
+// `/library bring` (run outside any event channel) falls back to.
+async function showBringViewForChannelEvent(
+  interaction: ChatInputCommandInteraction | ButtonInteraction,
+  channelEvent: GameNight,
+): Promise<void> {
+  const lines = await buildBringLines(
+    interaction.guildId!,
+    await getRequestsForEvent(channelEvent.id),
+    interaction.user.id,
+  );
+  if (lines.length === 0) {
+    await interaction.reply({
+      content: `None of your games have been requested for this event (${channelEvent.date}).`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  const embed = new EmbedBuilder()
+    .setTitle(`Your Games to Bring — ${channelEvent.date}`)
+    .setColor(0x5865f2)
+    .setDescription(lines.join('\n'))
+    .setFooter({ text: 'Confirm with /library bring game:<name>' });
+  await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }
 
 async function handleBring(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -466,7 +448,7 @@ async function handleBring(interaction: ChatInputCommandInteraction): Promise<vo
       interaction.user.id,
     );
 
-    if (result === 'not_owner') {
+    if (result.status === 'not_owner') {
       await interaction.reply({
         content: `You can only confirm bring for games you own. **${match.gameName}** isn't in your library.`,
         flags: MessageFlags.Ephemeral,
@@ -474,7 +456,15 @@ async function handleBring(interaction: ChatInputCommandInteraction): Promise<vo
       return;
     }
 
-    // result === 'confirmed'
+    if (result.status === 'not_requested') {
+      await interaction.reply({
+        content: `**${match.gameName}** is no longer requested for the event on ${event.date}.`,
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    // result.status === 'confirmed'
     const expansionNote = await buildExpansionNote(
       interaction.guildId!,
       interaction.user.id,
@@ -490,29 +480,21 @@ async function handleBring(interaction: ChatInputCommandInteraction): Promise<vo
     } catch {
       /* channel may not be accessible */
     }
+
+    if (result.invalidatedAsk) {
+      await invalidateBringDm(interaction.client, result.invalidatedAsk, 'Confirmed via /library bring — thanks!');
+    }
+
+    const updatedReq = await getRequestById(match.id);
+    if (updatedReq) {
+      await reconcileRequestCopies(interaction.client, interaction.guildId!, event.rsvps, updatedReq, event.date);
+    }
     return;
   }
 
   // ── View mode: /library bring (no game param) ────────────────────────────
   if (channelEvent) {
-    const lines = await buildBringLines(
-      interaction.guildId!,
-      await getRequestsForEvent(channelEvent.id),
-      interaction.user.id,
-    );
-    if (lines.length === 0) {
-      await interaction.reply({
-        content: `None of your games have been requested for this event (${channelEvent.date}).`,
-        flags: MessageFlags.Ephemeral,
-      });
-      return;
-    }
-    const embed = new EmbedBuilder()
-      .setTitle(`Your Games to Bring — ${channelEvent.date}`)
-      .setColor(0x5865f2)
-      .setDescription(lines.join('\n'))
-      .setFooter({ text: 'Confirm with /library bring game:<name>' });
-    await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+    await showBringViewForChannelEvent(interaction, channelEvent);
     return;
   }
 
@@ -545,6 +527,109 @@ async function handleBring(interaction: ChatInputCommandInteraction): Promise<vo
 
   embed.setFooter({ text: 'Confirm with /library bring game:<name>' });
   await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+}
+
+/** Handles the "✅ Confirm bringing" button on a "please bring this" DM. */
+export async function handleLibraryConfirmBring(
+  interaction: ButtonInteraction,
+  requestId: string,
+): Promise<void> {
+  const req = await getRequestById(requestId);
+  if (!req) {
+    await interaction.update({
+      content: `${interaction.message.content}\n\n_This request no longer exists — it may have been dropped since nobody signed up to play it._`,
+      components: [],
+    });
+    return;
+  }
+
+  const gameNight = await findGameNight(req.eventId);
+  if (!gameNight) {
+    await interaction.reply({ content: 'Could not find the event this request belongs to.' });
+    return;
+  }
+
+  const result = await confirmBring(gameNight.guildId, req.eventId, req.gameName, interaction.user.id);
+
+  if (result.status === 'not_owner') {
+    await interaction.reply({
+      content: `You can only confirm bringing games you own. **${req.gameName}** isn't in your library.`,
+    });
+    return;
+  }
+
+  if (result.status === 'not_requested') {
+    await interaction.update({
+      content: `${interaction.message.content}\n\n_This request no longer exists._`,
+      components: [],
+    });
+    return;
+  }
+
+  // result.status === 'confirmed'
+  const expansionNote = await buildExpansionNote(gameNight.guildId, interaction.user.id, req.gameName);
+  await interaction.update({
+    content: `✅ Confirmed — you're bringing **${req.gameName}**${expansionNote} to the event on ${gameNight.date}!`,
+    components: [],
+  });
+
+  try {
+    await updateRequestPin(interaction.client, req.eventId);
+  } catch {
+    /* channel may not be accessible */
+  }
+
+  const updatedReq = await getRequestById(requestId);
+  if (updatedReq) {
+    await reconcileRequestCopies(interaction.client, gameNight.guildId, gameNight.rsvps, updatedReq, gameNight.date);
+  }
+}
+
+/** Handles the "❌ Can't bring it" button on a "please bring this" DM. */
+export async function handleLibraryDeclineBring(
+  interaction: ButtonInteraction,
+  requestId: string,
+): Promise<void> {
+  const req = await getRequestById(requestId);
+  if (!req) {
+    await interaction.update({
+      content: `${interaction.message.content}\n\n_This request no longer exists — it may have been dropped since nobody signed up to play it._`,
+      components: [],
+    });
+    return;
+  }
+
+  const gameNight = await findGameNight(req.eventId);
+  if (!gameNight) {
+    await interaction.reply({ content: 'Could not find the event this request belongs to.' });
+    return;
+  }
+
+  const result = await declineBring(requestId, interaction.user.id);
+
+  if (result === 'not_requested') {
+    await interaction.update({
+      content: `${interaction.message.content}\n\n_This request no longer exists._`,
+      components: [],
+    });
+    return;
+  }
+
+  if (result === 'not_asked') {
+    await interaction.reply({ content: "You weren't asked to bring this one." });
+    return;
+  }
+
+  // result === 'declined'
+  await interaction.update({
+    content: `${interaction.message.content}\n\n_No problem — thanks for letting us know._`,
+    components: [],
+  });
+
+  const updatedReq = await getRequestById(requestId);
+  if (updatedReq) {
+    await reconcileRequestCopies(interaction.client, gameNight.guildId, gameNight.rsvps, updatedReq, gameNight.date);
+  }
 }
 
 async function buildUnrequestUI(
@@ -885,7 +970,7 @@ function buildListButtons(pageIdx: number, totalPages: number): ActionRowBuilder
 // Each page holds up to this many characters — safely under Discord's 1024-char field limit.
 const LIST_PAGE_CHARS = 1000;
 
-async function handleList(interaction: ChatInputCommandInteraction): Promise<void> {
+export async function handleList(interaction: ChatInputCommandInteraction | ButtonInteraction): Promise<void> {
   const entries = (await loadLibraryForGuild(interaction.guildId!)).filter((e) => !e.isExpansion);
 
   if (entries.length === 0) {
@@ -1349,7 +1434,7 @@ export async function handleLibraryViewSelect(
   await interaction.editReply({ content: '', embeds: [embed], components: [] });
 }
 
-async function handleMine(interaction: ChatInputCommandInteraction): Promise<void> {
+export async function handleMine(interaction: ChatInputCommandInteraction | ButtonInteraction): Promise<void> {
   const guildId = interaction.guildId!;
   const userId = interaction.user.id;
   const entries = (await getGamesByUserAndLinked(guildId, userId)).filter((e) => !e.isExpansion);
@@ -1924,7 +2009,7 @@ export async function handleRemoveSelect(interaction: StringSelectMenuInteractio
 }
 
 async function showCopySelect(
-  interaction: ChatInputCommandInteraction | StringSelectMenuInteraction,
+  interaction: ChatInputCommandInteraction | StringSelectMenuInteraction | ModalSubmitInteraction,
   canonicalName: string,
   eventId: string,
   eventDate: string,
@@ -2008,7 +2093,16 @@ async function showCopySelect(
 
 async function handleRequest(interaction: ChatInputCommandInteraction): Promise<void> {
   const gameName = interaction.options.getString('game', true).trim();
+  await resolveRequestFlow(interaction, gameName);
+}
 
+// Shared by the slash command above and the hub's "🙋 Request a Game to Bring"
+// button/modal (see handleHubRequestModal below) — everything after the typed
+// game name is resolved identically regardless of how that name was collected.
+async function resolveRequestFlow(
+  interaction: ChatInputCommandInteraction | ModalSubmitInteraction,
+  gameName: string,
+): Promise<void> {
   // Check the game exists in the library (someone must own it)
   const library = await loadLibraryForGuild(interaction.guildId!);
   const matches = library.filter((e) => e.gameName.toLowerCase() === gameName.toLowerCase());
@@ -2114,6 +2208,53 @@ async function handleRequest(interaction: ChatInputCommandInteraction): Promise<
   } catch {
     /* channel may not be accessible */
   }
+
+  const dmOwnerId = await pickPreferredOwner(event.id, attendingOwnerIds);
+  if (dmOwnerId) {
+    const expansionNote = await buildExpansionNote(interaction.guildId!, dmOwnerId, canonicalName);
+    await sendBringRequestDm(interaction.client, result, dmOwnerId, event.date, expansionNote);
+  }
+}
+
+// ── Hub button: "🙋 Request a Game to Bring" ───────────────────────────────
+
+export async function handleHubRequestButton(interaction: ButtonInteraction): Promise<void> {
+  const modal = new ModalBuilder()
+    .setCustomId('hub_request_modal')
+    .setTitle('Request a Game to Bring')
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('game')
+          .setLabel('Game name')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('e.g. Catan')
+          .setRequired(true)
+          .setMaxLength(100),
+      ),
+    );
+  await interaction.showModal(modal);
+}
+
+export async function handleHubRequestModal(interaction: ModalSubmitInteraction): Promise<void> {
+  const gameName = interaction.fields.getTextInputValue('game').trim();
+  await resolveRequestFlow(interaction, gameName);
+}
+
+// ── Hub button: "📋 My Games to Bring" ─────────────────────────────────────
+
+export async function handleHubBringButton(interaction: ButtonInteraction): Promise<void> {
+  const gameNight = (await loadGameNights()).find(
+    (gn) => gn.eventChannelId === interaction.channelId && !gn.cancelled && !gn.archived,
+  );
+  if (!gameNight) {
+    await interaction.reply({
+      content: "Could not find this event — it may have been cancelled or archived.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  await showBringViewForChannelEvent(interaction, gameNight);
 }
 
 export async function handleLibraryRequestSelect(
@@ -2192,6 +2333,12 @@ export async function handleLibraryRequestSelect(
   } catch {
     /* channel may not be accessible */
   }
+
+  const dmOwnerId = await pickPreferredOwner(event.id, attendingOwnerIds);
+  if (dmOwnerId) {
+    const expansionNote = await buildExpansionNote(interaction.guildId!, dmOwnerId, canonicalName);
+    await sendBringRequestDm(interaction.client, result, dmOwnerId, event.date, expansionNote);
+  }
 }
 
 export async function handleLibraryRequestCopySelect(
@@ -2239,6 +2386,11 @@ export async function handleLibraryRequestCopySelect(
     await updateRequestPin(interaction.client, pending.eventId);
   } catch {
     /* channel not accessible */
+  }
+
+  if (preferredOwnerId) {
+    const expansionNote = await buildExpansionNote(interaction.guildId!, preferredOwnerId, pending.canonicalName);
+    await sendBringRequestDm(interaction.client, result, preferredOwnerId, pending.eventDate, expansionNote);
   }
 }
 
@@ -2763,12 +2915,27 @@ export async function handleTagsSkip(interaction: ButtonInteraction): Promise<vo
 }
 
 async function handleRandom(interaction: ChatInputCommandInteraction): Promise<void> {
-  let tags = [
+  const tags = [
     interaction.options.getString('tag'),
     interaction.options.getString('tag2'),
     interaction.options.getString('tag3'),
   ].filter((t): t is string => t !== null);
-  let complexity = interaction.options.getString('complexity') as Complexity | null;
+  const complexity = interaction.options.getString('complexity') as Complexity | null;
+  await resolveRandomGames(interaction, tags, complexity);
+}
+
+// Shared by the slash command above and the general hub's "🎲 Random Game"
+// button (see handleHubGeneralRandomButton in generalHub.ts), which always
+// calls this with empty filters — same as running /library random with no
+// options, including the personalization fallback to the user's /myroles
+// preferences when no tags/complexity are given.
+export async function resolveRandomGames(
+  interaction: ChatInputCommandInteraction | ButtonInteraction,
+  initialTags: string[],
+  initialComplexity: Complexity | null,
+): Promise<void> {
+  let tags = initialTags;
+  let complexity = initialComplexity;
 
   let personalized = false;
   if (tags.length === 0 && !complexity) {

@@ -10,6 +10,12 @@ export interface GuildConfig {
   announcementsChannelId: string;
   welcomeChannelId: string;
   rulesChannelId: string;
+  // "Quick Actions" button hub for general chat (see updateGeneralHubPin in
+  // src/utils/generalHub.ts) — RSVP/Browse/My Games/Random/Request buttons,
+  // set via /admin general config. Distinct from welcomeChannelId (new-member
+  // greeting) — this is meant for an ongoing, already-populated chat channel.
+  generalHubChannelId?: string;
+  generalHubPinMessageId?: string;
   facebookGroupUrl: string;
   bggGroupUrl: string;
   openEventChannels: boolean;
@@ -17,6 +23,10 @@ export interface GuildConfig {
   archiveCategoryName: string;
   archivedChannelRetentionDays: number; // 0 = never auto-delete
   marketplaceChannelId: string;
+  // "Quick Actions" button hub (see updateMarketplaceHubThread in marketplace.ts) —
+  // a pinned forum post with Sell/Trade/Browse/My Listings buttons, kept in sync
+  // whenever marketplaceChannelId is (re)configured via /admin marketplace config.
+  marketplaceHubThreadId?: string;
   marketplaceNegotiationMode: 'public' | 'private';
   marketplaceTagIds: Record<string, string>;
   gameNightTagIds: Record<string, string>;

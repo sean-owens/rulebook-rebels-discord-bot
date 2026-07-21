@@ -562,6 +562,118 @@ describe('waitlist promotion on leave', () => {
   });
 });
 
+describe('waitlist-driven copy requests', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-game-waitlist-copies-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeDmClient() {
+    const sentTo: string[] = [];
+    const client = {
+      users: {
+        fetch: vi.fn(async (ownerId: string) => ({
+          id: ownerId,
+          send: vi.fn(async () => {
+            sentTo.push(ownerId);
+            return { id: `msg-${sentTo.length}`, channelId: `dm-channel-${ownerId}` };
+          }),
+        })),
+      },
+    };
+    return { client, sentTo };
+  }
+
+  function makeWaitlistInteraction(userId: string, client: any) {
+    return {
+      user: { id: userId },
+      client,
+      reply: vi.fn(async () => {}),
+      update: vi.fn(async () => {}),
+    } as any;
+  }
+
+  it('asks a second owner to bring a copy once the waitlist grows into a full second group', async () => {
+    const { upsertGame } = await import('../src/utils/gameStorage');
+    const { addGame, addRequest, addPendingAsk, getRequestsForEvent } = await import('../src/utils/libraryStorage');
+    const { handleWaitlistJoin } = await import('../src/commands/game');
+    await upsertGameNight(
+      makeGameNight({
+        id: 'gn-wl2',
+        guildId: 'g1',
+        rsvps: { yes: ['alice', 'bob', 'p1', 'p2'], maybe: [], no: [] },
+      }),
+    );
+    await addGame('g1', 'alice', 'Full Game');
+    await addGame('g1', 'bob', 'Full Game');
+    const initialReq = await addRequest('gn-wl2', 'Full Game', 'requester');
+    // Simulate alice already having been DMed at request-creation time (copiesNeeded:1).
+    await addPendingAsk((initialReq as any).id, 'alice', 'dm-channel-alice', 'dm-message-0');
+
+    await upsertGame({
+      id: 'game-wl2-1', eventId: 'gn-wl2', channelId: 'event-channel-1', messageId: 'msg-1', guildId: 'g1',
+      bggId: '1', title: 'Full Game', bggLink: '', minPlayers: 2, maxPlayers: 2, suggestedPlayers: null,
+      minPlaytime: 30, maxPlaytime: 60, suggestedStartTime: null, expansions: [],
+      seats: ['p1', 'p2'], waitlist: [], createdAt: new Date().toISOString(), createdBy: 'p1',
+    } as any);
+
+    const { client, sentTo } = makeDmClient();
+    // First waitlister alone doesn't cross the minPlayers(2) threshold for a full second group.
+    await handleWaitlistJoin(makeWaitlistInteraction('waiter-1', client), 'game-wl2-1');
+    expect(sentTo).toEqual([]);
+    // Second waitlister crosses it — copiesNeeded becomes 2, and a second owner gets asked.
+    await handleWaitlistJoin(makeWaitlistInteraction('waiter-2', client), 'game-wl2-1');
+
+    expect(sentTo).toEqual(['bob']);
+    const [req] = await getRequestsForEvent('gn-wl2');
+    expect(req.copiesNeeded).toBe(2);
+    expect(req.pendingAsks).toHaveLength(2);
+  });
+
+  it('retracts the extra ask if the waitlist drops back below a full second group', async () => {
+    const { upsertGame, findGame } = await import('../src/utils/gameStorage');
+    const { addGame, addRequest, addPendingAsk, getRequestsForEvent } = await import('../src/utils/libraryStorage');
+    const { handleWaitlistJoin, handleWaitlistLeave } = await import('../src/commands/game');
+    await upsertGameNight(
+      makeGameNight({
+        id: 'gn-wl3',
+        guildId: 'g1',
+        rsvps: { yes: ['alice', 'bob', 'p1', 'p2'], maybe: [], no: [] },
+      }),
+    );
+    await addGame('g1', 'alice', 'Full Game');
+    await addGame('g1', 'bob', 'Full Game');
+    const initialReq = await addRequest('gn-wl3', 'Full Game', 'requester');
+    await addPendingAsk((initialReq as any).id, 'alice', 'dm-channel-alice', 'dm-message-0');
+
+    await upsertGame({
+      id: 'game-wl3-1', eventId: 'gn-wl3', channelId: 'event-channel-1', messageId: 'msg-1', guildId: 'g1',
+      bggId: '1', title: 'Full Game', bggLink: '', minPlayers: 2, maxPlayers: 2, suggestedPlayers: null,
+      minPlaytime: 30, maxPlaytime: 60, suggestedStartTime: null, expansions: [],
+      seats: ['p1', 'p2'], waitlist: [], createdAt: new Date().toISOString(), createdBy: 'p1',
+    } as any);
+
+    const { client } = makeDmClient();
+    await handleWaitlistJoin(makeWaitlistInteraction('waiter-1', client), 'game-wl3-1');
+    await handleWaitlistJoin(makeWaitlistInteraction('waiter-2', client), 'game-wl3-1');
+    expect((await getRequestsForEvent('gn-wl3'))[0].pendingAsks).toHaveLength(2);
+
+    await handleWaitlistLeave(makeWaitlistInteraction('waiter-2', client), 'game-wl3-1');
+
+    const [req] = await getRequestsForEvent('gn-wl3');
+    expect(req.copiesNeeded).toBe(1);
+    expect(req.pendingAsks).toEqual([expect.objectContaining({ ownerId: 'alice' })]);
+  });
+});
+
 describe('greeter restrictions', () => {
   let tmpDir: string;
   let cwdSpy: ReturnType<typeof vi.spyOn>;
@@ -879,6 +991,33 @@ describe('/game suggest — inside a private room', () => {
 
     expect(mockUpdateRequestPin).not.toHaveBeenCalled();
     expect(mockUpdateGameListPin).not.toHaveBeenCalled();
+  });
+
+  it('the hub "Suggest a Game" modal also resolves a room from the channel, same as the slash command', async () => {
+    const { addGame } = await import('../src/utils/libraryStorage');
+    const { handleHubSuggestModal } = await import('../src/commands/game');
+    await seedRoom();
+    await addGame('g1', 'invitee-1', 'Wingspan');
+
+    const postedChannel = { send: vi.fn(async () => ({ id: 'card-msg-1' })) };
+    const interaction = {
+      channelId: 'room-channel-1',
+      guildId: 'g1',
+      user: { id: 'creator-1' },
+      deferred: false,
+      replied: false,
+      isChatInputCommand: () => false,
+      isModalSubmit: () => true,
+      fields: { getTextInputValue: (name: string) => (name === 'title' ? 'Wingspan' : '') },
+      reply: vi.fn(async () => {}),
+      deferReply: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
+      client: { channels: { fetch: vi.fn(async () => postedChannel) } },
+    } as any;
+
+    await handleHubSuggestModal(interaction);
+
+    expect(postedChannel.send).toHaveBeenCalled();
   });
 });
 
@@ -1284,5 +1423,88 @@ describe('/game cancel — permission checks', () => {
     );
     const { findGamesByChannel } = await import('../src/utils/gameStorage');
     expect(await findGamesByChannel('event-channel-1')).toHaveLength(0);
+  });
+});
+
+describe('hub "🎲 Suggest a Game" button/modal', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-game-hub-suggest-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeButtonInteraction(channelId: string, userId = 'u1') {
+    return {
+      channelId,
+      guildId: 'g1',
+      user: { id: userId },
+      showModal: vi.fn(async () => {}),
+    } as any;
+  }
+
+  function makeModalInteraction(channelId: string, title: string, userId = 'u1') {
+    return {
+      channelId,
+      guildId: 'g1',
+      user: { id: userId },
+      deferred: false,
+      replied: false,
+      isChatInputCommand: () => false,
+      isModalSubmit: () => true,
+      fields: { getTextInputValue: (name: string) => (name === 'title' ? title : '') },
+      reply: vi.fn(async () => {}),
+      deferReply: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
+    } as any;
+  }
+
+  it('shows a modal asking for the game title when the button is tapped', async () => {
+    const { handleHubSuggestButton } = await import('../src/commands/game');
+    const interaction = makeButtonInteraction('event-channel-1');
+
+    await handleHubSuggestButton(interaction);
+
+    expect(interaction.showModal).toHaveBeenCalledTimes(1);
+    const modal = interaction.showModal.mock.calls[0][0].toJSON();
+    expect(modal.custom_id).toBe('hub_suggest_modal');
+  });
+
+  it('replies with a graceful error when the channel has no active event', async () => {
+    const { handleHubSuggestModal } = await import('../src/commands/game');
+    const interaction = makeModalInteraction('no-such-channel', 'Wingspan');
+
+    await handleHubSuggestModal(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('Could not find this event') }),
+    );
+  });
+
+  it('resolves the event from the channel and reaches the same duplicate check /game suggest uses', async () => {
+    const { upsertGame } = await import('../src/utils/gameStorage');
+    const { addGame } = await import('../src/utils/libraryStorage');
+    const { handleHubSuggestModal } = await import('../src/commands/game');
+    await upsertGameNight(makeGameNight({ id: 'gn-hub-1', eventChannelId: 'event-channel-1' }));
+    await addGame('g1', 'p1', 'Wingspan');
+    await upsertGame({
+      id: 'existing-game', eventId: 'gn-hub-1', channelId: 'event-channel-1', messageId: 'm1', guildId: 'g1',
+      bggId: '1', title: 'Wingspan', bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
+      minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: [], waitlist: [],
+      createdAt: new Date().toISOString(), createdBy: 'p1',
+    } as any);
+
+    const interaction = makeModalInteraction('event-channel-1', 'Wingspan');
+    await handleHubSuggestModal(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('already in the lineup') }),
+    );
   });
 });

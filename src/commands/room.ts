@@ -7,6 +7,17 @@ import {
   MessageFlags,
   PermissionFlagsBits,
   Guild,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonInteraction,
+  ButtonStyle,
+  EmbedBuilder,
+  ModalBuilder,
+  ModalSubmitInteraction,
+  TextInputBuilder,
+  TextInputStyle,
+  UserSelectMenuBuilder,
+  UserSelectMenuInteraction,
 } from 'discord.js';
 import { randomUUID } from 'crypto';
 import { getGuildConfig, updateGuildConfig } from '../utils/config';
@@ -279,6 +290,7 @@ async function handleCreate(interaction: ChatInputCommandInteraction): Promise<v
     persistent: persist,
   };
   await upsertRoom(room);
+  await updateRoomHubPin(interaction.client, room.id).catch(() => null);
 
   const skippedNote =
     skippedCount > 0
@@ -288,7 +300,10 @@ async function handleCreate(interaction: ChatInputCommandInteraction): Promise<v
   await interaction.editReply(`Private room created: ${channel} — ${expirySummary}${skippedNote}`);
 }
 
-function canManageRoom(interaction: ChatInputCommandInteraction, room: PrivateRoom): boolean {
+function canManageRoom(
+  interaction: ChatInputCommandInteraction | ButtonInteraction | UserSelectMenuInteraction | ModalSubmitInteraction,
+  room: PrivateRoom,
+): boolean {
   const isCreator = room.createdBy === interaction.user.id;
   const isPrivileged =
     (interaction.memberPermissions?.has(PermissionFlagsBits.ManageEvents) ?? false) ||
@@ -575,6 +590,349 @@ async function closeRoom(client: Client, room: PrivateRoom, reason: string): Pro
   } catch (err) {
     console.warn(`Could not delete private room channel ${room.channelId}:`, err);
   }
+}
+
+// ── "Quick Actions" button hub ────────────────────────────────────────────────
+// Mirrors the event-channel hub (see updateHubPin in requestPin.ts) — posted
+// once at room creation for members who'd rather tap a button than type a
+// command. The 🎲 Suggest a Game button is shared with the event hub (same
+// `hub_suggest` customId, routed to the same handler in game.ts, which is
+// already room-aware via findRoomByChannel/roomToGameNightAdapter).
+
+function buildRoomHubEmbed(): EmbedBuilder {
+  return new EmbedBuilder()
+    .setTitle('🎮 Quick Actions')
+    .setColor(0x57f287)
+    .setDescription('Prefer tapping over typing? Use the buttons below instead of slash commands.')
+    .addFields(
+      { name: '🎲 Suggest a Game', value: 'Add a game to play in this room.' },
+      { name: '👋 Invite', value: 'Add more people to this room.' },
+      { name: '👢 Kick', value: 'Remove someone from this room.' },
+      { name: '📌 Toggle Auto-Expire', value: 'Make this room persistent, or set a new expiration date.' },
+      { name: '🔒 Close Room', value: 'Close and delete this room.' },
+    );
+}
+
+function buildRoomHubButtons(): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId('hub_suggest').setLabel('🎲 Suggest a Game').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('hub_room_invite').setLabel('👋 Invite').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('hub_room_kick').setLabel('👢 Kick').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('hub_room_persist').setLabel('📌 Toggle Auto-Expire').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('hub_room_close').setLabel('🔒 Close Room').setStyle(ButtonStyle.Danger),
+  );
+}
+
+export async function updateRoomHubPin(client: Client, roomId: string): Promise<void> {
+  const rooms = await loadRooms();
+  const room = rooms.find((r) => r.id === roomId);
+  if (!room) return;
+
+  let channel: TextChannel;
+  try {
+    channel = (await client.channels.fetch(room.channelId)) as TextChannel;
+  } catch {
+    return;
+  }
+
+  const payload = { embeds: [buildRoomHubEmbed()], components: [buildRoomHubButtons()] };
+
+  if (room.hubPinMessageId) {
+    try {
+      const msg = await channel.messages.fetch(room.hubPinMessageId);
+      await msg.edit(payload);
+      if (!msg.pinned) {
+        try {
+          await msg.pin();
+        } catch (err) {
+          console.warn(`Could not re-pin hub message in room channel ${room.channelId}:`, err);
+        }
+      }
+      return;
+    } catch {
+      /* message was deleted — fall through and repost */
+    }
+  }
+
+  const msg = await channel.send(payload);
+  try {
+    await msg.pin();
+  } catch (err) {
+    console.warn(`Could not pin hub message in room channel ${room.channelId}:`, err);
+  }
+
+  room.hubPinMessageId = msg.id;
+  await upsertRoom(room);
+}
+
+async function requireManageableRoom(
+  interaction: ButtonInteraction | UserSelectMenuInteraction | ModalSubmitInteraction,
+  deniedMessage: string,
+): Promise<PrivateRoom | undefined> {
+  const room = await findRoomByChannel(interaction.channelId!);
+  if (!room) {
+    await interaction.reply({
+      content: 'This must be used inside a private room channel created by `/room create`.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return undefined;
+  }
+  if (!canManageRoom(interaction, room)) {
+    await interaction.reply({ content: deniedMessage, flags: MessageFlags.Ephemeral });
+    return undefined;
+  }
+  return room;
+}
+
+export async function handleHubRoomInviteButton(interaction: ButtonInteraction): Promise<void> {
+  const room = await requireManageableRoom(
+    interaction,
+    "Only the room's creator or a host/admin can invite people to this room.",
+  );
+  if (!room) return;
+
+  const select = new UserSelectMenuBuilder()
+    .setCustomId('hub_room_invite_select')
+    .setPlaceholder('Select people to invite…')
+    .setMinValues(1)
+    .setMaxValues(10);
+  await interaction.reply({
+    content: 'Who would you like to invite?',
+    components: [new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(select)],
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+export async function handleHubRoomInviteSelect(interaction: UserSelectMenuInteraction): Promise<void> {
+  const room = await requireManageableRoom(
+    interaction,
+    "Only the room's creator or a host/admin can invite people to this room.",
+  );
+  if (!room) return;
+
+  const alreadyIn = new Set([room.createdBy, ...room.invitedUserIds]);
+  const userIds = interaction.values.filter((id) => !alreadyIn.has(id));
+  if (userIds.length === 0) {
+    await interaction.update({ content: 'Everyone selected is already in this room.', components: [] });
+    return;
+  }
+
+  await interaction.deferUpdate();
+
+  const resolvedMembers = await Promise.all(
+    userIds.map((id) => interaction.guild!.members.fetch(id).catch(() => null)),
+  );
+  const validMembers = resolvedMembers.filter((m): m is NonNullable<typeof m> => m !== null);
+  if (validMembers.length === 0) {
+    await interaction.editReply({ content: "Couldn't find any of the selected people in this server.", components: [] });
+    return;
+  }
+
+  const channel = await interaction.client.channels.fetch(room.channelId);
+  if (!channel || !('permissionOverwrites' in channel) || !('send' in channel)) {
+    await interaction.editReply({ content: "Couldn't find this room's channel.", components: [] });
+    return;
+  }
+  const textChannel = channel as TextChannel;
+
+  try {
+    for (const member of validMembers) {
+      await textChannel.permissionOverwrites.create(member.id, { ViewChannel: true, SendMessages: true });
+    }
+  } catch (err) {
+    console.warn(`Could not grant access to invited members for room channel ${room.channelId}:`, err);
+    await interaction.editReply({
+      content: 'Could not update channel permissions — check that the bot has Manage Roles/Channels permission.',
+      components: [],
+    });
+    return;
+  }
+
+  room.invitedUserIds = [...room.invitedUserIds, ...validMembers.map((m) => m.id)];
+  await upsertRoom(room);
+
+  const mentions = validMembers.map((m) => `<@${m.id}>`).join(' ');
+  await textChannel.send(`${mentions} You've been added to this private room by <@${interaction.user.id}>.`);
+  await interaction.editReply({ content: `Added ${mentions} to this room.`, components: [] });
+}
+
+export async function handleHubRoomKickButton(interaction: ButtonInteraction): Promise<void> {
+  const room = await requireManageableRoom(
+    interaction,
+    "Only the room's creator or a host/admin can remove people from this room.",
+  );
+  if (!room) return;
+
+  if (room.invitedUserIds.length === 0) {
+    await interaction.reply({
+      content: "Nobody has been individually invited to this room (anyone else here only has access through a host/admin role, which this can't remove).",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const select = new UserSelectMenuBuilder()
+    .setCustomId('hub_room_kick_select')
+    .setPlaceholder('Select someone to remove…')
+    .setMinValues(1)
+    .setMaxValues(1);
+  await interaction.reply({
+    content: 'Who would you like to remove?',
+    components: [new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(select)],
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+export async function handleHubRoomKickSelect(interaction: UserSelectMenuInteraction): Promise<void> {
+  const room = await requireManageableRoom(
+    interaction,
+    "Only the room's creator or a host/admin can remove people from this room.",
+  );
+  if (!room) return;
+
+  const targetId = interaction.values[0];
+  const target = interaction.users.get(targetId);
+
+  if (targetId === room.createdBy) {
+    await interaction.update({
+      content: "You can't remove the room's creator — use the 🔒 Close Room button instead.",
+      components: [],
+    });
+    return;
+  }
+
+  if (!room.invitedUserIds.includes(targetId)) {
+    await interaction.update({
+      content: `${target?.username ?? 'That person'} hasn't been individually invited to this room (they may only have access through a host/admin role, which this can't remove).`,
+      components: [],
+    });
+    return;
+  }
+
+  await interaction.deferUpdate();
+
+  const channel = await interaction.client.channels.fetch(room.channelId);
+  if (!channel || !('permissionOverwrites' in channel) || !('send' in channel)) {
+    await interaction.editReply({ content: "Couldn't find this room's channel.", components: [] });
+    return;
+  }
+  const textChannel = channel as TextChannel;
+
+  try {
+    await textChannel.permissionOverwrites.delete(targetId);
+  } catch (err) {
+    console.warn(`Could not remove permission overwrite for ${targetId} in room channel ${room.channelId}:`, err);
+    await interaction.editReply({
+      content: 'Could not update channel permissions — check that the bot has Manage Roles/Channels permission.',
+      components: [],
+    });
+    return;
+  }
+
+  room.invitedUserIds = room.invitedUserIds.filter((id) => id !== targetId);
+  await upsertRoom(room);
+
+  await textChannel.send(`<@${targetId}> has been removed from this private room by <@${interaction.user.id}>.`);
+  await interaction.editReply({ content: `Removed ${target?.username ?? 'that person'} from this room.`, components: [] });
+}
+
+export async function handleHubRoomPersistButton(interaction: ButtonInteraction): Promise<void> {
+  const room = await requireManageableRoom(
+    interaction,
+    "Only the room's creator or a host/admin can change this room's expiration.",
+  );
+  if (!room) return;
+
+  if (!room.persistent) {
+    room.persistent = true;
+    await upsertRoom(room);
+    await interaction.reply({
+      content: `${PERSISTENT_ICON} This room will no longer auto-expire — use the 🔒 Close Room button (or this button again) when you're done.`,
+      flags: MessageFlags.Ephemeral,
+    });
+    await updateRoomChannelDisplay(interaction.client, room);
+    return;
+  }
+
+  const modal = new ModalBuilder()
+    .setCustomId('hub_room_persist_modal')
+    .setTitle('Set Expiration Date')
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('date')
+          .setLabel('New expiration date')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('e.g. August 22')
+          .setRequired(true),
+      ),
+    );
+  await interaction.showModal(modal);
+}
+
+export async function handleHubRoomPersistModal(interaction: ModalSubmitInteraction): Promise<void> {
+  const room = await requireManageableRoom(
+    interaction,
+    "Only the room's creator or a host/admin can change this room's expiration.",
+  );
+  if (!room) return;
+
+  const rawDate = interaction.fields.getTextInputValue('date');
+  const parsed = parseExpirationDate(rawDate);
+  if (!parsed.ok) {
+    await interaction.reply({ content: parsed.error, flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  room.persistent = false;
+  room.expiresAt = parsed.date.toISOString();
+  await upsertRoom(room);
+
+  await interaction.reply({
+    content: `This room will now expire at the end of **${formatExpiryDate(parsed.date)}**.`,
+    flags: MessageFlags.Ephemeral,
+  });
+  await updateRoomChannelDisplay(interaction.client, room);
+}
+
+export async function handleHubRoomCloseButton(interaction: ButtonInteraction): Promise<void> {
+  const room = await requireManageableRoom(
+    interaction,
+    "Only the room's creator or a host/admin can close this room.",
+  );
+  if (!room) return;
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId('hub_room_close_confirm').setLabel('Yes, close this room').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId('hub_room_close_cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary),
+  );
+  await interaction.reply({
+    content: 'Are you sure you want to close and delete this room? This cannot be undone.',
+    components: [row],
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+export async function handleHubRoomCloseConfirm(interaction: ButtonInteraction): Promise<void> {
+  const room = await findRoomByChannel(interaction.channelId!);
+  if (!room) {
+    await interaction.update({ content: 'This room no longer exists.', components: [] });
+    return;
+  }
+  if (!canManageRoom(interaction, room)) {
+    await interaction.update({
+      content: "Only the room's creator or a host/admin can close this room.",
+      components: [],
+    });
+    return;
+  }
+
+  await interaction.update({ content: 'Closing this room…', components: [] });
+  await closeRoom(interaction.client, room, 'Private room closed');
+}
+
+export async function handleHubRoomCloseCancel(interaction: ButtonInteraction): Promise<void> {
+  await interaction.update({ content: 'Cancelled — this room stays open.', components: [] });
 }
 
 export async function checkExpiredRooms(client: Client): Promise<void> {

@@ -181,16 +181,18 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.3e Game Card Buttons — Waitlist
 
-**What it does:** When a game is full, players join a waitlist. If the waitlist reaches the minimum player count, the request pin is updated to reflect 2 copies needed. When a seated player leaves and the game is full, the first waitlisted player is automatically promoted into the freed seat and removed from the waitlist (they get a DM if their DMs are open).
+**What it does:** When a game is full, players join a waitlist. If the waitlist reaches the minimum player count, the request pin is updated to reflect 2 copies needed — and if that game has a `/library request` (1.4h) outstanding, the bot automatically asks one more attending owner (load-balanced, excluding anyone already asked/confirmed/declined) to bring a second copy, the same "🎲 ... ✅ Confirm bringing / ❌ Can't bring it" DM as the initial request. If the waitlist later drops back below the threshold, that extra ask is retracted — its DM is edited to say it's no longer needed and its buttons removed — rather than left outstanding. When a seated player leaves and the game is full, the first waitlisted player is automatically promoted into the freed seat and removed from the waitlist (they get a DM if their DMs are open).
 
 - [ ] Fill a game to max players, then click **Join Waitlist** — confirm added to waitlist section
 - [ ] Click **Join Waitlist** when already on waitlist — confirm "You're already on the waitlist" error
 - [ ] Click **Join Waitlist** when a seat is still available — confirm "There's still an open seat" error
-- [ ] Add enough players to the waitlist to reach the minimum player count — confirm request pin updates to show "2 copies"
+- [ ] Add enough players to the waitlist to reach the minimum player count, with a `/library request` (1.4h) already outstanding for that game and 2+ attending owners — confirm the request pin updates to show "X/2 copies confirmed" and a second attending owner receives a "please bring a copy" DM
+- [ ] Do the same with only 1 owner attending — confirm the pin still shows the updated copy count, but no second DM is sent (no eligible second owner to ask)
 - [ ] Click **Leave Waitlist** — confirm removed from waitlist
-- [ ] Dropping below min players on waitlist — confirm request pin reverts to "1 copy"
+- [ ] Dropping below min players on waitlist, with a second owner's ask still outstanding (unconfirmed) — confirm the pin reverts to 1 copy needed and that owner's DM is edited to say it's no longer needed, with its buttons removed
+- [ ] Dropping below min players after the second owner already confirmed — confirm the pin reverts to 1 copy needed but the existing confirmation is left alone (a harmless extra confirmed copy), not retracted
 - [ ] With a full game and at least one person on the waitlist, have a seated player click **Leave** — confirm the first waitlisted person is moved into the freed seat, removed from the waitlist list, and (if their DMs are open) receives a DM saying a seat opened up
-- [ ] Do the same when promoting the waitlist below the minimum player count drops it back below 2 groups — confirm the request pin reverts to "1 copy"
+- [ ] Do the same when promoting the waitlist below the minimum player count drops it back below 2 groups — confirm the request pin reverts to 1 copy needed
 
 ### 1.3f Bring Confirm / Cancel
 
@@ -213,6 +215,22 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run `/game bgstats title:Wingspan location:Sean's place` — confirm the supplied location overrides the event's default
 - [ ] Run the same command inside a `/room`-created private room with a suggested game — confirm it works identically, and that location is blank unless the `location` option is given (rooms have no location of their own)
 - [ ] Run with a title that doesn't match any suggested game — confirm a clear ephemeral "No game called... found" error listing current games
+
+### 1.3h Quick Actions Hub (button panel)
+
+**What it does:** A pinned "🎮 Quick Actions" message with three buttons — 🎲 Suggest a Game, 🙋 Request a Game to Bring, 📋 My Games to Bring — posted automatically in the event channel the moment it's created, alongside (not replacing) the existing plain-text welcome message. Built for members on mobile who'd rather tap a button than learn/type a slash command; each button leads to the exact same result as its slash-command equivalent, just entered via a modal (popup text form) instead of command options. Because the hub only ever lives inside one specific event channel, it always resolves that event directly from the channel — there's no event picker step here, unlike running the bare slash commands outside an event channel.
+
+- [ ] Create a new event — confirm the "🎮 Quick Actions" message appears in the new event channel, pinned, alongside the separate plain-text welcome message
+- [ ] Tap "🎲 Suggest a Game" — confirm a modal pops up asking for a game title
+- [ ] Submit the modal with a game already in the group library — confirm it's added to the lineup exactly as `/game suggest` would (posts a game card, same duplicate-detection, same "owner must be attending" check)
+- [ ] Submit the modal with a title not in the library — confirm it falls through to the BGG search flow, same as `/game suggest`
+- [ ] Submit the modal with a title already suggested for this event — confirm the same "already in the lineup" message `/game suggest` gives, with a jump link to the existing card
+- [ ] Tap "🙋 Request a Game to Bring" — confirm a modal pops up asking for a game name
+- [ ] Submit the modal with a game in the group library whose owner is attending — confirm the request is created and the assigned owner gets DMed, identical to `/library request`
+- [ ] Submit the modal with a game not in the library, or whose owner(s) aren't attending — confirm the same error messages `/library request` gives
+- [ ] Tap "📋 My Games to Bring" — confirm it shows the same ephemeral embed `/library bring` (no game param) shows for this event, listing only requests tied to games you (or a linked delegate) own
+- [ ] Tap "📋 My Games to Bring" with nothing of yours requested — confirm "None of your games have been requested for this event"
+- [ ] Manually un-pin the hub message — confirm it stays unpinned afterward (known limitation: unlike the Game Lineup/Games to Bring pins, which refresh and re-pin on every suggest/request, nothing currently re-triggers the hub pin after event creation, so there's no later action that would restore it)
 
 ## 1.4 `/library` — Game Library
 
@@ -314,7 +332,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.4h `/library request`
 
-**What it does:** Requests a specific game be brought to an event.
+**What it does:** Requests a specific game be brought to an event. Also DMs the owner it lands on — whichever attending owner the copy-select assigned it to, or (when no copy-select is shown) whichever attending owner currently has the fewest confirmed brings for that event — with "🎲 ... ✅ Confirm bringing" and "❌ Can't bring it" buttons. Confirming behaves the same as `/library bring game:<name>`; declining cascades the same DM to the next eligible attending owner (see "Declining via the DM button" below). If the waitlist for a suggested game grows enough to need a second copy (1.3e/2.3e/3.3e), the same ask/decline/cascade flow kicks in for that additional copy too.
 
 **Prerequisites:** an active event must exist, and the game being requested must already be in the library, owned by someone who has RSVP'd (see 1.4a/2.4a/3.4a to add a game first).
 
@@ -324,11 +342,25 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Request the same game twice — confirm duplicate is blocked
 - [ ] None of the game's owners are RSVP'd — confirm "None of the owners are attending" error
 - [ ] The literal owner has NOT RSVP'd, but a member they've linked as a delegate (1.4n) has RSVP'd yes/maybe — confirm the request still succeeds instead of hitting "None of the owners are attending"
+- [ ] Confirm the assigned owner receives a DM with a "✅ Confirm bringing" button for the requested game (include any owned expansions in the DM text)
+- [ ] With 2+ attending owners and no expansion copy-select shown, confirm the DM goes to whichever owner currently has the fewest confirmed brings for that event, not just the first owner alphabetically/by id
 
 #### Request with expansion copy select
 - [ ] Request a game where at least one attending owner has expansions — confirm "Which copy would you like?" select appears
-- [ ] Select a specific owner's copy — confirm announcement includes "— bringing: @owner"
-- [ ] Select **Bot decides** — confirm the bot assigns the owner with fewest confirmed brings
+- [ ] Select a specific owner's copy — confirm announcement includes "— bringing: @owner", and that owner (not any other owner) receives the DM
+- [ ] Select **Bot decides** — confirm the bot assigns the owner with fewest confirmed brings, and that owner receives the DM
+
+#### Confirming via the DM button
+- [ ] Tap "✅ Confirm bringing" in the DM — confirm it behaves the same as `/library bring game:<name>` (message edits to show confirmed, ✅ appears next to the game in the event's request pin)
+- [ ] Tap the DM button as an account that no longer owns the requested game — confirm "You can only confirm bringing games you own" reply, and the request is **not** marked confirmed
+- [ ] Confirm the same request via `/library bring game:<name>` instead of the DM button — confirm the earlier DM is edited afterward to note "Confirmed via /library bring", with its button removed
+- [ ] Tap a "please bring this" DM button for a request that's since been dropped (e.g. the game ended up with zero seated players at lock, 4.7) — confirm a graceful "no longer exists" edit rather than an error or a duplicate confirmation
+
+#### Declining via the DM button
+- [ ] Tap "❌ Can't bring it" in the DM — confirm the message updates to a "No problem" acknowledgment with buttons removed, and (with a second attending owner available) that owner receives the same "please bring this" DM
+- [ ] Decline with no other attending owner left to ask — confirm the decline itself still succeeds (no error), just with nobody left to cascade to; the request pin's copy count reflects the shortfall
+- [ ] Tap "❌ Can't bring it" a second time (or on a stale/forwarded DM) after already declining — confirm "You weren't asked to bring this one" rather than a duplicate decline or a crash
+- [ ] Tap "❌ Can't bring it" on a request that's since been dropped — confirm the same graceful "no longer exists" edit as the confirm button
 
 ### 1.4i `/library unrequest`
 
@@ -349,6 +381,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Click Confirm — confirm ✅ appears next to the game in the event's request pin
 - [ ] Run with a game that hasn't been requested — confirm "That game hasn't been requested" error
 - [ ] As a member linked as a delegate (1.4n) of the owner whose copy was requested, run `/library bring` — confirm the owner's requested game appears in your view too, and `/library bring game:X` lets you see expansion availability and confirm bringing it exactly as if it were your own
+- [ ] With a 2-copies-needed request (1.3e) where only one owner has confirmed, run `/library bring` view mode — confirm the line shows "X/2 copies confirmed" rather than a single ✅, both for the confirmed owner's own view and for the still-outstanding owner's view
 
 ### 1.4k `/library import`
 
@@ -561,6 +594,23 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Confirm a regular member CAN use `post sell`, `post trade`, `price`, `conditions`, `browse`, `my`, `close` (own listings), `reopen` (own listings)
 - [ ] 👑 Try `/admin marketplace config` and `/admin marketplace purge` as a regular member — confirm "requires Manage Server permission"
 
+### 1.7m Quick Actions Hub (button panel)
+
+**What it does:** A pinned "🎯 Quick Actions" **forum post** (not a plain channel message — forum channels pin threads, not messages) in the configured marketplace channel, with buttons for 📦 Sell an Item, 🔄 Propose a Trade, 🔍 Browse Listings, and 📋 My Listings. Created (or refreshed) automatically whenever `/admin marketplace config` (3.9m) sets the channel. Sell/Trade need an item name, which a modal only supports as free text (no autocomplete like the slash command's `item` option) — so the wizard collects the name via modal, then condition via a native select, then (sell only) offers-allowed via buttons, before handing off to the exact same listing-creation flow (BGG lookup, expansion select, price screen) the slash commands use. Trades skip the offers-allowed step since trades are always open to offers, same as `/marketplace post trade`.
+
+**Prerequisites:** a marketplace forum channel configured via `/admin marketplace config` (3.9m).
+
+- [ ] Configure the marketplace channel — confirm a "🎯 Quick Actions" post appears in the forum, pinned to the top
+- [ ] Tap "📦 Sell an Item" — confirm a modal asks for an item name
+- [ ] Submit the modal — confirm a condition select appears (New / Like New / Very Good / Good / Acceptable)
+- [ ] Select a condition — confirm "✅ Allow Offers" / "🔒 Firm Price" buttons appear
+- [ ] Tap either offers button — confirm it proceeds exactly like `/marketplace post sell` would from that point (BGG match → expansion select or price screen; no BGG match → reference-link prompt)
+- [ ] Tap "🔄 Propose a Trade" — confirm a modal asks for an item name
+- [ ] Submit the modal and select a condition — confirm it proceeds directly to the listing flow with **no** offers-allowed step, unlike the Sell wizard
+- [ ] Tap "🔍 Browse Listings" — confirm it shows the same output as `/marketplace browse` with no type filter (all sell + trade listings)
+- [ ] Tap "📋 My Listings" — confirm it shows the same output as `/marketplace my` for the tapping user
+- [ ] Start the Sell (or Trade) wizard, then wait or restart the bot before finishing a step — confirm tapping a stale condition/offers button shows a "session has expired" message rather than an error or a crash
+
 ## 1.8 `/room` — Private Rooms
 
 ### 1.8a `/room create`
@@ -629,6 +679,40 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run as a Host or Admin on a room you didn't create — confirm it works
 - [ ] Run as a regular member with no elevated role on a room you didn't create — confirm "Only the room's creator or a host/admin can remove people from this room" error, and nobody is removed
 - [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
+
+### 1.8f Quick Actions Hub (button panel)
+
+**What it does:** A pinned "🎮 Quick Actions" message posted automatically the moment a room is created, alongside the existing plain-text welcome message — buttons for 🎲 Suggest a Game, 👋 Invite, 👢 Kick, 📌 Toggle Auto-Expire, and 🔒 Close Room. The Suggest a Game button is the exact same one used in event channels (same modal, same underlying flow) — it just resolves this room instead of an event when tapped here. Invite/Kick use Discord's native member-picker (a dropdown of server members) instead of typing mentions or a user option, and Close Room adds a Yes/Cancel confirmation step that the slash command itself doesn't have, since a misplaced tap is easier than a mistyped command for something this irreversible. Every button enforces the same "room creator or host/admin" permission check as its slash-command equivalent.
+
+- [ ] Create a room — confirm the "🎮 Quick Actions" message appears, pinned, alongside the separate plain-text welcome message
+- [ ] Tap "🎲 Suggest a Game" — confirm the same modal/flow as the event-channel hub, correctly suggesting into this room
+- [ ] Tap "👋 Invite" as the room's creator — confirm a member-picker appears; selecting one or more people grants them channel access and adds them to the room, identical to `/room invite`
+- [ ] Tap "👋 Invite" as a member with no elevated role who isn't the room's creator — confirm the same permission error `/room invite` gives
+- [ ] Tap "👢 Kick" with nobody individually invited yet — confirm "Nobody has been individually invited to this room..." instead of an empty/broken picker
+- [ ] Tap "👢 Kick" and select someone invited to the room — confirm they lose access, identical to `/room kick`
+- [ ] Tap "👢 Kick" and select the room's creator — confirm "You can't remove the room's creator..." same as the command
+- [ ] Tap "📌 Toggle Auto-Expire" on a room with a set expiration date — confirm it immediately becomes persistent (no modal), same as `/room persist enabled:true`
+- [ ] Tap "📌 Toggle Auto-Expire" on a persistent room — confirm a modal asks for a new expiration date, and submitting it sets the date and turns persistence back off, same as `/room persist enabled:false date:...`
+- [ ] Tap "🔒 Close Room" — confirm a "this cannot be undone" Yes/Cancel prompt appears rather than closing immediately
+- [ ] Tap "Cancel" on that prompt — confirm the room stays open
+- [ ] Tap "Yes, close this room" — confirm the room is closed and its channel deleted, identical to `/room close`
+
+## 1.9 General Chat — Quick Actions Hub
+
+### 1.9a Quick Actions Hub (button panel)
+
+**What it does:** A pinned "🎮 Quick Actions" message in a designated, already-populated chat channel (e.g. #general) — set via `/admin general config` (3.9q). Unlike the event/room/marketplace hubs, this one isn't tied to any single command; it's a standalone panel of the most-used member actions that don't otherwise have a home: ✅ RSVP to Next Event, 📚 Browse Library, 📋 My Games, 🎲 Random Game, and 🙋 Request a Game to Bring. The Request button is the *exact same* `/library request` hub button used in event channels — since that flow already falls back to the soonest upcoming event when there's no specific event-channel context, it works correctly from any channel with no changes.
+
+**Prerequisites:** a channel configured via `/admin general config` (3.9q).
+
+- [ ] Configure the general hub channel — confirm the "🎮 Quick Actions" message appears there, pinned
+- [ ] Tap "✅ RSVP to Next Event" with an upcoming event — confirm an ephemeral reply with a link button that jumps directly to that event's announcement post
+- [ ] Tap "✅ RSVP to Next Event" with no upcoming events — confirm "There's no upcoming event to RSVP to yet" instead of an error
+- [ ] With 2+ upcoming events, tap "✅ RSVP to Next Event" — confirm it jumps to the **soonest** one, not just the first one created
+- [ ] Tap "📚 Browse Library" — confirm the same output as `/library list` (1.4a)
+- [ ] Tap "📋 My Games" — confirm the same output as `/library mine` (1.4b), listing only your own (and shared-with-you) games
+- [ ] Tap "🎲 Random Game" — confirm the same output as running `/library random` with no options, including the personalization fallback to your `/myroles` (1.5) preferences if set
+- [ ] Tap "🙋 Request a Game to Bring" — confirm the same modal/flow as the event-channel hub (1.3h), targeting the soonest upcoming event since there's no specific event channel here
 
 ---
 
@@ -763,16 +847,18 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.3e Game Card Buttons — Waitlist
 
-**What it does:** When a game is full, players join a waitlist. If the waitlist reaches the minimum player count, the request pin is updated to reflect 2 copies needed. When a seated player leaves and the game is full, the first waitlisted player is automatically promoted into the freed seat and removed from the waitlist (they get a DM if their DMs are open).
+**What it does:** When a game is full, players join a waitlist. If the waitlist reaches the minimum player count, the request pin is updated to reflect 2 copies needed — and if that game has a `/library request` (1.4h) outstanding, the bot automatically asks one more attending owner (load-balanced, excluding anyone already asked/confirmed/declined) to bring a second copy, the same "🎲 ... ✅ Confirm bringing / ❌ Can't bring it" DM as the initial request. If the waitlist later drops back below the threshold, that extra ask is retracted — its DM is edited to say it's no longer needed and its buttons removed — rather than left outstanding. When a seated player leaves and the game is full, the first waitlisted player is automatically promoted into the freed seat and removed from the waitlist (they get a DM if their DMs are open).
 
 - [ ] Fill a game to max players, then click **Join Waitlist** — confirm added to waitlist section
 - [ ] Click **Join Waitlist** when already on waitlist — confirm "You're already on the waitlist" error
 - [ ] Click **Join Waitlist** when a seat is still available — confirm "There's still an open seat" error
-- [ ] Add enough players to the waitlist to reach the minimum player count — confirm request pin updates to show "2 copies"
+- [ ] Add enough players to the waitlist to reach the minimum player count, with a `/library request` (1.4h) already outstanding for that game and 2+ attending owners — confirm the request pin updates to show "X/2 copies confirmed" and a second attending owner receives a "please bring a copy" DM
+- [ ] Do the same with only 1 owner attending — confirm the pin still shows the updated copy count, but no second DM is sent (no eligible second owner to ask)
 - [ ] Click **Leave Waitlist** — confirm removed from waitlist
-- [ ] Dropping below min players on waitlist — confirm request pin reverts to "1 copy"
+- [ ] Dropping below min players on waitlist, with a second owner's ask still outstanding (unconfirmed) — confirm the pin reverts to 1 copy needed and that owner's DM is edited to say it's no longer needed, with its buttons removed
+- [ ] Dropping below min players after the second owner already confirmed — confirm the pin reverts to 1 copy needed but the existing confirmation is left alone (a harmless extra confirmed copy), not retracted
 - [ ] With a full game and at least one person on the waitlist, have a seated player click **Leave** — confirm the first waitlisted person is moved into the freed seat, removed from the waitlist list, and (if their DMs are open) receives a DM saying a seat opened up
-- [ ] Do the same when promoting the waitlist below the minimum player count drops it back below 2 groups — confirm the request pin reverts to "1 copy"
+- [ ] Do the same when promoting the waitlist below the minimum player count drops it back below 2 groups — confirm the request pin reverts to 1 copy needed
 
 ### 2.3f Bring Confirm / Cancel
 
@@ -881,7 +967,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.4h `/library request`
 
-**What it does:** Requests a specific game be brought to an event.
+**What it does:** Requests a specific game be brought to an event. Also DMs the owner it lands on — whichever attending owner the copy-select assigned it to, or (when no copy-select is shown) whichever attending owner currently has the fewest confirmed brings for that event — with "🎲 ... ✅ Confirm bringing" and "❌ Can't bring it" buttons. Confirming behaves the same as `/library bring game:<name>`; declining cascades the same DM to the next eligible attending owner (see "Declining via the DM button" below). If the waitlist for a suggested game grows enough to need a second copy (1.3e/2.3e/3.3e), the same ask/decline/cascade flow kicks in for that additional copy too.
 
 **Prerequisites:** an active event must exist, and the game being requested must already be in the library, owned by someone who has RSVP'd (see 1.4a/2.4a/3.4a to add a game first).
 
@@ -891,11 +977,19 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Request the same game twice — confirm duplicate is blocked
 - [ ] None of the game's owners are RSVP'd — confirm "None of the owners are attending" error
 - [ ] The literal owner has NOT RSVP'd, but a member they've linked as a delegate (2.4n) has RSVP'd yes/maybe — confirm the request still succeeds instead of hitting "None of the owners are attending"
+- [ ] Confirm the assigned owner receives a DM with a "✅ Confirm bringing" button for the requested game (include any owned expansions in the DM text)
+- [ ] With 2+ attending owners and no expansion copy-select shown, confirm the DM goes to whichever owner currently has the fewest confirmed brings for that event, not just the first owner alphabetically/by id
 
 #### Request with expansion copy select
 - [ ] Request a game where at least one attending owner has expansions — confirm "Which copy would you like?" select appears
-- [ ] Select a specific owner's copy — confirm announcement includes "— bringing: @owner"
-- [ ] Select **Bot decides** — confirm the bot assigns the owner with fewest confirmed brings
+- [ ] Select a specific owner's copy — confirm announcement includes "— bringing: @owner", and that owner (not any other owner) receives the DM
+- [ ] Select **Bot decides** — confirm the bot assigns the owner with fewest confirmed brings, and that owner receives the DM
+
+#### Confirming via the DM button
+- [ ] Tap "✅ Confirm bringing" in the DM — confirm it behaves the same as `/library bring game:<name>` (message edits to show confirmed, ✅ appears next to the game in the event's request pin)
+- [ ] Tap the DM button as an account that no longer owns the requested game — confirm "You can only confirm bringing games you own" reply, and the request is **not** marked confirmed
+- [ ] Confirm the same request via `/library bring game:<name>` instead of the DM button — confirm the earlier DM is edited afterward to note "Confirmed via /library bring", with its button removed
+- [ ] Tap a "please bring this" DM button for a request that's since been dropped (e.g. the game ended up with zero seated players at lock, 4.7) — confirm a graceful "no longer exists" edit rather than an error or a duplicate confirmation
 
 ### 2.4i `/library unrequest`
 
@@ -1123,6 +1217,23 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Confirm a Host CAN use `post sell`, `post trade`, `price`, `conditions`, `browse`, `my`, `close` (own listings), `reopen` (own listings) — same as a regular member
 - [ ] 👑 Try `/admin marketplace config` and `/admin marketplace purge` as a Host — confirm "requires Manage Server permission" (Host role alone does not grant this)
 
+### 2.7m Quick Actions Hub (button panel)
+
+**What it does:** A pinned "🎯 Quick Actions" **forum post** (not a plain channel message — forum channels pin threads, not messages) in the configured marketplace channel, with buttons for 📦 Sell an Item, 🔄 Propose a Trade, 🔍 Browse Listings, and 📋 My Listings. Created (or refreshed) automatically whenever `/admin marketplace config` (3.9m) sets the channel. Sell/Trade need an item name, which a modal only supports as free text (no autocomplete like the slash command's `item` option) — so the wizard collects the name via modal, then condition via a native select, then (sell only) offers-allowed via buttons, before handing off to the exact same listing-creation flow (BGG lookup, expansion select, price screen) the slash commands use. Trades skip the offers-allowed step since trades are always open to offers, same as `/marketplace post trade`.
+
+**Prerequisites:** a marketplace forum channel configured via `/admin marketplace config` (3.9m).
+
+- [ ] Configure the marketplace channel — confirm a "🎯 Quick Actions" post appears in the forum, pinned to the top
+- [ ] Tap "📦 Sell an Item" — confirm a modal asks for an item name
+- [ ] Submit the modal — confirm a condition select appears (New / Like New / Very Good / Good / Acceptable)
+- [ ] Select a condition — confirm "✅ Allow Offers" / "🔒 Firm Price" buttons appear
+- [ ] Tap either offers button — confirm it proceeds exactly like `/marketplace post sell` would from that point (BGG match → expansion select or price screen; no BGG match → reference-link prompt)
+- [ ] Tap "🔄 Propose a Trade" — confirm a modal asks for an item name
+- [ ] Submit the modal and select a condition — confirm it proceeds directly to the listing flow with **no** offers-allowed step, unlike the Sell wizard
+- [ ] Tap "🔍 Browse Listings" — confirm it shows the same output as `/marketplace browse` with no type filter (all sell + trade listings)
+- [ ] Tap "📋 My Listings" — confirm it shows the same output as `/marketplace my` for the tapping user
+- [ ] Start the Sell (or Trade) wizard, then wait or restart the bot before finishing a step — confirm tapping a stale condition/offers button shows a "session has expired" message rather than an error or a crash
+
 ## 2.8 `/host` — Host Commands
 
 **What it does:** Provides elevated event and moderation commands to members with the Host role (or Manage Events permission). Non-hosts should not see these commands in the Discord command picker.
@@ -1305,6 +1416,40 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run as a regular member with no elevated role on a room you didn't create — confirm "Only the room's creator or a host/admin can remove people from this room" error, and nobody is removed
 - [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
 
+### 2.9f Quick Actions Hub (button panel)
+
+**What it does:** A pinned "🎮 Quick Actions" message posted automatically the moment a room is created, alongside the existing plain-text welcome message — buttons for 🎲 Suggest a Game, 👋 Invite, 👢 Kick, 📌 Toggle Auto-Expire, and 🔒 Close Room. The Suggest a Game button is the exact same one used in event channels (same modal, same underlying flow) — it just resolves this room instead of an event when tapped here. Invite/Kick use Discord's native member-picker (a dropdown of server members) instead of typing mentions or a user option, and Close Room adds a Yes/Cancel confirmation step that the slash command itself doesn't have, since a misplaced tap is easier than a mistyped command for something this irreversible. Every button enforces the same "room creator or host/admin" permission check as its slash-command equivalent.
+
+- [ ] Create a room — confirm the "🎮 Quick Actions" message appears, pinned, alongside the separate plain-text welcome message
+- [ ] Tap "🎲 Suggest a Game" — confirm the same modal/flow as the event-channel hub, correctly suggesting into this room
+- [ ] Tap "👋 Invite" as the room's creator — confirm a member-picker appears; selecting one or more people grants them channel access and adds them to the room, identical to `/room invite`
+- [ ] Tap "👋 Invite" as a member with no elevated role who isn't the room's creator — confirm the same permission error `/room invite` gives
+- [ ] Tap "👢 Kick" with nobody individually invited yet — confirm "Nobody has been individually invited to this room..." instead of an empty/broken picker
+- [ ] Tap "👢 Kick" and select someone invited to the room — confirm they lose access, identical to `/room kick`
+- [ ] Tap "👢 Kick" and select the room's creator — confirm "You can't remove the room's creator..." same as the command
+- [ ] Tap "📌 Toggle Auto-Expire" on a room with a set expiration date — confirm it immediately becomes persistent (no modal), same as `/room persist enabled:true`
+- [ ] Tap "📌 Toggle Auto-Expire" on a persistent room — confirm a modal asks for a new expiration date, and submitting it sets the date and turns persistence back off, same as `/room persist enabled:false date:...`
+- [ ] Tap "🔒 Close Room" — confirm a "this cannot be undone" Yes/Cancel prompt appears rather than closing immediately
+- [ ] Tap "Cancel" on that prompt — confirm the room stays open
+- [ ] Tap "Yes, close this room" — confirm the room is closed and its channel deleted, identical to `/room close`
+
+## 2.10 General Chat — Quick Actions Hub
+
+### 2.10a Quick Actions Hub (button panel)
+
+**What it does:** A pinned "🎮 Quick Actions" message in a designated, already-populated chat channel (e.g. #general) — set via `/admin general config` (3.9q). Unlike the event/room/marketplace hubs, this one isn't tied to any single command; it's a standalone panel of the most-used member actions that don't otherwise have a home: ✅ RSVP to Next Event, 📚 Browse Library, 📋 My Games, 🎲 Random Game, and 🙋 Request a Game to Bring. The Request button is the *exact same* `/library request` hub button used in event channels — since that flow already falls back to the soonest upcoming event when there's no specific event-channel context, it works correctly from any channel with no changes.
+
+**Prerequisites:** a channel configured via `/admin general config` (3.9q).
+
+- [ ] Configure the general hub channel — confirm the "🎮 Quick Actions" message appears there, pinned
+- [ ] Tap "✅ RSVP to Next Event" with an upcoming event — confirm an ephemeral reply with a link button that jumps directly to that event's announcement post
+- [ ] Tap "✅ RSVP to Next Event" with no upcoming events — confirm "There's no upcoming event to RSVP to yet" instead of an error
+- [ ] With 2+ upcoming events, tap "✅ RSVP to Next Event" — confirm it jumps to the **soonest** one, not just the first one created
+- [ ] Tap "📚 Browse Library" — confirm the same output as `/library list` (2.4a)
+- [ ] Tap "📋 My Games" — confirm the same output as `/library mine` (2.4b), listing only your own (and shared-with-you) games
+- [ ] Tap "🎲 Random Game" — confirm the same output as running `/library random` with no options, including the personalization fallback to your `/myroles` (2.5) preferences if set
+- [ ] Tap "🙋 Request a Game to Bring" — confirm the same modal/flow as the event-channel hub (1.3h), targeting the soonest upcoming event since there's no specific event channel here
+
 ---
 
 # Part 3 — Admin Tests (Admin role / Manage Guild permission)
@@ -1439,16 +1584,18 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.3e Game Card Buttons — Waitlist
 
-**What it does:** When a game is full, players join a waitlist. If the waitlist reaches the minimum player count, the request pin is updated to reflect 2 copies needed. When a seated player leaves and the game is full, the first waitlisted player is automatically promoted into the freed seat and removed from the waitlist (they get a DM if their DMs are open).
+**What it does:** When a game is full, players join a waitlist. If the waitlist reaches the minimum player count, the request pin is updated to reflect 2 copies needed — and if that game has a `/library request` (1.4h) outstanding, the bot automatically asks one more attending owner (load-balanced, excluding anyone already asked/confirmed/declined) to bring a second copy, the same "🎲 ... ✅ Confirm bringing / ❌ Can't bring it" DM as the initial request. If the waitlist later drops back below the threshold, that extra ask is retracted — its DM is edited to say it's no longer needed and its buttons removed — rather than left outstanding. When a seated player leaves and the game is full, the first waitlisted player is automatically promoted into the freed seat and removed from the waitlist (they get a DM if their DMs are open).
 
 - [ ] Fill a game to max players, then click **Join Waitlist** — confirm added to waitlist section
 - [ ] Click **Join Waitlist** when already on waitlist — confirm "You're already on the waitlist" error
 - [ ] Click **Join Waitlist** when a seat is still available — confirm "There's still an open seat" error
-- [ ] Add enough players to the waitlist to reach the minimum player count — confirm request pin updates to show "2 copies"
+- [ ] Add enough players to the waitlist to reach the minimum player count, with a `/library request` (1.4h) already outstanding for that game and 2+ attending owners — confirm the request pin updates to show "X/2 copies confirmed" and a second attending owner receives a "please bring a copy" DM
+- [ ] Do the same with only 1 owner attending — confirm the pin still shows the updated copy count, but no second DM is sent (no eligible second owner to ask)
 - [ ] Click **Leave Waitlist** — confirm removed from waitlist
-- [ ] Dropping below min players on waitlist — confirm request pin reverts to "1 copy"
+- [ ] Dropping below min players on waitlist, with a second owner's ask still outstanding (unconfirmed) — confirm the pin reverts to 1 copy needed and that owner's DM is edited to say it's no longer needed, with its buttons removed
+- [ ] Dropping below min players after the second owner already confirmed — confirm the pin reverts to 1 copy needed but the existing confirmation is left alone (a harmless extra confirmed copy), not retracted
 - [ ] With a full game and at least one person on the waitlist, have a seated player click **Leave** — confirm the first waitlisted person is moved into the freed seat, removed from the waitlist list, and (if their DMs are open) receives a DM saying a seat opened up
-- [ ] Do the same when promoting the waitlist below the minimum player count drops it back below 2 groups — confirm the request pin reverts to "1 copy"
+- [ ] Do the same when promoting the waitlist below the minimum player count drops it back below 2 groups — confirm the request pin reverts to 1 copy needed
 
 ### 3.3f Bring Confirm / Cancel
 
@@ -1557,7 +1704,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.4h `/library request`
 
-**What it does:** Requests a specific game be brought to an event.
+**What it does:** Requests a specific game be brought to an event. Also DMs the owner it lands on — whichever attending owner the copy-select assigned it to, or (when no copy-select is shown) whichever attending owner currently has the fewest confirmed brings for that event — with "🎲 ... ✅ Confirm bringing" and "❌ Can't bring it" buttons. Confirming behaves the same as `/library bring game:<name>`; declining cascades the same DM to the next eligible attending owner (see "Declining via the DM button" below). If the waitlist for a suggested game grows enough to need a second copy (1.3e/2.3e/3.3e), the same ask/decline/cascade flow kicks in for that additional copy too.
 
 **Prerequisites:** an active event must exist, and the game being requested must already be in the library, owned by someone who has RSVP'd (see 1.4a/2.4a/3.4a to add a game first).
 
@@ -1567,11 +1714,19 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Request the same game twice — confirm duplicate is blocked
 - [ ] None of the game's owners are RSVP'd — confirm "None of the owners are attending" error
 - [ ] The literal owner has NOT RSVP'd, but a member they've linked as a delegate (3.4n) has RSVP'd yes/maybe — confirm the request still succeeds instead of hitting "None of the owners are attending"
+- [ ] Confirm the assigned owner receives a DM with a "✅ Confirm bringing" button for the requested game (include any owned expansions in the DM text)
+- [ ] With 2+ attending owners and no expansion copy-select shown, confirm the DM goes to whichever owner currently has the fewest confirmed brings for that event, not just the first owner alphabetically/by id
 
 #### Request with expansion copy select
 - [ ] Request a game where at least one attending owner has expansions — confirm "Which copy would you like?" select appears
-- [ ] Select a specific owner's copy — confirm announcement includes "— bringing: @owner"
-- [ ] Select **Bot decides** — confirm the bot assigns the owner with fewest confirmed brings
+- [ ] Select a specific owner's copy — confirm announcement includes "— bringing: @owner", and that owner (not any other owner) receives the DM
+- [ ] Select **Bot decides** — confirm the bot assigns the owner with fewest confirmed brings, and that owner receives the DM
+
+#### Confirming via the DM button
+- [ ] Tap "✅ Confirm bringing" in the DM — confirm it behaves the same as `/library bring game:<name>` (message edits to show confirmed, ✅ appears next to the game in the event's request pin)
+- [ ] Tap the DM button as an account that no longer owns the requested game — confirm "You can only confirm bringing games you own" reply, and the request is **not** marked confirmed
+- [ ] Confirm the same request via `/library bring game:<name>` instead of the DM button — confirm the earlier DM is edited afterward to note "Confirmed via /library bring", with its button removed
+- [ ] Tap a "please bring this" DM button for a request that's since been dropped (e.g. the game ended up with zero seated players at lock, 4.7) — confirm a graceful "no longer exists" edit rather than an error or a duplicate confirmation
 
 ### 3.4i `/library unrequest`
 
@@ -2027,6 +2182,8 @@ See 2.8f for the full checklist — this Admin-tier pass just confirms Admins re
 - [ ] Try setting a regular text channel instead of a forum channel — confirm error: "must be a Forum Channel"
 - [ ] Run `/admin marketplace config negotiation_mode:Private` — confirm mode changes to private
 - [ ] After setting a forum channel, confirm the six tags (`For Sale`, `For Trade`, `Active`, `Pending`, `Sold`, `Closed`) are visible in the channel's tag list
+- [ ] After setting a forum channel, also confirm a pinned "🎯 Quick Actions" post appears (1.7m/2.7m) — created alongside the tags, not requiring a listing to be posted first
+- [ ] Re-run `/admin marketplace config channel:...` pointing at the same channel again — confirm the existing "🎯 Quick Actions" post is refreshed in place rather than a second one being created
 
 ### 3.9n `/admin marketplace purge`
 
@@ -2061,6 +2218,16 @@ See 2.8f for the full checklist — this Admin-tier pass just confirms Admins re
 - [ ] For a command run with an optional parameter (e.g. `/admin event config location:...`), confirm the reply shows that parameter name and count (e.g. `location: 1`) — and confirm the actual value typed (e.g. the location text) never appears anywhere in the reply
 - [ ] Run the same command again without that optional parameter — confirm the total call count increases but the parameter's count does not
 - [ ] Confirm this is per-server: running commands on a different server the bot is in does not affect this server's counts
+
+### 3.9q `/admin general config`
+
+**What it does:** Sets the text channel where the general chat "🎮 Quick Actions" hub (1.9a/2.10a) is posted and pinned. Distinct from `/admin welcome config` (3.9j) — that's for the one-time new-member greeting; this is meant for an ongoing, already-populated channel like #general.
+
+- [ ] Run `/admin general config` with no options — confirm it shows the current channel (or "*not set*")
+- [ ] Run `/admin general config channel:#general` — confirm the "🎮 Quick Actions" message is posted and pinned there, and the reply confirms it
+- [ ] Try setting a voice channel or other non-text channel — confirm "must be a regular text channel" error, and nothing is saved
+- [ ] Run `/admin general config channel:#general` again pointing at the same channel — confirm the existing hub message is refreshed in place rather than a second one being posted
+- [ ] 👑 Run as non-admin — confirm "requires Manage Server permission"
 
 ## 3.10 `/room` — Private Rooms
 
@@ -2130,6 +2297,19 @@ See 2.8f for the full checklist — this Admin-tier pass just confirms Admins re
 - [ ] Run as a Host or Admin on a room you didn't create — confirm it works
 - [ ] Run as a regular member with no elevated role on a room you didn't create — confirm "Only the room's creator or a host/admin can remove people from this room" error, and nobody is removed
 - [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
+
+### 3.10f Quick Actions Hub (button panel)
+
+**What it does:** A pinned "🎮 Quick Actions" message posted automatically the moment a room is created, alongside the existing plain-text welcome message — buttons for 🎲 Suggest a Game, 👋 Invite, 👢 Kick, 📌 Toggle Auto-Expire, and 🔒 Close Room. The Suggest a Game button is the exact same one used in event channels (same modal, same underlying flow) — it just resolves this room instead of an event when tapped here. Invite/Kick use Discord's native member-picker (a dropdown of server members) instead of typing mentions or a user option, and Close Room adds a Yes/Cancel confirmation step that the slash command itself doesn't have, since a misplaced tap is easier than a mistyped command for something this irreversible. Every button enforces the same "room creator or host/admin" permission check as its slash-command equivalent.
+
+- [ ] Create a room — confirm the "🎮 Quick Actions" message appears, pinned, alongside the separate plain-text welcome message
+- [ ] Tap "🎲 Suggest a Game" — confirm the same modal/flow as the event-channel hub, correctly suggesting into this room
+- [ ] Tap "👋 Invite" as an Admin on a room you didn't create — confirm a member-picker appears; selecting one or more people grants them channel access and adds them to the room, identical to `/room invite`
+- [ ] Tap "👢 Kick" and select someone invited to the room — confirm they lose access, identical to `/room kick`
+- [ ] Tap "👢 Kick" and select the room's creator — confirm "You can't remove the room's creator..." same as the command
+- [ ] Tap "📌 Toggle Auto-Expire" on a room with a set expiration date — confirm it immediately becomes persistent (no modal), same as `/room persist enabled:true`
+- [ ] Tap "📌 Toggle Auto-Expire" on a persistent room — confirm a modal asks for a new expiration date, and submitting it sets the date and turns persistence back off, same as `/room persist enabled:false date:...`
+- [ ] Tap "🔒 Close Room" — confirm a "this cannot be undone" Yes/Cancel prompt appears rather than closing immediately, and that both Cancel and Yes work as expected
 
 ---
 
@@ -2208,11 +2388,13 @@ These features are triggered by Discord events and scheduled timers rather than 
 
 **What it does:** `lock_hours_before_event` (via `/admin event config`, 3.9a) defaults to 48h — locking is on out of the box; set it to `0` to disable it entirely. When non-zero, the bot locks an event's game suggestions and seats that many hours before its start time, then posts a suggested schedule packing the suggested games into rounds across parallel tables so no player is double-booked in the same round. `table_count` (3.9a) is now a **floor, not a fixed number** — the bot computes an effective table count at lock time from how many people RSVP'd "yes" and their `/myroles` complexity preferences (see the "Smart table-count sizing" subsection below), and uses whichever is higher. Game durations use each game's stored playtime plus a teach/overflow buffer based on its complexity (Light/Medium/Heavy — also configurable via 3.9a). This runs on the same hourly check as archiving (4.1-4.3), plus once on bot startup.
 
-Round headers show real clock start/end times (Discord's auto-localizing `<t:...:t>` timestamp markup), computed by summing round durations from the event's start time — not just an estimated duration. A short game (under 30 minutes of raw playtime, before the complexity buffer) that shares a round with a longer game at another table opportunistically repeats to fill that table's leftover time, up to `max_game_repeats` total plays (3.9a); its table line notes the play count, e.g. "(3x)". If any one table would play two Heavy-complexity games in directly consecutive rounds, a `heavy_game_break_minutes`-long break (3.9a) is inserted before the second round — this break is global and delays every table's next round, not just the offending one. Games with exactly one seated player are pulled into a separate "Needs more players" section instead of being scheduled or counted as "Not scheduled" (this applies even if that game's own minimum player count is 1 — a behavior change from before this feature, when a 1-seated game with `minPlayers:1` would have been scheduled normally).
+Round headers show real clock start/end times (Discord's auto-localizing `<t:...:t>` timestamp markup), computed by summing round durations from the event's start time — not just an estimated duration. Within a round, a table that finishes its first game before the round's longest table (the "anchor" — whichever game set that round's duration) doesn't just sit idle: the scheduler chains other still-unplaced games onto that table, back-to-back, best-fitting whichever remaining game leaves the least time behind, until no more will fit — so as many tables as possible start and end together, and the game night converges on a shared reconvene time rather than tables finishing at scattered moments. A table playing more than one game in a round shows each game on its own line with its own `(<t:...:t>–<t:...:t>)` start/end time; a table playing only one game keeps the plain one-line form (its timing is already covered by the round header). Every table line also lists that game's seated players as `@mention`s (comma-separated) right after the title/time, so it doubles as a call sheet — no lookup elsewhere needed to see who's supposed to be at which table when. A game with no seated players (shouldn't normally happen for anything that made it into a round) simply omits the player list rather than showing an empty dash. Only the *last* game in a table's chain can opportunistically repeat into any remaining leftover time — under 30 minutes of raw playtime, before the complexity buffer — up to `max_game_repeats` total plays (3.9a); its line notes the play count, e.g. "(3x)". If any one table would play two Heavy-complexity games back-to-back — whether chained within the same round or across two directly consecutive rounds — a `heavy_game_break_minutes`-long break (3.9a) is inserted beforehand; a within-round break only pushes that table's own remaining chain, while a cross-round break is global and delays every table's next round, not just the offending one. Games with exactly one seated player are pulled into a separate "Needs more players" section instead of being scheduled or counted as "Not scheduled" (this applies even if that game's own minimum player count is 1 — a behavior change from before this feature, when a 1-seated game with `minPlayers:1` would have been scheduled normally).
 
 If a round's cumulative start time — summed from the event's start across every prior round and inserted break — runs past the event's configured end time, every game in that round gets a "⚠️ This round is projected to start and/or run past the event's end time" note in its round's field. This is a per-round check (all tables in a round share the same start/end clock), separate from the whole-schedule `fitsInWindow` check that drives the embed's overall color and footer text — a schedule can fit overall while an individual late round still gets flagged, and vice versa isn't possible (the last round's flag and the footer always agree). An event with no configured end time never shows this warning, since there's no window to run past.
 
 If the event has greeters set (`/host event greeters`, 2.8f), a "🙋 Greeters" field listing them (`@mention`s, "and"-joined for two) appears as the very first field, ahead of the round breakdown. Events with no greeters set show no such field at all.
+
+Locking also cleans up and follows up on the "Games to Bring" request pin (`/library request`, 1.4h/2.4h/3.4h) — in this order, all before the public schedule embed is posted: (1) any request whose title matches a suggested game that ends up with zero seated players is dropped and the pin is refreshed, even if an owner had already confirmed bringing it via `/library bring` — nobody signed up to play it, so there's no reason to ask an owner to lug it over; if that request had a pending "please bring this" DM outstanding, that DM is edited to say it's no longer needed and its button removed; (2) every request still on the pin at this point that hasn't been confirmed yet gets a one-time reminder DM to whichever owner the original request DM went to. A request with no matching suggested game at all (e.g. something brought along just to teach or show off, never suggested as a game to play) is left alone by the drop step — it was never tied to the signup system in the first place — but can still receive the unconfirmed-reminder DM. A request created before this feature shipped (no recorded DM owner) is silently skipped by the reminder step rather than erroring.
 
 **Prerequisites:**
 - `lock_hours_before_event` at its default (48h) or another non-zero value via `/admin event config` (3.9a) — this is on by default, so no setup is needed unless you want a different threshold.
@@ -2224,13 +2406,20 @@ If the event has greeters set (`/host event greeters`, 2.8f), a "🙋 Greeters" 
 - [ ] With greeters set on the event (2.8f) before it locks, confirm the locked schedule embed's first field is "🙋 Greeters" listing them by mention, ahead of the Round 1 field
 - [ ] With no greeters set, confirm the schedule embed has no "🙋 Greeters" field at all
 - [ ] Confirm round headers show real `<t:...:t>` start/end clock times, not just an estimated duration
+- [ ] Confirm each table's line lists that game's seated players as `@mention`s, comma-separated, after the title (and after the time range, for a chained table's slot)
 - [ ] Confirm two games that share a seated player never appear in the same round
 - [ ] Confirm two games with no shared players can land in the same round (up to the effective table count per round — see "Smart table-count sizing" below)
-- [ ] Seat a <30-min game in a round alongside a much longer game at another table — confirm its table line shows a play-count suffix like "(2x)" or "(3x)", and that the round's own duration is unaffected by the repeat
+- [ ] Set up a round with one long ("anchor") game at one table and two or more shorter, non-conflicting games available — confirm the shorter games get chained onto another table back-to-back (not just the first one, with the rest pushed to a later round), each shown on its own line with its own `(<t:...:t>–<t:...:t>)` start/end time, and that the chain's total lands at or before the anchor's own end time
+- [ ] Confirm a table playing only one game in a round still shows the plain "Table N: **Title**" line with no per-slot time range attached
+- [ ] With three or more tables available, one already holding a short partial chain with just enough leftover time and another table still completely empty — add a game that fits either — confirm it's best-fit onto the table with the tighter leftover rather than spreading onto the empty table
+- [ ] Seat a <30-min game as the **last** game in a table's chain, alongside a much longer game at another table — confirm its table line shows a play-count suffix like "(2x)" or "(3x)", and that the round's own duration is unaffected by the repeat
+- [ ] Seat a <30-min game earlier in a chain (with another game placed after it in the same table) — confirm it does **not** get a repeat suffix; only the chain's last game is eligible
 - [ ] Confirm a short game that itself sets its round's duration (nothing else at another table runs longer) never gets a repeat
 - [ ] Set `max_game_repeats:2` (3.9a) — confirm repeats are capped at 2 even where leftover time would allow 3
 - [ ] With `heavy_game_break_minutes` set (3.9a), seat two Heavy-complexity games so they land at the same table in consecutive rounds — confirm a break note appears before the second round, and that *every* table's next round start time shifts by the break amount, not just the table that triggered it
-- [ ] Confirm two Heavy games at the same table with a non-Heavy game in between (round 1, 2, 3 respectively) do **not** trigger a break — this is a known limitation, only literally back-to-back rounds are checked
+- [ ] With `heavy_game_break_minutes` set, chain two Heavy-complexity games back-to-back at the *same table within the same round* (e.g. behind a longer Heavy anchor at another table) — confirm the second Heavy game's start time is pushed back by the break, without affecting any other table's round start
+- [ ] Chain a Heavy game directly after a non-Heavy game at the same table within a round — confirm no break is inserted between them
+- [ ] Confirm two Heavy games at the same table with a non-Heavy game in between (round 1, 2, 3 respectively) do **not** trigger a break — this is a known limitation, only literally back-to-back rounds (or back-to-back chain slots) are checked
 - [ ] Seat exactly 1 player on a game — confirm it appears under a "Needs more players" section, separate from "Not scheduled", even if that game's own minimum player count is 1
 - [ ] Confirm a game below its minimum player count (with 2+ seated) appears under "Not scheduled" with a reason, rather than being silently dropped
 - [ ] Confirm the embed footer notes whether the estimated total fits within the event's start–end window, and includes any inserted break minutes in the total when present
@@ -2243,6 +2432,14 @@ If the event has greeters set (`/host event greeters`, 2.8f), a "🙋 Greeters" 
 - [ ] Confirm an event is only locked/scheduled once — running the hourly check again after locking doesn't re-post the schedule or re-lock
 - [ ] Confirm a cancelled or already-archived event is never locked/scheduled, even past its threshold
 - [ ] Set `lock_hours_before_event` back to `0` — confirm no further events get locked, and existing unlocked events remain fully open
+- [ ] Request a game (`/library request`, 1.4h) that ends up with zero seated players at lock — confirm the request disappears from the "Games to Bring" pin after locking, even if `/library bring` (1.4j) was used to confirm it beforehand
+- [ ] Request a game that keeps at least one seated player through lock, alongside a zero-seat one — confirm only the zero-seat game's request is dropped; the other remains on the pin
+- [ ] Request a game that was never suggested via `/game suggest` at all (no matching `GameSuggestion`) — confirm it's left on the "Games to Bring" pin after lock, since it was never part of the signup system to begin with
+- [ ] Confirm locking an event with no zero-seat requests to drop doesn't touch or re-post the "Games to Bring" pin at all
+- [ ] Request a game that keeps its seated players through lock, and leave it unconfirmed — confirm its DM'd owner receives a one-time reminder DM (with a fresh "✅ Confirm bringing" button) once the event locks
+- [ ] Confirm an owner who already confirmed via `/library bring` or the DM button before lock does **not** get a reminder DM
+- [ ] Confirm the zero-signup drop and any reminder DMs happen before the "🔒 Lineup Locked" schedule embed is posted, not after
+- [ ] Request a game that ends up with zero seated players, after its "please bring this" DM was already sent — confirm that DM is edited at lock to say it's no longer needed, with its button removed, rather than left dangling
 
 **Smart table-count sizing:**
 

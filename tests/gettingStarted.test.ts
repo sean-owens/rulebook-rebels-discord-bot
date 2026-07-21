@@ -27,6 +27,7 @@ describe('/getting-started', () => {
     expect(embed.description).toContain('RSVP to a game night');
     expect(embed.description).toContain('/myroles');
     expect(embed.description).toContain('/game suggest');
+    expect(embed.description).toContain('🎲 Suggest a Game');
     expect(embed.description).toContain('/library list');
   });
 

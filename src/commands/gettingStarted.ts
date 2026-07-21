@@ -23,7 +23,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     `**${steps.length + 1}. Set your preferences** — run \`/myroles\` to tag the genres you like and your preferred complexity.`,
   );
   steps.push(
-    `**${steps.length + 1}. Suggest a game** — inside an event's channel, run \`/game suggest\` to put a game up for that night.`,
+    `**${steps.length + 1}. Suggest a game** — inside an event's channel, run \`/game suggest\` to put a game up for that night, or just tap the **🎲 Suggest a Game** button on the pinned "Quick Actions" message if you'd rather not type a command.`,
   );
   steps.push(
     `**${steps.length + 1}. Browse the library** — run \`/library list\` to see what games the group already owns. When you're ready to add your own games, \`/library add\` is there for you.`,

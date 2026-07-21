@@ -9,6 +9,7 @@ const YEAR = new Date().getFullYear();
 vi.mock('../src/utils/requestPin', () => ({
   updateGameListPin: vi.fn(async () => {}),
   updateRequestPin: vi.fn(async () => {}),
+  updateHubPin: vi.fn(async () => {}),
 }));
 
 vi.mock('../src/utils/pins', () => ({
@@ -300,6 +301,19 @@ describe('handleCreate', () => {
     const sendCall = guild._announcementChannel.send.mock.calls[0][0];
     const embedTitle = sendCall.embeds[0].data.title;
     expect(embedTitle).toMatch(/^Trivia Night — .*August 22/);
+  });
+
+  it('posts the button hub pin in the new event channel', async () => {
+    const { handleCreate } = await import('../src/commands/gamenight');
+    const { updateHubPin } = await import('../src/utils/requestPin');
+    const { loadGameNights } = await import('../src/utils/storage');
+    const guild = makeGuild();
+    const interaction = makeCreateInteraction('Board Game Bash', guild);
+
+    await handleCreate(interaction);
+
+    const nights = await loadGameNights();
+    expect(updateHubPin).toHaveBeenCalledWith(interaction.client, nights[0].id);
   });
 
   it('includes the event ID in the event channel topic, matching the stored GameNight record', async () => {
