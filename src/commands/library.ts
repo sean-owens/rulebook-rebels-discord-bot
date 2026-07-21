@@ -42,7 +42,6 @@ import {
   declineBring,
   buildExpansionNote,
   resolveAttendingOwnerIds,
-  pickPreferredOwner,
   GameRequest,
 } from '../utils/libraryStorage';
 import {
@@ -54,7 +53,8 @@ import {
 import { loadGameNights, findGameNight, GameNight } from '../utils/storage';
 import { getGameRoles, getMemberPreferences } from '../utils/gameRoles';
 import { updateRequestPin } from '../utils/requestPin';
-import { sendBringRequestDm, invalidateBringDm, reconcileRequestCopies } from '../utils/libraryBringDm';
+import { invalidateBringDm, reconcileRequestCopies } from '../utils/libraryBringDm';
+import { isLineupLocked } from '../utils/scheduler';
 import AdmZip from 'adm-zip';
 import { getBGGGame, getBGGGamesBatch, BGGGame, weightTag, fetchBggOwnedCollection } from '../utils/bgg';
 import { getGuildConfig } from '../utils/config';
@@ -485,9 +485,14 @@ async function handleBring(interaction: ChatInputCommandInteraction): Promise<vo
       await invalidateBringDm(interaction.client, result.invalidatedAsk, 'Confirmed via /library bring — thanks!');
     }
 
-    const updatedReq = await getRequestById(match.id);
-    if (updatedReq) {
-      await reconcileRequestCopies(interaction.client, interaction.guildId!, event.rsvps, updatedReq, event.date);
+    // If this confirmation still leaves copies needed, only chase down more
+    // owners once the lineup's locked — same "don't ask before lock" rule as
+    // a fresh request (see resolveRequestFlow).
+    if (isLineupLocked(event)) {
+      const updatedReq = await getRequestById(match.id);
+      if (updatedReq) {
+        await reconcileRequestCopies(interaction.client, interaction.guildId!, event.rsvps, updatedReq, event.date);
+      }
     }
     return;
   }
@@ -2199,8 +2204,10 @@ async function resolveRequestFlow(
   }
 
   const owners = ownerIds.map((id) => `<@${id}>`);
+  const locked = isLineupLocked(event);
+  const askNote = locked ? '' : ' An owner will be asked to bring it once the lineup locks.';
   await interaction.reply({
-    content: `<@${interaction.user.id}> requested **${canonicalName}** for the event on ${event.date}. Owner${owners.length > 1 ? 's' : ''}: ${owners.join(', ')}`,
+    content: `<@${interaction.user.id}> requested **${canonicalName}** for the event on ${event.date}. Owner${owners.length > 1 ? 's' : ''}: ${owners.join(', ')}${askNote}`,
   });
 
   try {
@@ -2209,10 +2216,12 @@ async function resolveRequestFlow(
     /* channel may not be accessible */
   }
 
-  const dmOwnerId = await pickPreferredOwner(event.id, attendingOwnerIds);
-  if (dmOwnerId) {
-    const expansionNote = await buildExpansionNote(interaction.guildId!, dmOwnerId, canonicalName);
-    await sendBringRequestDm(interaction.client, result, dmOwnerId, event.date, expansionNote);
+  // No "please bring this" DM goes out until the lineup locks, so the bot
+  // can pick fairly from each owner's final confirmed-brings count for the
+  // event rather than an early, mostly-arbitrary snapshot. Late requests
+  // made after lock have no future lock to wait for, so they ask right away.
+  if (locked) {
+    await reconcileRequestCopies(interaction.client, interaction.guildId!, event.rsvps, result, event.date);
   }
 }
 
@@ -2322,9 +2331,11 @@ export async function handleLibraryRequestSelect(
   }
 
   const owners = ownerIds.map((id) => `<@${id}>`);
+  const locked = isLineupLocked(event);
+  const askNote = locked ? '' : ' An owner will be asked to bring it once the lineup locks.';
   await interaction.update({ content: '✅ Request submitted!', components: [] });
   await interaction.followUp({
-    content: `<@${interaction.user.id}> requested **${canonicalName}** for the event on ${event.date}. Owner${owners.length !== 1 ? 's' : ''}: ${owners.join(', ')}`,
+    content: `<@${interaction.user.id}> requested **${canonicalName}** for the event on ${event.date}. Owner${owners.length !== 1 ? 's' : ''}: ${owners.join(', ')}${askNote}`,
     ephemeral: false,
   });
 
@@ -2334,10 +2345,8 @@ export async function handleLibraryRequestSelect(
     /* channel may not be accessible */
   }
 
-  const dmOwnerId = await pickPreferredOwner(event.id, attendingOwnerIds);
-  if (dmOwnerId) {
-    const expansionNote = await buildExpansionNote(interaction.guildId!, dmOwnerId, canonicalName);
-    await sendBringRequestDm(interaction.client, result, dmOwnerId, event.date, expansionNote);
+  if (locked) {
+    await reconcileRequestCopies(interaction.client, interaction.guildId!, event.rsvps, result, event.date);
   }
 }
 
@@ -2355,10 +2364,11 @@ export async function handleLibraryRequestCopySelect(
   pendingRequestConfirms.delete(interaction.user.id);
 
   const selected = interaction.values[0];
-  const preferredOwnerId =
-    selected === '__bot__'
-      ? await pickPreferredOwner(pending.eventId, pending.attendingOwnerIds)
-      : selected;
+  // "Bot decides" no longer resolves to a concrete owner here — that would
+  // freeze in a fairness pick before the lineup's final RSVP/confirmed-brings
+  // picture is known. Leaving preferredOwnerId unset means "no preference";
+  // reconcileRequestCopies falls back to pickPreferredOwner at ask time.
+  const preferredOwnerId = selected === '__bot__' ? undefined : selected;
 
   const result = await addRequest(
     pending.eventId,
@@ -2375,10 +2385,17 @@ export async function handleLibraryRequestCopySelect(
     return;
   }
 
+  const event = await findGameNight(pending.eventId);
+  const locked = !!event && isLineupLocked(event);
   const owners = pending.ownerIds.map((id) => `<@${id}>`);
+  const bringingNote = preferredOwnerId
+    ? ` — bringing: <@${preferredOwnerId}>`
+    : locked
+      ? ''
+      : ' An owner will be asked to bring it once the lineup locks.';
   await interaction.update({ content: '✅ Request submitted!', components: [] });
   await interaction.followUp({
-    content: `<@${interaction.user.id}> requested **${pending.canonicalName}** for the event on ${pending.eventDate}. Owner${owners.length !== 1 ? 's' : ''}: ${owners.join(', ')} — bringing: <@${preferredOwnerId}>`,
+    content: `<@${interaction.user.id}> requested **${pending.canonicalName}** for the event on ${pending.eventDate}. Owner${owners.length !== 1 ? 's' : ''}: ${owners.join(', ')}${bringingNote}`,
     ephemeral: false,
   });
 
@@ -2388,9 +2405,8 @@ export async function handleLibraryRequestCopySelect(
     /* channel not accessible */
   }
 
-  if (preferredOwnerId) {
-    const expansionNote = await buildExpansionNote(interaction.guildId!, preferredOwnerId, pending.canonicalName);
-    await sendBringRequestDm(interaction.client, result, preferredOwnerId, pending.eventDate, expansionNote);
+  if (event && locked) {
+    await reconcileRequestCopies(interaction.client, interaction.guildId!, event.rsvps, result, pending.eventDate);
   }
 }
 

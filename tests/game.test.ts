@@ -601,9 +601,9 @@ describe('waitlist-driven copy requests', () => {
     } as any;
   }
 
-  it('asks a second owner to bring a copy once the waitlist grows into a full second group', async () => {
+  it('updates copiesNeeded but asks nobody when the waitlist grows into a full second group (asking is deferred to lock)', async () => {
     const { upsertGame } = await import('../src/utils/gameStorage');
-    const { addGame, addRequest, addPendingAsk, getRequestsForEvent } = await import('../src/utils/libraryStorage');
+    const { addGame, addRequest, getRequestsForEvent } = await import('../src/utils/libraryStorage');
     const { handleWaitlistJoin } = await import('../src/commands/game');
     await upsertGameNight(
       makeGameNight({
@@ -614,9 +614,8 @@ describe('waitlist-driven copy requests', () => {
     );
     await addGame('g1', 'alice', 'Full Game');
     await addGame('g1', 'bob', 'Full Game');
-    const initialReq = await addRequest('gn-wl2', 'Full Game', 'requester');
-    // Simulate alice already having been DMed at request-creation time (copiesNeeded:1).
-    await addPendingAsk((initialReq as any).id, 'alice', 'dm-channel-alice', 'dm-message-0');
+    // No ask goes out at request-creation time either, under the deferred design.
+    await addRequest('gn-wl2', 'Full Game', 'requester');
 
     await upsertGame({
       id: 'game-wl2-1', eventId: 'gn-wl2', channelId: 'event-channel-1', messageId: 'msg-1', guildId: 'g1',
@@ -629,18 +628,19 @@ describe('waitlist-driven copy requests', () => {
     // First waitlister alone doesn't cross the minPlayers(2) threshold for a full second group.
     await handleWaitlistJoin(makeWaitlistInteraction('waiter-1', client), 'game-wl2-1');
     expect(sentTo).toEqual([]);
-    // Second waitlister crosses it — copiesNeeded becomes 2, and a second owner gets asked.
+    // Second waitlister crosses it — copiesNeeded becomes 2, but still nobody
+    // is asked here; the lock-time pass (scheduler.ts) does the actual asking.
     await handleWaitlistJoin(makeWaitlistInteraction('waiter-2', client), 'game-wl2-1');
 
-    expect(sentTo).toEqual(['bob']);
+    expect(sentTo).toEqual([]);
     const [req] = await getRequestsForEvent('gn-wl2');
     expect(req.copiesNeeded).toBe(2);
-    expect(req.pendingAsks).toHaveLength(2);
+    expect(req.pendingAsks).toHaveLength(0);
   });
 
-  it('retracts the extra ask if the waitlist drops back below a full second group', async () => {
-    const { upsertGame, findGame } = await import('../src/utils/gameStorage');
-    const { addGame, addRequest, addPendingAsk, getRequestsForEvent } = await import('../src/utils/libraryStorage');
+  it('reverts copiesNeeded if the waitlist drops back below a full second group (still asks nobody before lock)', async () => {
+    const { upsertGame } = await import('../src/utils/gameStorage');
+    const { addGame, addRequest, getRequestsForEvent } = await import('../src/utils/libraryStorage');
     const { handleWaitlistJoin, handleWaitlistLeave } = await import('../src/commands/game');
     await upsertGameNight(
       makeGameNight({
@@ -651,8 +651,7 @@ describe('waitlist-driven copy requests', () => {
     );
     await addGame('g1', 'alice', 'Full Game');
     await addGame('g1', 'bob', 'Full Game');
-    const initialReq = await addRequest('gn-wl3', 'Full Game', 'requester');
-    await addPendingAsk((initialReq as any).id, 'alice', 'dm-channel-alice', 'dm-message-0');
+    await addRequest('gn-wl3', 'Full Game', 'requester');
 
     await upsertGame({
       id: 'game-wl3-1', eventId: 'gn-wl3', channelId: 'event-channel-1', messageId: 'msg-1', guildId: 'g1',
@@ -664,13 +663,13 @@ describe('waitlist-driven copy requests', () => {
     const { client } = makeDmClient();
     await handleWaitlistJoin(makeWaitlistInteraction('waiter-1', client), 'game-wl3-1');
     await handleWaitlistJoin(makeWaitlistInteraction('waiter-2', client), 'game-wl3-1');
-    expect((await getRequestsForEvent('gn-wl3'))[0].pendingAsks).toHaveLength(2);
+    expect((await getRequestsForEvent('gn-wl3'))[0].copiesNeeded).toBe(2);
 
     await handleWaitlistLeave(makeWaitlistInteraction('waiter-2', client), 'game-wl3-1');
 
     const [req] = await getRequestsForEvent('gn-wl3');
     expect(req.copiesNeeded).toBe(1);
-    expect(req.pendingAsks).toEqual([expect.objectContaining({ ownerId: 'alice' })]);
+    expect(req.pendingAsks).toHaveLength(0);
   });
 });
 

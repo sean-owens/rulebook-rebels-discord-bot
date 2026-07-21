@@ -54,22 +54,6 @@ export async function sendBringRequestDm(
   );
 }
 
-/** Sent once, at lineup lock, to the owner of any ask still pending by then. */
-export async function sendBringReminderDm(
-  client: Client,
-  req: GameRequest,
-  ownerId: string,
-  eventDate: string,
-  expansionNote: string,
-): Promise<void> {
-  await sendDm(
-    client,
-    req,
-    ownerId,
-    `⏰ Reminder: the lineup for the event on ${eventDate} just locked and you haven't confirmed you're bringing **${req.gameName}**${expansionNote} yet. Tap below to confirm, or run \`/library bring game:${req.gameName}\`.`,
-  );
-}
-
 /** Strips the buttons from a specific pending ask's DM and appends a closing note. */
 export async function invalidateBringDm(
   client: Client,
@@ -130,7 +114,13 @@ export async function reconcileRequestCopies(
 
     let toAsk = neededPending - req.pendingAsks.length;
     while (toAsk > 0) {
-      const ownerId = await pickPreferredOwner(req.eventId, attendingOwnerIds, [...tried]);
+      // An explicit copy-select owner pick (req.preferredOwnerId) always gets
+      // asked first; every other slot (and any further copy, or a fallback if
+      // the preferred owner was already tried/ineligible) uses fairness.
+      const ownerId =
+        req.preferredOwnerId && !tried.has(req.preferredOwnerId) && attendingOwnerIds.includes(req.preferredOwnerId)
+          ? req.preferredOwnerId
+          : await pickPreferredOwner(req.eventId, attendingOwnerIds, [...tried]);
       if (!ownerId) break; // no more eligible owners left to ask
       tried.add(ownerId);
       const expansionNote = await buildExpansionNote(guildId, ownerId, req.gameName);
