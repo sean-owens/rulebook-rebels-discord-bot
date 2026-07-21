@@ -28,7 +28,7 @@ Within **👥 Multi-Person Tests**:
 - At least one game tag must exist for `/myroles` to be testable — run `/admin tags sync` first.
 - Three test accounts are recommended: one with no elevated role, one with the Host role, and one with the Admin role.
 - At least one upcoming, non-cancelled event should exist before testing `/event`, `/game`, or the event-scoped `/library` commands (`request`, `unrequest`, `bring`) — create one first with `/host event create` (2.8a).
-- A marketplace forum channel should be configured via `/admin marketplace config` (3.9m) before testing `/marketplace post sell`/`post trade` end-to-end — listings are still created without one (that's its own test case), but you won't see the resulting forum post.
+- A marketplace channel should be configured via `/admin marketplace config` (3.9m) before testing `/marketplace post sell`/`post trade` end-to-end — listings are still created without one (that's its own test case), but you won't see the resulting forum post.
 - A BGG account should be linked via `/bgg link` before testing `/library import bgg`.
 - **For Part 5:** you'll need a second, distinct Discord account you can act as concurrently with your primary tester account — reusing one of the three test accounts above is fine. Discord does not allow an account to DM itself, so marketplace negotiation genuinely cannot be exercised with only one identity. For the "new member joins" case, you don't need a never-before-seen account — kicking an existing test account from the server and re-inviting it fires the same join event the welcome flow listens for.
 - 👑 marks a check that will behave differently — usually silently pass when it should fail — if run from the Discord **server owner's** account. This bot enforces its Host/Admin tiers entirely through Discord's native `Manage Events`/`Manage Server` permission bits (no custom role lookup), and Discord grants the server owner every permission implicitly and permanently, regardless of what role (if any) they're assigned. An owner account can never be used to validate a "this should be denied to non-hosts/non-admins" case — use a genuinely separate, non-owner account for anything marked 👑.
@@ -490,7 +490,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 **What it does:** Creates a for-sale listing, optionally enriched with BGG game details and current BGG marketplace price data.
 
-**Prerequisites:** most cases below assume a marketplace forum channel is already configured via `/admin marketplace config` (3.9m) — the "no channel configured" case further down is intentionally tested without it.
+**Prerequisites:** most cases below assume a marketplace channel is already configured via `/admin marketplace config` (3.9m) — the "no channel configured" case further down is intentionally tested without it.
 
 - [ ] Run `/marketplace post sell item:Wingspan offers_allowed:true condition:Very Good` (renamed from `bids_allowed`) — confirm BGG price screen appears (ephemeral) with current marketplace prices and "Powered by BGG" logo
 - [ ] Select a price option (use suggested, enter custom, or open to offers) — confirm forum post created with item name, price, a "Negotiable?" field showing "💬 Open to Offers", condition, and "I'm Interested" button
@@ -603,7 +603,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 **What it does:** A pinned "🎮 Quick Actions" **forum post** (not a plain channel message — forum channels pin threads, not messages) in the configured marketplace channel, with buttons for 📦 Sell an Item, 🔄 Propose a Trade, 🔍 Browse Listings, and 📋 My Listings. Created (or refreshed) automatically whenever `/admin marketplace config` (3.9m) sets the channel. Sell/Trade need an item name, which a modal only supports as free text (no autocomplete like the slash command's `item` option) — so the wizard collects the name via modal, then condition via a native select, then (sell only) offers-allowed via buttons, before handing off to the exact same listing-creation flow (BGG lookup, expansion select, price screen) the slash commands use. Trades skip the offers-allowed step since trades are always open to offers, same as `/marketplace post trade`.
 
-**Prerequisites:** a marketplace forum channel configured via `/admin marketplace config` (3.9m).
+**Prerequisites:** a marketplace channel configured via `/admin marketplace config` (3.9m).
 
 - [ ] Configure the marketplace channel — confirm a "🎮 Quick Actions" post appears in the forum, pinned to the top
 - [ ] Tap "📦 Sell an Item" — confirm a modal asks for an item name
@@ -1132,7 +1132,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 **What it does:** Creates a for-sale listing, optionally enriched with BGG game details and current BGG marketplace price data.
 
-**Prerequisites:** most cases below assume a marketplace forum channel is already configured via `/admin marketplace config` (3.9m) — the "no channel configured" case further down is intentionally tested without it.
+**Prerequisites:** most cases below assume a marketplace channel is already configured via `/admin marketplace config` (3.9m) — the "no channel configured" case further down is intentionally tested without it.
 
 - [ ] Run `/marketplace post sell item:Wingspan offers_allowed:true condition:Very Good` (renamed from `bids_allowed`) — confirm BGG price screen appears (ephemeral) with current marketplace prices and "Powered by BGG" logo
 - [ ] Select a price option (use suggested, enter custom, or open to offers) — confirm forum post created with item name, price, a "Negotiable?" field showing "💬 Open to Offers", condition, and "I'm Interested" button
@@ -1245,7 +1245,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 **What it does:** A pinned "🎮 Quick Actions" **forum post** (not a plain channel message — forum channels pin threads, not messages) in the configured marketplace channel, with buttons for 📦 Sell an Item, 🔄 Propose a Trade, 🔍 Browse Listings, and 📋 My Listings. Created (or refreshed) automatically whenever `/admin marketplace config` (3.9m) sets the channel. Sell/Trade need an item name, which a modal only supports as free text (no autocomplete like the slash command's `item` option) — so the wizard collects the name via modal, then condition via a native select, then (sell only) offers-allowed via buttons, before handing off to the exact same listing-creation flow (BGG lookup, expansion select, price screen) the slash commands use. Trades skip the offers-allowed step since trades are always open to offers, same as `/marketplace post trade`.
 
-**Prerequisites:** a marketplace forum channel configured via `/admin marketplace config` (3.9m).
+**Prerequisites:** a marketplace channel configured via `/admin marketplace config` (3.9m).
 
 - [ ] Configure the marketplace channel — confirm a "🎮 Quick Actions" post appears in the forum, pinned to the top
 - [ ] Tap "📦 Sell an Item" — confirm a modal asks for an item name
@@ -1873,7 +1873,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 **What it does:** Creates a for-sale listing, optionally enriched with BGG game details and current BGG marketplace price data.
 
-**Prerequisites:** most cases below assume a marketplace forum channel is already configured via `/admin marketplace config` (3.9m) — the "no channel configured" case further down is intentionally tested without it.
+**Prerequisites:** most cases below assume a marketplace channel is already configured via `/admin marketplace config` (3.9m) — the "no channel configured" case further down is intentionally tested without it.
 
 - [ ] Run `/marketplace post sell item:Wingspan offers_allowed:true condition:Very Good` (renamed from `bids_allowed`) — confirm BGG price screen appears (ephemeral) with current marketplace prices and "Powered by BGG" logo
 - [ ] Select a price option (use suggested, enter custom, or open to offers) — confirm forum post created with item name, price, a "Negotiable?" field showing "💬 Open to Offers", condition, and "I'm Interested" button
@@ -2204,19 +2204,32 @@ See 2.8f for the full checklist — this Admin-tier pass just confirms Admins re
 
 ### 3.9m `/admin marketplace config`
 
-**What it does:** Configures the forum channel and negotiation mode for the marketplace.
+**What it does:** Configures the marketplace channel — either a Forum channel or a Text channel, both supported side by side per server — and the negotiation mode.
 
 - [ ] Run `/admin marketplace config` with no options — confirm current config is displayed (channel and mode)
-- [ ] Run `/admin marketplace config channel:#marketplace-channel negotiation_mode:Public` — confirm settings saved, echoed back, and "Forum tags created/verified" shown
-- [ ] Try setting a regular text channel instead of a forum channel — confirm error: "must be a Forum Channel"
+- [ ] Run `/admin marketplace config channel:#marketplace-forum negotiation_mode:Public` pointing at a **Forum channel** — confirm settings saved, echoed back, and "Forum tags created/verified and Quick Actions hub posted" shown
+- [ ] Try setting a voice channel (or another unsupported type) — confirm error: "must be a Forum Channel or a Text Channel"
 - [ ] Run `/admin marketplace config negotiation_mode:Private` — confirm mode changes to private
 - [ ] After setting a forum channel, confirm the six tags (`For Sale`, `For Trade`, `Active`, `Pending`, `Sold`, `Closed`) are visible in the channel's tag list
 - [ ] After setting a forum channel, also confirm a pinned "🎮 Quick Actions" post appears (1.7m/2.7m) — created alongside the tags, not requiring a listing to be posted first
-- [ ] Re-run `/admin marketplace config channel:...` pointing at the same channel again — confirm the existing "🎮 Quick Actions" post is refreshed in place rather than a second one being created
+- [ ] Re-run `/admin marketplace config channel:...` pointing at the same forum channel again — confirm the existing "🎮 Quick Actions" post is refreshed in place rather than a second one being created
+
+#### Text-channel mode (comparison checklist)
+
+Text channels have no forum tags, so status/type visibility is provided by a pinned "🛒 Marketplace Listings" index message instead — a single message listing every active listing grouped by For Sale / For Trade, each linking to its post, refreshed automatically whenever a listing is created, closed, reopened, or sold.
+
+- [ ] Run `/admin marketplace config channel:#marketplace-text` pointing at a **Text channel** — confirm it's accepted (no "must be a Forum Channel" error) and the reply shows "Quick Actions hub and listing index posted"
+- [ ] Confirm a pinned "🎮 Quick Actions" **message** (not a thread) appears in the text channel, with the same Sell/Trade/Browse/My Listings buttons as the forum hub
+- [ ] Confirm a pinned "🛒 Marketplace Listings" message appears, initially reading "No active listings right now"
+- [ ] Post a sell listing (via `/marketplace post sell` or the hub's "📦 Sell an Item" button) — confirm it posts as a message + thread in the text channel (not a forum post), and the pinned listing index updates to include it under "🏷️ For Sale" with a working link
+- [ ] Post a trade listing — confirm it appears under "🔄 For Trade" in the pinned index
+- [ ] Close, then reopen, a text-mode listing — confirm the thread locks/archives (and unlocks/unarchives on reopen) exactly as in forum mode, and the pinned index drops/re-adds the listing accordingly
+- [ ] Sell a text-mode listing via Buy It Now or Accept Offer — confirm the pinned index removes it and the thread is locked/archived with the "sold" closing message
+- [ ] Reconfigure the marketplace channel from Text back to Forum (or vice versa) — confirm the previously-configured mode's pinned messages/threads are left untouched (not deleted) and the newly configured mode's hub/tags or hub/index are set up fresh
 
 ### 3.9n `/admin marketplace purge`
 
-**What it does:** Admin bulk-deletes listings by status, with an optional user filter. Any forum thread backing a purged listing is deleted too, so purged listings don't linger as posts in the marketplace forum channel.
+**What it does:** Admin bulk-deletes listings by status, with an optional user filter. Any thread backing a purged listing is deleted too (forum post thread or text-channel listing thread), so purged listings don't linger as posts in the marketplace channel; in text-channel mode the pinned listing index is also refreshed to drop purged listings.
 
 - [ ] 👑 Run as non-admin — confirm "requires Manage Server permission"
 - [ ] Run as admin with no options — confirm sold + closed listings deleted, active/pending remain; reply shows `(filter: sold_closed)`
@@ -2227,6 +2240,7 @@ See 2.8f for the full checklist — this Admin-tier pass just confirms Admins re
 - [ ] Confirm purge count and filter label are reported accurately in the reply
 - [ ] For a purged listing that has a forum post, confirm its forum thread is deleted from the marketplace channel (not just archived/left behind)
 - [ ] For a purged listing with no forum thread (e.g. never posted), confirm the purge still completes cleanly with no error
+- [ ] In text-channel mode, purge an active listing — confirm its thread is deleted and it disappears from the pinned listing index
 - [ ] After an admin purge, open `data/marketplace_log.jsonl` — confirm an `admin_purge` entry with count in `details`
 
 ### 3.9o `/admin room config`
@@ -2553,7 +2567,7 @@ These test cases involve genuine back-and-forth between two distinct Discord ide
 
 **Prerequisites:**
 - A second, distinct Discord account (see the global Prerequisites section above — reusing one of your three test accounts is fine).
-- For 5.1: a marketplace forum channel configured (`/admin marketplace config`, 3.9m), and one account with an active sell or trade listing posted (`/marketplace post sell`/`post trade`, 1.7a/1.7b).
+- For 5.1: a marketplace channel configured (`/admin marketplace config`, 3.9m), and one account with an active sell or trade listing posted (`/marketplace post sell`/`post trade`, 1.7a/1.7b).
 - For 5.2: a welcome channel configured (`/admin welcome config`, 3.9j).
 
 ## 5.1 Buyer + Seller — Marketplace Negotiation *(Member-tier flow — neither side needs an elevated role)*

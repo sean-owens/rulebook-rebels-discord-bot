@@ -1,5 +1,6 @@
 import {
   AutocompleteInteraction,
+  ChannelType,
   ChatInputCommandInteraction,
   MessageFlags,
   PermissionFlagsBits,
@@ -322,11 +323,12 @@ export const data = new SlashCommandBuilder()
       .addSubcommand((sub) =>
         sub
           .setName('config')
-          .setDescription('Configure the marketplace forum channel and negotiation mode')
+          .setDescription('Configure the marketplace channel (Forum or Text) and negotiation mode')
           .addChannelOption((opt) =>
             opt
               .setName('channel')
-              .setDescription('Forum channel where listings are posted')
+              .setDescription('Forum or text channel where listings are posted')
+              .addChannelTypes(ChannelType.GuildForum, ChannelType.GuildText)
               .setRequired(false),
           )
           .addStringOption((opt) =>

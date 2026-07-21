@@ -135,7 +135,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
                 '`/admin welcome config` — Configure the welcome message and channel',
                 '`/admin welcome test` — Preview the welcome message',
                 '`/admin welcome greet` — Manually send the welcome message to a member',
-                '`/admin marketplace config` — Set the marketplace forum channel and negotiation mode',
+                '`/admin marketplace config` — Set the marketplace channel (Forum or Text) and negotiation mode',
                 '`/admin marketplace purge` — Delete old/closed marketplace listings',
                 '`/admin room config` — Set the Discord category used for /room private channels',
                 '`/admin general config` — Set the channel for the general chat "Quick Actions" button hub',

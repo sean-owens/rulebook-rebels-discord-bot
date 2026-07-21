@@ -16,8 +16,10 @@ import {
   SlashCommandBuilder,
   StringSelectMenuBuilder,
   StringSelectMenuInteraction,
+  TextChannel,
   TextInputBuilder,
   TextInputStyle,
+  ThreadAutoArchiveDuration,
   ThreadChannel,
   AutocompleteInteraction,
   ChannelFlags,
@@ -658,6 +660,85 @@ async function postListingToForum(
   }
 }
 
+// Text-channel equivalent of postListingToForum — no forum tags, so the
+// starter message is sent directly to the channel and threaded off of
+// afterward instead of created via ForumChannel.threads.create. Discord gives
+// a thread started from a message the same ID as that message, so downstream
+// code (updateListingPost's "fetch the embed message at thread.id" lookup)
+// works identically for both channel types.
+async function postListingToTextChannel(
+  listing: MarketplaceListing,
+  textChannel: TextChannel,
+  guildId: string,
+): Promise<string | undefined> {
+  try {
+    const bggAttachment = new AttachmentBuilder('BGG/images/powered_by_BGG_01_SM.png');
+    const embed = listingEmbed(listing);
+    embed.setImage('attachment://powered_by_BGG_01_SM.png');
+
+    const thumbBuffer = listing.thumbnail ? await fetchImageBuffer(listing.thumbnail) : null;
+
+    let starterMessage;
+    if (thumbBuffer) {
+      starterMessage = await textChannel.send({
+        files: [new AttachmentBuilder(thumbBuffer, { name: 'thumbnail.jpg' })],
+      });
+    } else {
+      starterMessage = await textChannel.send({
+        embeds: [embed],
+        files: [bggAttachment],
+        components: [interestButton(listing)],
+      });
+    }
+
+    const thread = await starterMessage.startThread({
+      name: buildThreadTitle(listing),
+      autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
+    });
+
+    if (thumbBuffer) {
+      await thread.send({
+        embeds: [embed],
+        files: [bggAttachment],
+        components: [interestButton(listing)],
+      });
+    }
+
+    await updateMarketplaceListingIndex(textChannel.client, guildId);
+
+    return thread.id;
+  } catch (err) {
+    console.error('[marketplace] text channel post failed:', err);
+    return undefined;
+  }
+}
+
+// Shared by finalizeSellListing and its trade equivalent — resolves the
+// configured marketplace channel and dispatches to the Forum or Text poster
+// based on its live type, so a listing can be created regardless of which
+// mode a guild has configured.
+async function postListingToChannel(
+  listing: MarketplaceListing,
+  guildId: string,
+  client: Client,
+): Promise<string | undefined> {
+  const config = await getGuildConfig(guildId);
+  if (!config.marketplaceChannelId) return undefined;
+  try {
+    const channel = await client.channels.fetch(config.marketplaceChannelId);
+    if (channel?.type === ChannelType.GuildForum) {
+      return postListingToForum(listing, channel as ForumChannel, guildId);
+    }
+    if (channel?.type === ChannelType.GuildText) {
+      return postListingToTextChannel(listing, channel as TextChannel, guildId);
+    }
+    return undefined;
+  } catch (err) {
+    console.error('[marketplace] marketplace channel fetch failed:', err);
+    return undefined;
+  }
+}
+
 /** Strip buttons from a bid's outstanding DM/thread-fallback prompt and append a closing note. */
 async function lockBidDm(client: Client, bid: Bid, note: string): Promise<void> {
   if (!bid.dmChannelId || !bid.dmMessageId) return;
@@ -669,7 +750,12 @@ async function lockBidDm(client: Client, bid: Bid, note: string): Promise<void> 
   } catch { /* message may be gone or inaccessible */ }
 }
 
-async function updateForumPost(
+// Channel-agnostic: works whether listing.forumThreadId is a forum post's own
+// thread or a thread started off a message in a Text channel (see
+// postListingToChannel). Forum-only steps (tag updates) are skipped when the
+// thread's parent isn't a forum channel; Text-only steps (the listing index
+// pin) are refreshed when it is a text channel.
+async function updateListingPost(
   listing: MarketplaceListing,
   client: ForumChannel['client'],
   guildId: string,
@@ -679,11 +765,16 @@ async function updateForumPost(
     const thread = await client.channels.fetch(listing.forumThreadId) as ThreadChannel;
     if (!thread) return;
 
-    // Update applied tags to reflect current status
-    const config = await getGuildConfig(guildId);
-    const tags = resolvedTags(config.marketplaceTagIds, listing.type, listing.status);
-    if (tags.length > 0) {
-      await (thread as any).setAppliedTags(tags);
+    const parent = thread.parentId ? await client.channels.fetch(thread.parentId).catch(() => null) : null;
+    const isForumThread = parent?.type === ChannelType.GuildForum;
+
+    if (isForumThread) {
+      // Update applied tags to reflect current status
+      const config = await getGuildConfig(guildId);
+      const tags = resolvedTags(config.marketplaceTagIds, listing.type, listing.status);
+      if (tags.length > 0) {
+        await (thread as any).setAppliedTags(tags);
+      }
     }
 
     // When a thumbnail is present, the starter message is just the image and the
@@ -722,8 +813,12 @@ async function updateForumPost(
       await thread.setArchived(false);
       await thread.setLocked(false);
     }
+
+    if (!isForumThread) {
+      await updateMarketplaceListingIndex(client, guildId);
+    }
   } catch (err) {
-    console.error('[marketplace] forum update failed:', err);
+    console.error('[marketplace] listing post update failed:', err);
   }
 }
 
@@ -1116,7 +1211,6 @@ async function finalizeSellListing(
   price: number | undefined,
 ): Promise<void> {
   const { guildId, userId, username, itemName, bggId, thumbnail, condition, notes, referenceLink, bidsAllowed, expansions, parentItem, includesBaseGame } = draft;
-  const config = await getGuildConfig(guildId);
 
   const listing = await createListing(guildId, {
     guildId,
@@ -1149,22 +1243,13 @@ async function finalizeSellListing(
     details: `condition=${condition} bidsAllowed=${bidsAllowed}`,
   });
 
-  let forumPosted = false;
-  let forumThreadId: string | undefined;
-  if (config.marketplaceChannelId) {
-    try {
-      const channel = await interaction.client.channels.fetch(config.marketplaceChannelId);
-      if (channel?.type === ChannelType.GuildForum) {
-        const threadId = await postListingToForum(listing, channel as ForumChannel, guildId);
-        if (threadId) {
-          await updateListing(guildId, listing.id, { forumThreadId: threadId });
-          forumPosted = true;
-          forumThreadId = threadId;
-        }
-      }
-    } catch (err) {
-      console.error('[marketplace] forum channel fetch failed:', err);
-    }
+  let listingPosted = false;
+  let listingThreadId: string | undefined;
+  const threadId = await postListingToChannel(listing, guildId, interaction.client);
+  if (threadId) {
+    await updateListing(guildId, listing.id, { forumThreadId: threadId });
+    listingPosted = true;
+    listingThreadId = threadId;
   }
 
   const responseEmbed = new EmbedBuilder()
@@ -1175,9 +1260,9 @@ async function finalizeSellListing(
       { name: 'Negotiable?', value: bidsAllowed ? '💬 Open to Offers' : '🔒 Firm Price', inline: true },
       { name: 'Condition', value: CONDITION_LABELS[condition], inline: true },
       { name: 'Listing ID', value: `\`${listing.id}\``, inline: false },
-      ...(forumThreadId ? [{ name: 'Forum Post', value: `[View listing](https://discord.com/channels/${guildId}/${forumThreadId})`, inline: false }] : []),
+      ...(listingThreadId ? [{ name: 'Marketplace Post', value: `[View listing](https://discord.com/channels/${guildId}/${listingThreadId})`, inline: false }] : []),
     )
-    .setFooter({ text: forumPosted ? 'Posted to marketplace channel.' : 'No marketplace channel configured — use /admin marketplace config to set one.' });
+    .setFooter({ text: listingPosted ? 'Posted to marketplace channel.' : 'No marketplace channel configured — use /admin marketplace config to set one.' });
 
   if (thumbnail) responseEmbed.setThumbnail(thumbnail);
 
@@ -1378,7 +1463,6 @@ async function createTradeListing(
   draft: Omit<SellDraft, 'expiresAt'>,
 ): Promise<void> {
   const { guildId, userId, username, itemName, bggId, thumbnail, condition, notes, referenceLink, lookingFor, expansions, parentItem, includesBaseGame } = draft;
-  const config = await getGuildConfig(guildId);
 
   const listing = await createListing(guildId, {
     guildId, userId, username,
@@ -1403,16 +1487,13 @@ async function createTradeListing(
     details: `condition=${condition}`,
   });
 
-  let forumPosted = false;
-  let forumThreadId: string | undefined;
-  if (config.marketplaceChannelId) {
-    try {
-      const channel = await interaction.client.channels.fetch(config.marketplaceChannelId);
-      if (channel?.type === ChannelType.GuildForum) {
-        const threadId = await postListingToForum(listing, channel as ForumChannel, guildId);
-        if (threadId) { await updateListing(guildId, listing.id, { forumThreadId: threadId }); forumPosted = true; forumThreadId = threadId; }
-      }
-    } catch (err) { console.error('[marketplace] forum channel fetch failed:', err); }
+  let listingPosted = false;
+  let listingThreadId: string | undefined;
+  const threadId = await postListingToChannel(listing, guildId, interaction.client);
+  if (threadId) {
+    await updateListing(guildId, listing.id, { forumThreadId: threadId });
+    listingPosted = true;
+    listingThreadId = threadId;
   }
 
   const responseEmbed = new EmbedBuilder()
@@ -1423,9 +1504,9 @@ async function createTradeListing(
       { name: 'Looking For', value: lookingFor ?? 'Open to offers', inline: true },
       { name: 'Condition', value: CONDITION_LABELS[condition], inline: true },
       { name: 'Listing ID', value: `\`${listing.id}\``, inline: false },
-      ...(forumThreadId ? [{ name: 'Forum Post', value: `[View listing](https://discord.com/channels/${guildId}/${forumThreadId})`, inline: false }] : []),
+      ...(listingThreadId ? [{ name: 'Marketplace Post', value: `[View listing](https://discord.com/channels/${guildId}/${listingThreadId})`, inline: false }] : []),
     )
-    .setFooter({ text: forumPosted ? 'Posted to marketplace channel.' : 'No marketplace channel configured.' });
+    .setFooter({ text: listingPosted ? 'Posted to marketplace channel.' : 'No marketplace channel configured.' });
 
   await interaction.editReply({ embeds: [responseEmbed] });
 }
@@ -1569,7 +1650,7 @@ async function handleClose(interaction: ChatInputCommandInteraction): Promise<vo
     actorUsername: interaction.user.username,
   });
 
-  await updateForumPost(updated, interaction.client, guildId);
+  await updateListingPost(updated, interaction.client, guildId);
   await interaction.editReply({ content: `Listing **${listing.itemName}** has been closed.` });
 }
 
@@ -1609,7 +1690,7 @@ async function handleReopen(interaction: ChatInputCommandInteraction): Promise<v
     actorUsername: interaction.user.username,
   });
 
-  await updateForumPost(updated, interaction.client, guildId);
+  await updateListingPost(updated, interaction.client, guildId);
   await interaction.editReply({ content: `Listing **${listing.itemName}** has been reopened and is now ${updated.status}.` });
 }
 
@@ -1693,6 +1774,131 @@ export async function updateMarketplaceHubThread(client: Client, guildId: string
   }
 
   await updateGuildConfig(guildId, { marketplaceHubThreadId: thread.id });
+}
+
+// Text-channel equivalent of updateMarketplaceHubThread — same Quick Actions
+// embed/buttons, but as a plain pinned message (Text channels have no forum
+// threads to pin), tracked via marketplaceHubMessageId instead of
+// marketplaceHubThreadId. Modeled on updateHubPin in src/utils/requestPin.ts.
+export async function updateMarketplaceHubMessage(client: Client, guildId: string): Promise<void> {
+  const config = await getGuildConfig(guildId);
+  if (!config.marketplaceChannelId) return;
+
+  let textChannel: TextChannel;
+  try {
+    const ch = await client.channels.fetch(config.marketplaceChannelId);
+    if (ch?.type !== ChannelType.GuildText) return;
+    textChannel = ch as TextChannel;
+  } catch {
+    return;
+  }
+
+  const payload = { embeds: [buildMarketplaceHubEmbed()], components: [buildMarketplaceHubButtons()] };
+
+  if (config.marketplaceHubMessageId) {
+    try {
+      const msg = await textChannel.messages.fetch(config.marketplaceHubMessageId);
+      await msg.edit(payload);
+      if (!msg.pinned) {
+        try {
+          await msg.pin();
+        } catch (err) {
+          console.warn(`Could not re-pin marketplace hub message in guild ${guildId}:`, err);
+        }
+      }
+      return;
+    } catch {
+      /* message was deleted — fall through and repost */
+    }
+  }
+
+  const msg = await textChannel.send(payload);
+  try {
+    await msg.pin();
+  } catch (err) {
+    console.warn(`Could not pin marketplace hub message in guild ${guildId}:`, err);
+  }
+
+  await updateGuildConfig(guildId, { marketplaceHubMessageId: msg.id });
+}
+
+// ── Marketplace listing index (Text-channel mode) ───────────────────────────
+// Substitutes for forum tags' status/type filtering: a single pinned message
+// listing every active listing grouped by type, each linking to its post.
+// Modeled on buildGameListEmbed/updateGameListPin in src/utils/requestPin.ts.
+
+function buildMarketplaceListingIndexEmbed(guildId: string, listings: MarketplaceListing[]): EmbedBuilder {
+  const embed = new EmbedBuilder().setTitle('🛒 Marketplace Listings').setColor(0x5865f2);
+  if (listings.length === 0) {
+    return embed.setDescription('No active listings right now — use `/marketplace post sell` or `post trade` to list something.');
+  }
+
+  const lineFor = (l: MarketplaceListing) => {
+    const priceStr = l.type === 'sell'
+      ? (l.askingPrice != null ? formatPrice(l.askingPrice) : 'Open to offers')
+      : (l.lookingFor ?? 'Open to offers');
+    const statusIcon = l.status === 'pending' ? '🟡' : '🟢';
+    const title = l.forumThreadId
+      ? `[${l.itemName}](https://discord.com/channels/${guildId}/${l.forumThreadId})`
+      : l.itemName;
+    return `${statusIcon} **${title}** — ${priceStr} — by ${l.username}`;
+  };
+
+  const sellLines = listings.filter((l) => l.type === 'sell').map(lineFor);
+  const tradeLines = listings.filter((l) => l.type === 'trade').map(lineFor);
+  if (sellLines.length > 0) {
+    embed.addFields({ name: '🏷️ For Sale', value: sellLines.join('\n').slice(0, 1024) });
+  }
+  if (tradeLines.length > 0) {
+    embed.addFields({ name: '🔄 For Trade', value: tradeLines.join('\n').slice(0, 1024) });
+  }
+
+  return embed.setFooter({
+    text: `${listings.length} active listing${listings.length !== 1 ? 's' : ''} · Post yours with /marketplace post or the Quick Actions buttons above`,
+  });
+}
+
+async function updateMarketplaceListingIndex(client: Client, guildId: string): Promise<void> {
+  const config = await getGuildConfig(guildId);
+  if (!config.marketplaceChannelId) return;
+
+  let textChannel: TextChannel;
+  try {
+    const ch = await client.channels.fetch(config.marketplaceChannelId);
+    if (ch?.type !== ChannelType.GuildText) return;
+    textChannel = ch as TextChannel;
+  } catch {
+    return;
+  }
+
+  const listings = await getActiveListingsForGuild(guildId);
+  const embed = buildMarketplaceListingIndexEmbed(guildId, listings);
+
+  if (config.marketplaceListingIndexMessageId) {
+    try {
+      const msg = await textChannel.messages.fetch(config.marketplaceListingIndexMessageId);
+      await msg.edit({ embeds: [embed] });
+      if (!msg.pinned) {
+        try {
+          await msg.pin();
+        } catch (err) {
+          console.warn(`Could not re-pin marketplace listing index in guild ${guildId}:`, err);
+        }
+      }
+      return;
+    } catch {
+      /* message was deleted — fall through and repost */
+    }
+  }
+
+  const msg = await textChannel.send({ embeds: [embed] });
+  try {
+    await msg.pin();
+  } catch (err) {
+    console.warn(`Could not pin marketplace listing index in guild ${guildId}:`, err);
+  }
+
+  await updateGuildConfig(guildId, { marketplaceListingIndexMessageId: msg.id });
 }
 
 // ── Hub wizard: "📦 Sell an Item" / "🔄 Propose a Trade" ────────────────────
@@ -1864,8 +2070,8 @@ export async function handleAdminConfig(interaction: ChatInputCommandInteraction
 
   const patch: Record<string, unknown> = {};
   if (channel) {
-    if (channel.type !== ChannelType.GuildForum) {
-      await interaction.editReply({ content: 'The marketplace channel must be a **Forum Channel**.' });
+    if (channel.type !== ChannelType.GuildForum && channel.type !== ChannelType.GuildText) {
+      await interaction.editReply({ content: 'The marketplace channel must be a **Forum Channel** or a **Text Channel**.' });
       return;
     }
     patch.marketplaceChannelId = channel.id;
@@ -1887,18 +2093,25 @@ export async function handleAdminConfig(interaction: ChatInputCommandInteraction
   await updateGuildConfig(guildId, patch as Parameters<typeof updateGuildConfig>[1]);
   const config = await getGuildConfig(guildId);
 
-  // Eagerly create forum tags and the Quick Actions hub so they're ready
-  // before any listing is ever posted
+  // Eagerly set up the mode-appropriate ready-to-go pieces (forum tags + hub
+  // thread, or hub message + listing index) so they're ready before any
+  // listing is ever posted, rather than being created lazily on first use.
+  let setupNote = '';
   if (patch.marketplaceChannelId && config.marketplaceChannelId) {
     try {
-      const forumChannel = await interaction.client.channels.fetch(config.marketplaceChannelId);
-      if (forumChannel?.type === ChannelType.GuildForum) {
-        await ensureMarketplaceTags(forumChannel as ForumChannel, guildId);
+      const channel = await interaction.client.channels.fetch(config.marketplaceChannelId);
+      if (channel?.type === ChannelType.GuildForum) {
+        await ensureMarketplaceTags(channel as ForumChannel, guildId);
+        await updateMarketplaceHubThread(interaction.client, guildId).catch(() => null);
+        setupNote = '\n✅ Forum tags created/verified and Quick Actions hub posted.';
+      } else if (channel?.type === ChannelType.GuildText) {
+        await updateMarketplaceHubMessage(interaction.client, guildId).catch(() => null);
+        await updateMarketplaceListingIndex(interaction.client, guildId).catch(() => null);
+        setupNote = '\n✅ Quick Actions hub and listing index posted.';
       }
     } catch {
-      // non-fatal — tags will be created lazily on first listing post
+      // non-fatal — hub/index will be created lazily on first listing post
     }
-    await updateMarketplaceHubThread(interaction.client, guildId).catch(() => null);
   }
 
   await interaction.editReply({
@@ -1906,7 +2119,7 @@ export async function handleAdminConfig(interaction: ChatInputCommandInteraction
       'Marketplace config updated.',
       `• Channel: ${config.marketplaceChannelId ? `<#${config.marketplaceChannelId}>` : '*not set*'}`,
       `• Negotiation mode: **${config.marketplaceNegotiationMode}**`,
-      patch.marketplaceChannelId ? '\n✅ Forum tags created/verified.' : '',
+      setupNote,
     ].join('\n'),
   });
 }
@@ -1953,6 +2166,7 @@ export async function handleAdminPurge(interaction: ChatInputCommandInteraction)
       // thread already gone or inaccessible — nothing to clean up
     }
   }
+  await updateMarketplaceListingIndex(interaction.client, guildId).catch(() => null);
 
   await appendMarketplaceLog({
     timestamp: new Date().toISOString(),
@@ -2213,7 +2427,7 @@ export async function handleBuyNowConfirm(interaction: ButtonInteraction, listin
     } catch { /* thread may be gone */ }
   }
 
-  await updateForumPost(result.listing, interaction.client, guildId);
+  await updateListingPost(result.listing, interaction.client, guildId);
 
   try {
     const seller = await interaction.client.users.fetch(listing.userId);
@@ -2334,7 +2548,7 @@ export async function handleBidModal(interaction: ModalSubmitInteraction, listin
     }
     if (listing.forumThreadId) {
       try {
-        await updateForumPost(result.listing, interaction.client, guildId);
+        await updateListingPost(result.listing, interaction.client, guildId);
       } catch (err) {
         console.error('[marketplace] private mode forum update failed:', err);
       }
@@ -2347,7 +2561,7 @@ export async function handleBidModal(interaction: ModalSubmitInteraction, listin
       await threadChannel.send({
         content: `${sellerNotification}\n📬 <@${listing.userId}> — you have a new offer! Check your DMs from the bot to accept, deny, or counter.`,
       });
-      await updateForumPost(result.listing, interaction.client, guildId);
+      await updateListingPost(result.listing, interaction.client, guildId);
     } catch (err) {
       console.error('[marketplace] forum thread post failed:', err);
     }
@@ -2549,7 +2763,7 @@ export async function handleAcceptBid(interaction: ButtonInteraction, listingId:
     });
   } catch { /* message may not be editable */ }
 
-  await updateForumPost(result.listing, interaction.client, guildId);
+  await updateListingPost(result.listing, interaction.client, guildId);
 
   try {
     const buyer = await interaction.client.users.fetch(result.acceptedBid.userId);
@@ -2629,7 +2843,7 @@ export async function handleDenyBid(interaction: ButtonInteraction, listingId: s
     });
   } catch { /* message may not be editable */ }
 
-  await updateForumPost(result.listing, interaction.client, guildId);
+  await updateListingPost(result.listing, interaction.client, guildId);
 
   if (isSeller && bid) {
     try {
@@ -2905,7 +3119,7 @@ export async function handleBuyerAcceptCounter(
     });
   } catch { /* message may not be editable */ }
 
-  await updateForumPost(result.listing, interaction.client, guildId);
+  await updateListingPost(result.listing, interaction.client, guildId);
 
   try {
     const seller = await interaction.client.users.fetch(listing.userId);
