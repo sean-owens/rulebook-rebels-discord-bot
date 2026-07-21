@@ -279,12 +279,18 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.4c `/library mine`
 
-**What it does:** Lists all base games you've added to the library. Expansions imported via `/library import bgg` are excluded.
+**What it does:** Lists all base games you've added to the library, plus any linked delegates' games. Expansions imported via `/library import bgg` are excluded. Paginates with Previous/Next buttons when large (same pattern as `/library list`, 1.4d) — a member linked to several delegates' libraries can easily exceed a single embed field's capacity.
 
 - [ ] Run `/library mine` with games added — confirm all your base games are listed
 - [ ] If you have imported BGG expansions — confirm they do NOT appear in `/library mine`
 - [ ] Run `/library mine` with no games — confirm "You haven't added any games" message
 - [ ] With another member's library linked to you as a delegate (1.4n), run `/library mine` — confirm their games appear alongside your own, each marked `*(shared from <@ownerId>)*`
+- [ ] With enough games (yours plus any linked delegates') to exceed one page:
+  - [ ] Confirm **← Previous** and **Next →** buttons appear, with a "Page X of Y" indicator between them
+  - [ ] **← Previous** is disabled on the first page
+  - [ ] Click **Next →** — confirm page 2 is shown with different games
+  - [ ] **Next →** is disabled on the last page
+  - [ ] Confirm no error occurs regardless of how large the combined list is (regression: this previously crashed once the list exceeded Discord's embed description limit)
 
 ### 1.4d `/library list`
 
@@ -936,12 +942,18 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.4c `/library mine`
 
-**What it does:** Lists all base games you've added to the library. Expansions imported via `/library import bgg` are excluded.
+**What it does:** Lists all base games you've added to the library, plus any linked delegates' games. Expansions imported via `/library import bgg` are excluded. Paginates with Previous/Next buttons when large (same pattern as `/library list`, 2.4d) — a member linked to several delegates' libraries can easily exceed a single embed field's capacity.
 
 - [ ] Run `/library mine` with games added — confirm all your base games are listed
 - [ ] If you have imported BGG expansions — confirm they do NOT appear in `/library mine`
 - [ ] Run `/library mine` with no games — confirm "You haven't added any games" message
 - [ ] With another member's library linked to you as a delegate (2.4n), run `/library mine` — confirm their games appear alongside your own, each marked `*(shared from <@ownerId>)*`
+- [ ] With enough games (yours plus any linked delegates') to exceed one page:
+  - [ ] Confirm **← Previous** and **Next →** buttons appear, with a "Page X of Y" indicator between them
+  - [ ] **← Previous** is disabled on the first page
+  - [ ] Click **Next →** — confirm page 2 is shown with different games
+  - [ ] **Next →** is disabled on the last page
+  - [ ] Confirm no error occurs regardless of how large the combined list is (regression: this previously crashed once the list exceeded Discord's embed description limit)
 
 ### 2.4d `/library list`
 
@@ -1680,12 +1692,18 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.4c `/library mine`
 
-**What it does:** Lists all base games you've added to the library. Expansions imported via `/library import bgg` are excluded.
+**What it does:** Lists all base games you've added to the library, plus any linked delegates' games. Expansions imported via `/library import bgg` are excluded. Paginates with Previous/Next buttons when large (same pattern as `/library list`, 3.4d) — a member linked to several delegates' libraries can easily exceed a single embed field's capacity.
 
 - [ ] Run `/library mine` with games added — confirm all your base games are listed
 - [ ] If you have imported BGG expansions — confirm they do NOT appear in `/library mine`
 - [ ] Run `/library mine` with no games — confirm "You haven't added any games" message
 - [ ] With another member's library linked to you as a delegate (3.4n), run `/library mine` — confirm their games appear alongside your own, each marked `*(shared from <@ownerId>)*`
+- [ ] With enough games (yours plus any linked delegates') to exceed one page:
+  - [ ] Confirm **← Previous** and **Next →** buttons appear, with a "Page X of Y" indicator between them
+  - [ ] **← Previous** is disabled on the first page
+  - [ ] Click **Next →** — confirm page 2 is shown with different games
+  - [ ] **Next →** is disabled on the last page
+  - [ ] Confirm no error occurs regardless of how large the combined list is (regression: this previously crashed once the list exceeded Discord's embed description limit)
 
 ### 3.4d `/library list`
 

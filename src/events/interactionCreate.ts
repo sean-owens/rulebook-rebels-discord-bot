@@ -42,6 +42,7 @@ import {
   handleUnrequestSelect,
   handleUnrequestAll,
   handleLibraryListNav,
+  handleLibraryMineNav,
   handleLibraryConfirmBring,
   handleLibraryDeclineBring,
   handleHubRequestButton,
@@ -236,6 +237,10 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handleLibraryListNav(interaction, 'prev');
       } else if (id === 'library_list_next') {
         await handleLibraryListNav(interaction, 'next');
+      } else if (id === 'library_mine_prev') {
+        await handleLibraryMineNav(interaction, 'prev');
+      } else if (id === 'library_mine_next') {
+        await handleLibraryMineNav(interaction, 'next');
       } else if (id === 'library_add_confirm') {
         await handleAddConfirm(interaction);
       } else if (id === 'library_add_cancel') {

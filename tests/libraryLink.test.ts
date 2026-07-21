@@ -34,7 +34,7 @@ vi.mock('../src/utils/gameRoles', () => ({ getGameRoles: vi.fn(() => []) }));
 vi.mock('../src/utils/requestPin', () => ({ updateRequestPin: vi.fn() }));
 vi.mock('../src/utils/pins', () => ({ upsertLibraryPin: vi.fn() }));
 
-import { execute } from '../src/commands/library';
+import { execute, handleLibraryMineNav } from '../src/commands/library';
 import { addGame } from '../src/utils/libraryStorage';
 import { addLibraryLink, getEffectiveOwnerIds } from '../src/utils/libraryLinkStorage';
 
@@ -166,9 +166,36 @@ describe('/library mine shows linked delegate\'s games', () => {
     await execute(interaction);
 
     const call = interaction.reply.mock.calls[0][0];
-    const description = call.embeds[0].data.description as string;
-    expect(description).toContain('Catan');
-    expect(description).toContain('Wingspan');
-    expect(description).toContain('shared from <@alice>');
+    const body = call.embeds[0].data.fields[0].value as string;
+    expect(body).toContain('Catan');
+    expect(body).toContain('Wingspan');
+    expect(body).toContain('shared from <@alice>');
+  });
+
+  it('paginates instead of overflowing the embed when a user owns a very large number of games', async () => {
+    // Regression: a single unpaginated embed description hit Discord's
+    // 4096-char limit and threw for a user linked to a large library.
+    for (let i = 0; i < 300; i++) {
+      await addGame('g1', 'bob', `Game With A Reasonably Long Title Number ${i}`);
+    }
+
+    const interaction = makeMineInteraction('g1', 'bob');
+    await execute(interaction);
+
+    const call = interaction.reply.mock.calls[0][0];
+    expect(call.embeds[0].data.fields[0].value.length).toBeLessThanOrEqual(1024);
+    expect(call.components.length).toBeGreaterThan(0);
+    expect(call.embeds[0].data.footer.text).toMatch(/^Page 1 of \d+/);
+
+    const navInteraction = {
+      user: { id: 'bob' },
+      update: vi.fn(async () => {}),
+    } as any;
+    await handleLibraryMineNav(navInteraction, 'next');
+
+    const updateCall = navInteraction.update.mock.calls[0][0];
+    expect(updateCall.embeds[0].data.footer.text).toMatch(/^Page 2 of \d+/);
+    // Page 2 should differ from page 1 — confirms it actually advanced, not just re-rendered.
+    expect(updateCall.embeds[0].data.fields[0].value).not.toBe(call.embeds[0].data.fields[0].value);
   });
 });
