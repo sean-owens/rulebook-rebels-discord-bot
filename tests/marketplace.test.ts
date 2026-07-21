@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { ChannelType } from 'discord.js';
 import {
   handleDenyBid,
   handleCounterButton,
@@ -11,6 +12,15 @@ import {
   handleBuyNowButton,
   handleBuyNowConfirm,
   handleBuyNowCancel,
+  updateMarketplaceHubThread,
+  handleHubMarketplaceSellButton,
+  handleHubMarketplaceSellModal,
+  handleHubMarketplaceTradeButton,
+  handleHubMarketplaceTradeModal,
+  handleHubMarketplaceConditionSelect,
+  handleHubMarketplaceOffersYes,
+  handleHubMarketplaceBrowseButton,
+  handleHubMarketplaceMyButton,
 } from '../src/commands/marketplace';
 import {
   createListing,
@@ -19,7 +29,7 @@ import {
   getListingsForGuild,
   closeListing,
 } from '../src/utils/marketplaceStorage';
-import { updateGuildConfig } from '../src/utils/config';
+import { updateGuildConfig, getGuildConfig } from '../src/utils/config';
 
 const BASE_LISTING = {
   guildId: 'guild-1',
@@ -430,5 +440,261 @@ describe('Buy It Now (firm listings only)', () => {
     expect(interaction.update).toHaveBeenCalledWith({ content: 'Purchase cancelled.', components: [] });
     const unchanged = await getListing('guild-1', listing.id);
     expect(unchanged!.status).toBe('active');
+  });
+});
+
+describe('marketplace "Quick Actions" hub', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-hub-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeForumChannelClient() {
+    let nextThreadId = 1;
+    const threads = new Map<string, any>();
+    const makeThread = () => {
+      const id = `thread-${nextThreadId++}`;
+      const starterMsg = { edit: vi.fn(async () => {}) };
+      const thread: any = {
+        id,
+        pin: vi.fn(async () => {
+          thread._pinned = true;
+        }),
+        flags: { has: () => !!thread._pinned },
+        fetchStarterMessage: vi.fn(async () => starterMsg),
+        _pinned: false,
+        _starterMsg: starterMsg,
+      };
+      threads.set(id, thread);
+      return thread;
+    };
+    const forumChannel = {
+      type: ChannelType.GuildForum,
+      threads: {
+        create: vi.fn(async () => makeThread()),
+        fetch: vi.fn(async (id: string) => threads.get(id)),
+      },
+    };
+    const client = { channels: { fetch: vi.fn(async () => forumChannel) } };
+    return { client, forumChannel, threads };
+  }
+
+  describe('updateMarketplaceHubThread', () => {
+    it('does nothing when no marketplace channel is configured', async () => {
+      const { client, forumChannel } = makeForumChannelClient();
+      await updateMarketplaceHubThread(client as any, 'guild-1');
+      expect(forumChannel.threads.create).not.toHaveBeenCalled();
+    });
+
+    it('creates and pins a new hub thread, storing its id on the guild config', async () => {
+      await updateGuildConfig('guild-1', { marketplaceChannelId: 'forum-1' });
+      const { client, forumChannel } = makeForumChannelClient();
+
+      await updateMarketplaceHubThread(client as any, 'guild-1');
+
+      expect(forumChannel.threads.create).toHaveBeenCalledWith(
+        expect.objectContaining({ name: '🎯 Quick Actions' }),
+      );
+      const config = await getGuildConfig('guild-1');
+      expect(config.marketplaceHubThreadId).toBe('thread-1');
+    });
+
+    it('edits the existing thread on a subsequent call instead of creating a new one', async () => {
+      await updateGuildConfig('guild-1', { marketplaceChannelId: 'forum-1' });
+      const { client, forumChannel, threads } = makeForumChannelClient();
+
+      await updateMarketplaceHubThread(client as any, 'guild-1');
+      await updateMarketplaceHubThread(client as any, 'guild-1');
+
+      expect(forumChannel.threads.create).toHaveBeenCalledTimes(1);
+      const thread = threads.get('thread-1');
+      expect(thread._starterMsg.edit).toHaveBeenCalledTimes(1);
+    });
+
+    it('recreates the thread if the previously stored one no longer exists', async () => {
+      await updateGuildConfig('guild-1', { marketplaceChannelId: 'forum-1', marketplaceHubThreadId: 'stale-thread' });
+      const { client, forumChannel } = makeForumChannelClient();
+
+      await updateMarketplaceHubThread(client as any, 'guild-1');
+
+      expect(forumChannel.threads.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('does nothing when the configured channel is not a forum channel', async () => {
+      await updateGuildConfig('guild-1', { marketplaceChannelId: 'not-a-forum' });
+      const client = { channels: { fetch: vi.fn(async () => ({ type: ChannelType.GuildText })) } };
+
+      await updateMarketplaceHubThread(client as any, 'guild-1');
+
+      const config = await getGuildConfig('guild-1');
+      expect(config.marketplaceHubThreadId).toBeUndefined();
+    });
+  });
+
+  function makeButtonInteraction(userId: string, client: any) {
+    return {
+      guildId: 'guild-1',
+      user: { id: userId, username: `user-${userId}` },
+      member: null,
+      client,
+      isChatInputCommand: () => false,
+      reply: vi.fn(async () => {}),
+      deferReply: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
+      update: vi.fn(async () => {}),
+      deferUpdate: vi.fn(async () => {}),
+      showModal: vi.fn(async () => {}),
+    } as any;
+  }
+
+  function makeModalInteraction(userId: string, itemName: string, client: any) {
+    return {
+      guildId: 'guild-1',
+      user: { id: userId, username: `user-${userId}` },
+      member: null,
+      client,
+      fields: { getTextInputValue: (name: string) => (name === 'item' ? itemName : '') },
+      reply: vi.fn(async () => {}),
+      deferReply: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
+    } as any;
+  }
+
+  function makeSelectInteraction(userId: string, value: string, client: any) {
+    return {
+      guildId: 'guild-1',
+      user: { id: userId, username: `user-${userId}` },
+      member: null,
+      client,
+      values: [value],
+      update: vi.fn(async () => {}),
+      deferUpdate: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
+    } as any;
+  }
+
+  describe('Sell wizard', () => {
+    it('shows a modal asking for the item name when the button is tapped', async () => {
+      const interaction = makeButtonInteraction('u1', {});
+      await handleHubMarketplaceSellButton(interaction);
+
+      expect(interaction.showModal).toHaveBeenCalledTimes(1);
+      const modal = interaction.showModal.mock.calls[0][0].toJSON();
+      expect(modal.custom_id).toBe('hub_mp_sell_modal');
+    });
+
+    it('submitting the modal shows a condition select', async () => {
+      const interaction = makeModalInteraction('u1', 'Some Totally Made Up Game', {});
+      await handleHubMarketplaceSellModal(interaction);
+
+      const replyCall = interaction.reply.mock.calls[0][0];
+      expect(replyCall.content).toContain('condition');
+      expect(replyCall.components[0].components[0].data.custom_id).toBe('hub_mp_condition_select');
+    });
+
+    it('selecting a condition shows offers-allowed buttons for a sell listing', async () => {
+      await handleHubMarketplaceSellModal(makeModalInteraction('u2', 'Some Totally Made Up Game', {}));
+      const interaction = makeSelectInteraction('u2', 'good', {});
+
+      await handleHubMarketplaceConditionSelect(interaction);
+
+      const updateCall = interaction.update.mock.calls[0][0];
+      expect(updateCall.content).toContain('offers');
+      const customIds = updateCall.components[0].components.map((c: any) => c.data.custom_id);
+      expect(customIds).toEqual(['hub_mp_offers_yes', 'hub_mp_offers_no']);
+    });
+
+    it('tapping an offers-allowed button reaches the same no-BGG-match prompt the slash command would', async () => {
+      await handleHubMarketplaceSellModal(makeModalInteraction('u3', 'Some Totally Made Up Game', {}));
+      await handleHubMarketplaceConditionSelect(makeSelectInteraction('u3', 'good', {}));
+      const interaction = makeButtonInteraction('u3', {});
+
+      await handleHubMarketplaceOffersYes(interaction);
+
+      expect(interaction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining("wasn't found on BoardGameGeek") }),
+      );
+    });
+
+    it('shows an expired-session message at the condition-select step with no prior modal submission', async () => {
+      const interaction = makeSelectInteraction('never-started', 'good', {});
+      await handleHubMarketplaceConditionSelect(interaction);
+
+      expect(interaction.update).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('expired') }),
+      );
+    });
+
+    it('shows an expired-session message at the offers-allowed step with no prior condition selection', async () => {
+      const interaction = makeButtonInteraction('never-started', {});
+      await handleHubMarketplaceOffersYes(interaction);
+
+      expect(interaction.update).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('expired') }),
+      );
+    });
+  });
+
+  describe('Trade wizard', () => {
+    it('shows a modal asking for the item name when the button is tapped', async () => {
+      const interaction = makeButtonInteraction('u4', {});
+      await handleHubMarketplaceTradeButton(interaction);
+
+      expect(interaction.showModal).toHaveBeenCalledTimes(1);
+      const modal = interaction.showModal.mock.calls[0][0].toJSON();
+      expect(modal.custom_id).toBe('hub_mp_trade_modal');
+    });
+
+    it('selecting a condition skips straight to the listing flow — no offers-allowed step for trades', async () => {
+      await handleHubMarketplaceTradeModal(makeModalInteraction('u5', 'Some Totally Made Up Game', {}));
+      const interaction = makeSelectInteraction('u5', 'good', {});
+
+      await handleHubMarketplaceConditionSelect(interaction);
+
+      expect(interaction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining("wasn't found on BoardGameGeek") }),
+      );
+    });
+  });
+
+  describe('Browse / My Listings buttons', () => {
+    it('Browse Listings shows all listings with no type filter applied', async () => {
+      await createListing('guild-1', { ...BASE_LISTING, itemName: 'Catan' });
+      const interaction = makeButtonInteraction('viewer-1', {});
+
+      await handleHubMarketplaceBrowseButton(interaction);
+
+      expect(interaction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('Catan') }),
+      );
+    });
+
+    it('My Listings shows the tapping user\'s own listings', async () => {
+      await createListing('guild-1', { ...BASE_LISTING, userId: 'owner-1', itemName: 'Azul' });
+      const interaction = makeButtonInteraction('owner-1', {});
+
+      await handleHubMarketplaceMyButton(interaction);
+
+      expect(interaction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('Azul') }),
+      );
+    });
+
+    it('My Listings tells a user with no listings to use /marketplace post', async () => {
+      const interaction = makeButtonInteraction('nobody-1', {});
+      await handleHubMarketplaceMyButton(interaction);
+
+      expect(interaction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining("don't have any listings") }),
+      );
+    });
   });
 });

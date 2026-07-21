@@ -3,7 +3,21 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { PermissionFlagsBits } from 'discord.js';
-import { execute, handleRoomConfig, checkExpiredRooms } from '../src/commands/room';
+import {
+  execute,
+  handleRoomConfig,
+  checkExpiredRooms,
+  updateRoomHubPin,
+  handleHubRoomInviteButton,
+  handleHubRoomInviteSelect,
+  handleHubRoomKickButton,
+  handleHubRoomKickSelect,
+  handleHubRoomPersistButton,
+  handleHubRoomPersistModal,
+  handleHubRoomCloseButton,
+  handleHubRoomCloseConfirm,
+  handleHubRoomCloseCancel,
+} from '../src/commands/room';
 import { loadRooms, upsertRoom, PrivateRoom } from '../src/utils/roomStorage';
 
 function makeRolesCollection(roles: Array<{ id: string; permissions: { has: (p: bigint) => boolean } }>): any {
@@ -1006,5 +1020,368 @@ describe('handleRoomConfig', () => {
     expect(interaction.reply).toHaveBeenCalledWith(
       expect.objectContaining({ content: expect.stringContaining('Secret Rooms') }),
     );
+  });
+});
+
+describe('room "Quick Actions" hub', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-room-hub-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    warnSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeHubRoom(overrides: Partial<PrivateRoom> = {}): PrivateRoom {
+    return {
+      id: overrides.id ?? 'room1',
+      guildId: 'guild-1',
+      channelId: overrides.channelId ?? 'room-channel-1',
+      name: 'Test Room',
+      createdBy: overrides.createdBy ?? 'creator-1',
+      invitedUserIds: overrides.invitedUserIds ?? ['member-1'],
+      createdAt: new Date().toISOString(),
+      expiresAt: overrides.expiresAt,
+      persistent: overrides.persistent,
+      hubPinMessageId: overrides.hubPinMessageId,
+    };
+  }
+
+  function makeChannelClient(sendMock?: ReturnType<typeof vi.fn>) {
+    let nextId = 1;
+    const sentMessages = new Map<string, { edit: ReturnType<typeof vi.fn>; pinned: boolean; pin: ReturnType<typeof vi.fn> }>();
+    const send =
+      sendMock ??
+      vi.fn(async () => {
+        const id = `msg-${nextId++}`;
+        const msg = {
+          id,
+          pinned: false,
+          pin: vi.fn(async () => {
+            msg.pinned = true;
+          }),
+          edit: vi.fn(async () => {}),
+        };
+        sentMessages.set(id, msg as any);
+        return msg;
+      });
+    const channel = {
+      send,
+      setTopic: vi.fn(async () => {}),
+      setName: vi.fn(async () => {}),
+      permissionOverwrites: { create: vi.fn(async () => {}), delete: vi.fn(async () => {}) },
+      messages: { fetch: vi.fn(async (id: string) => sentMessages.get(id)) },
+    };
+    return {
+      channels: { fetch: vi.fn(async () => channel) },
+      _channel: channel,
+      _sentMessages: sentMessages,
+    };
+  }
+
+  describe('updateRoomHubPin', () => {
+    it('sends and pins the hub message on first call, storing the message id', async () => {
+      await upsertRoom(makeHubRoom());
+      const client = makeChannelClient();
+
+      await updateRoomHubPin(client as any, 'room1');
+
+      expect(client._channel.send).toHaveBeenCalledTimes(1);
+      const sendCall = client._channel.send.mock.calls[0][0];
+      expect(sendCall.embeds[0].data.title).toBe('🎮 Quick Actions');
+      const rooms = await loadRooms();
+      expect(rooms[0].hubPinMessageId).toBe('msg-1');
+    });
+
+    it('does nothing when the room no longer exists', async () => {
+      const client = makeChannelClient();
+      await updateRoomHubPin(client as any, 'no-such-room');
+      expect(client._channel.send).not.toHaveBeenCalled();
+    });
+
+    it('edits the existing hub message on a subsequent call instead of posting a new one', async () => {
+      await upsertRoom(makeHubRoom());
+      const client = makeChannelClient();
+
+      await updateRoomHubPin(client as any, 'room1');
+      await updateRoomHubPin(client as any, 'room1');
+
+      expect(client._channel.send).toHaveBeenCalledTimes(1);
+      const msg = await client._channel.messages.fetch('msg-1');
+      expect(msg.edit).toHaveBeenCalledTimes(1);
+    });
+
+    it('logs a warning but still records the message id when pinning fails', async () => {
+      await upsertRoom(makeHubRoom());
+      const send = vi.fn(async () => ({
+        id: 'msg-1',
+        pinned: false,
+        pin: vi.fn(async () => {
+          throw new Error('Missing Permissions');
+        }),
+        edit: vi.fn(async () => {}),
+      }));
+      const client = makeChannelClient(send);
+
+      await updateRoomHubPin(client as any, 'room1');
+
+      expect((await loadRooms())[0].hubPinMessageId).toBe('msg-1');
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Could not pin hub message'), expect.any(Error));
+    });
+  });
+
+  describe('handleHubRoomInviteButton / handleHubRoomInviteSelect', () => {
+    function makeButtonInteraction(userId: string, client: any) {
+      return {
+        channelId: 'room-channel-1',
+        user: { id: userId },
+        client,
+        memberPermissions: { has: () => false },
+        reply: vi.fn(async () => {}),
+      } as any;
+    }
+
+    function makeSelectInteraction(userId: string, values: string[], client: any) {
+      const users = new Map(values.map((id) => [id, { id, username: `user-${id}` }]));
+      return {
+        channelId: 'room-channel-1',
+        user: { id: userId },
+        client,
+        guild: { members: { fetch: vi.fn(async (id: string) => ({ id })) } },
+        memberPermissions: { has: () => false },
+        values,
+        users,
+        update: vi.fn(async () => {}),
+        deferUpdate: vi.fn(async () => {}),
+        editReply: vi.fn(async () => {}),
+      } as any;
+    }
+
+    it('rejects a non-creator, non-privileged user with a permission error', async () => {
+      await upsertRoom(makeHubRoom());
+      const client = makeChannelClient();
+      const interaction = makeButtonInteraction('random-user', client);
+
+      await handleHubRoomInviteButton(interaction);
+
+      expect(interaction.reply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('can invite people') }),
+      );
+    });
+
+    it("shows a user-select menu when the room's creator taps Invite", async () => {
+      await upsertRoom(makeHubRoom());
+      const client = makeChannelClient();
+      const interaction = makeButtonInteraction('creator-1', client);
+
+      await handleHubRoomInviteButton(interaction);
+
+      const replyCall = interaction.reply.mock.calls[0][0];
+      expect(replyCall.components[0].components[0].data.custom_id).toBe('hub_room_invite_select');
+    });
+
+    it('grants channel access and records the new invitee', async () => {
+      await upsertRoom(makeHubRoom());
+      const client = makeChannelClient();
+      const interaction = makeSelectInteraction('creator-1', ['new-member'], client);
+
+      await handleHubRoomInviteSelect(interaction);
+
+      expect(client._channel.permissionOverwrites.create).toHaveBeenCalledWith(
+        'new-member',
+        expect.objectContaining({ ViewChannel: true }),
+      );
+      const rooms = await loadRooms();
+      expect(rooms[0].invitedUserIds).toContain('new-member');
+    });
+  });
+
+  describe('handleHubRoomKickButton / handleHubRoomKickSelect', () => {
+    function makeButtonInteraction(userId: string, client: any) {
+      return {
+        channelId: 'room-channel-1',
+        user: { id: userId },
+        client,
+        memberPermissions: { has: () => false },
+        reply: vi.fn(async () => {}),
+      } as any;
+    }
+
+    function makeSelectInteraction(userId: string, targetId: string, client: any) {
+      return {
+        channelId: 'room-channel-1',
+        user: { id: userId },
+        client,
+        memberPermissions: { has: () => false },
+        values: [targetId],
+        users: new Map([[targetId, { id: targetId, username: `user-${targetId}` }]]),
+        update: vi.fn(async () => {}),
+        deferUpdate: vi.fn(async () => {}),
+        editReply: vi.fn(async () => {}),
+      } as any;
+    }
+
+    it('refuses to remove the room creator', async () => {
+      await upsertRoom(makeHubRoom({ invitedUserIds: ['creator-1', 'member-1'] }));
+      const client = makeChannelClient();
+      const interaction = makeSelectInteraction('creator-1', 'creator-1', client);
+
+      await handleHubRoomKickSelect(interaction);
+
+      expect(interaction.update).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining("can't remove the room's creator") }),
+      );
+    });
+
+    it('removes the permission overwrite and updates invitedUserIds for a valid target', async () => {
+      await upsertRoom(makeHubRoom({ invitedUserIds: ['member-1'] }));
+      const client = makeChannelClient();
+      const interaction = makeSelectInteraction('creator-1', 'member-1', client);
+
+      await handleHubRoomKickSelect(interaction);
+
+      expect(client._channel.permissionOverwrites.delete).toHaveBeenCalledWith('member-1');
+      const rooms = await loadRooms();
+      expect(rooms[0].invitedUserIds).not.toContain('member-1');
+    });
+
+    it('tells the button-tapper there is nobody to remove when invitedUserIds is empty', async () => {
+      await upsertRoom(makeHubRoom({ invitedUserIds: [] }));
+      const client = makeChannelClient();
+      const interaction = makeButtonInteraction('creator-1', client);
+
+      await handleHubRoomKickButton(interaction);
+
+      expect(interaction.reply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('Nobody has been individually invited') }),
+      );
+    });
+  });
+
+  describe('handleHubRoomPersistButton / handleHubRoomPersistModal', () => {
+    function makeButtonInteraction(userId: string, client: any) {
+      return {
+        channelId: 'room-channel-1',
+        user: { id: userId },
+        client,
+        memberPermissions: { has: () => false },
+        reply: vi.fn(async () => {}),
+        showModal: vi.fn(async () => {}),
+      } as any;
+    }
+
+    function makeModalInteraction(userId: string, date: string, client: any) {
+      return {
+        channelId: 'room-channel-1',
+        user: { id: userId },
+        client,
+        memberPermissions: { has: () => false },
+        fields: { getTextInputValue: (name: string) => (name === 'date' ? date : '') },
+        reply: vi.fn(async () => {}),
+      } as any;
+    }
+
+    it('immediately enables persistence with no modal when the room is not currently persistent', async () => {
+      await upsertRoom(makeHubRoom({ persistent: false }));
+      const client = makeChannelClient();
+      const interaction = makeButtonInteraction('creator-1', client);
+
+      await handleHubRoomPersistButton(interaction);
+
+      expect(interaction.showModal).not.toHaveBeenCalled();
+      expect(interaction.reply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('no longer auto-expire') }),
+      );
+      expect((await loadRooms())[0].persistent).toBe(true);
+    });
+
+    it('shows a date modal when the room is currently persistent', async () => {
+      await upsertRoom(makeHubRoom({ persistent: true }));
+      const client = makeChannelClient();
+      const interaction = makeButtonInteraction('creator-1', client);
+
+      await handleHubRoomPersistButton(interaction);
+
+      expect(interaction.showModal).toHaveBeenCalledTimes(1);
+      const modal = interaction.showModal.mock.calls[0][0].toJSON();
+      expect(modal.custom_id).toBe('hub_room_persist_modal');
+    });
+
+    it('sets a new expiration date from the modal and turns off persistence', async () => {
+      await upsertRoom(makeHubRoom({ persistent: true }));
+      const client = makeChannelClient();
+      const future = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString('en-US', {
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric',
+      });
+      const interaction = makeModalInteraction('creator-1', future, client);
+
+      await handleHubRoomPersistModal(interaction);
+
+      const room = (await loadRooms())[0];
+      expect(room.persistent).toBe(false);
+      expect(room.expiresAt).toBeDefined();
+    });
+  });
+
+  describe('handleHubRoomCloseButton / Confirm / Cancel', () => {
+    function makeButtonInteraction(userId: string, client: any) {
+      return {
+        channelId: 'room-channel-1',
+        user: { id: userId },
+        client,
+        memberPermissions: { has: () => false },
+        reply: vi.fn(async () => {}),
+        update: vi.fn(async () => {}),
+      } as any;
+    }
+
+    it('shows a confirm/cancel prompt rather than closing immediately', async () => {
+      await upsertRoom(makeHubRoom());
+      const client = makeChannelClient();
+      const interaction = makeButtonInteraction('creator-1', client);
+
+      await handleHubRoomCloseButton(interaction);
+
+      expect(interaction.reply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('cannot be undone') }),
+      );
+      const rooms = await loadRooms();
+      expect(rooms).toHaveLength(1); // not yet closed
+    });
+
+    it('closes and deletes the room channel on confirm', async () => {
+      await upsertRoom(makeHubRoom());
+      const deleteMock = vi.fn(async () => {});
+      const client = { channels: { fetch: vi.fn(async () => ({ delete: deleteMock })) } };
+      const interaction = makeButtonInteraction('creator-1', client);
+
+      await handleHubRoomCloseConfirm(interaction);
+
+      expect(deleteMock).toHaveBeenCalled();
+      expect(await loadRooms()).toHaveLength(0);
+    });
+
+    it('leaves the room open on cancel', async () => {
+      await upsertRoom(makeHubRoom());
+      const client = makeChannelClient();
+      const interaction = makeButtonInteraction('creator-1', client);
+
+      await handleHubRoomCloseCancel(interaction);
+
+      expect(interaction.update).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('stays open') }),
+      );
+      expect(await loadRooms()).toHaveLength(1);
+    });
   });
 });

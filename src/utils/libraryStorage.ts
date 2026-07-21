@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import { readJson, writeJson } from './db';
 import { GENRE_TAG_DEFINITIONS } from './tagDefinitions';
 import { matchesFuzzy } from './bggCatalog';
-import { getEffectiveOwnerIds } from './libraryLinkStorage';
+import { getEffectiveOwnerIds, getLibraryLinksForGuild } from './libraryLinkStorage';
 
 const LIBRARY_FILE = 'library.json';
 const REQUESTS_FILE = 'library_requests.json';
@@ -17,6 +17,18 @@ export interface LibraryEntry {
   addedAt: string;
 }
 
+export interface RequestConfirmation {
+  ownerId: string;
+  confirmedAt: string;
+}
+
+export interface RequestAsk {
+  ownerId: string;
+  dmChannelId?: string;
+  dmMessageId?: string;
+  askedAt: string;
+}
+
 export interface GameRequest {
   id: string;
   eventId: string;
@@ -24,8 +36,14 @@ export interface GameRequest {
   requestedBy: string;
   createdAt: string;
   copiesNeeded?: number;
-  confirmedBy?: string;
+  // Explicit copy-select target (still only ever set once, at creation) —
+  // restricts which owner's /library bring view shows this request. Distinct
+  // from confirmations/pendingAsks below, which track the multi-copy
+  // ask/confirm/decline cascade and can span several owners at once.
   preferredOwnerId?: string;
+  confirmations: RequestConfirmation[];
+  declinedOwnerIds: string[];
+  pendingAsks: RequestAsk[];
 }
 
 export async function loadLibrary(): Promise<LibraryEntry[]> {
@@ -166,7 +184,7 @@ export async function addRequest(
   gameName: string,
   requestedBy: string,
   preferredOwnerId?: string,
-): Promise<'added' | 'duplicate'> {
+): Promise<GameRequest | 'duplicate'> {
   const requests = await loadRequests();
   const exists = requests.some(
     (r) => r.eventId === eventId && r.gameName.toLowerCase() === gameName.toLowerCase(),
@@ -178,15 +196,80 @@ export async function addRequest(
     gameName,
     requestedBy,
     createdAt: new Date().toISOString(),
+    confirmations: [],
+    declinedOwnerIds: [],
+    pendingAsks: [],
   };
   if (preferredOwnerId) req.preferredOwnerId = preferredOwnerId;
   requests.push(req);
   await saveRequests(requests);
-  return 'added';
+  return req;
 }
 
 export async function getRequestsForEvent(eventId: string): Promise<GameRequest[]> {
   return (await loadRequests()).filter((r) => r.eventId === eventId);
+}
+
+export async function getRequestById(id: string): Promise<GameRequest | undefined> {
+  return (await loadRequests()).find((r) => r.id === id);
+}
+
+// Records that a "please bring this" DM was sent to ownerId, and where —
+// lets a later action (drop, reminder, decline cascade) find and edit that
+// DM. Upsert semantics: re-asking the same owner (e.g. a lock-time reminder)
+// updates their existing pending ask's DM location rather than duplicating it.
+export async function addPendingAsk(
+  requestId: string,
+  ownerId: string,
+  dmChannelId: string,
+  dmMessageId: string,
+): Promise<void> {
+  const requests = await loadRequests();
+  const idx = requests.findIndex((r) => r.id === requestId);
+  if (idx === -1) return;
+  const req = requests[idx];
+  const askIdx = req.pendingAsks.findIndex((a) => a.ownerId === ownerId);
+  const ask: RequestAsk = { ownerId, dmChannelId, dmMessageId, askedAt: new Date().toISOString() };
+  if (askIdx >= 0) req.pendingAsks[askIdx] = ask;
+  else req.pendingAsks.push(ask);
+  await saveRequests(requests);
+}
+
+// Removes ownerId's pending ask (e.g. once retracted as no longer needed, or
+// superseded by a decline/confirmation) and returns it so the caller can
+// invalidate its DM. Does not add ownerId to declinedOwnerIds — that's a
+// distinct, explicit action (see declineBring).
+export async function removePendingAsk(
+  requestId: string,
+  ownerId: string,
+): Promise<RequestAsk | undefined> {
+  const requests = await loadRequests();
+  const idx = requests.findIndex((r) => r.id === requestId);
+  if (idx === -1) return undefined;
+  const req = requests[idx];
+  const askIdx = req.pendingAsks.findIndex((a) => a.ownerId === ownerId);
+  if (askIdx === -1) return undefined;
+  const [removed] = req.pendingAsks.splice(askIdx, 1);
+  await saveRequests(requests);
+  return removed;
+}
+
+// An owner explicitly declines a pending ask — moves them from pendingAsks to
+// declinedOwnerIds so they're never re-asked for this same request.
+export async function declineBring(
+  requestId: string,
+  ownerId: string,
+): Promise<'declined' | 'not_requested' | 'not_asked'> {
+  const requests = await loadRequests();
+  const idx = requests.findIndex((r) => r.id === requestId);
+  if (idx === -1) return 'not_requested';
+  const req = requests[idx];
+  const askIdx = req.pendingAsks.findIndex((a) => a.ownerId === ownerId);
+  if (askIdx === -1) return 'not_asked';
+  req.pendingAsks.splice(askIdx, 1);
+  if (!req.declinedOwnerIds.includes(ownerId)) req.declinedOwnerIds.push(ownerId);
+  await saveRequests(requests);
+  return 'declined';
 }
 
 export async function removeRequests(requestIds: string[]): Promise<number> {
@@ -194,6 +277,26 @@ export async function removeRequests(requestIds: string[]): Promise<number> {
   const remaining = requests.filter((r) => !requestIds.includes(r.id));
   await saveRequests(remaining);
   return requests.length - remaining.length;
+}
+
+// Called at lineup lock (see lockAndScheduleEvent in scheduler.ts) to drop
+// "games to bring" requests for suggestions nobody signed up to play.
+// Requests with no matching suggestion at all are left untouched — /library
+// request is valid independent of the suggested-games/signup system (e.g.
+// bringing a game just to teach or show off, never suggested for a round).
+// Returns the removed records (not just a count) so the caller can also
+// invalidate any pending "please bring this" DM tied to them.
+export async function removeZeroSignupRequests(
+  eventId: string,
+  zeroSignupTitles: string[],
+): Promise<GameRequest[]> {
+  if (zeroSignupTitles.length === 0) return [];
+  const lowerTitles = new Set(zeroSignupTitles.map((t) => t.toLowerCase()));
+  const requests = await getRequestsForEvent(eventId);
+  const toRemove = requests.filter((r) => lowerTitles.has(r.gameName.toLowerCase()));
+  if (toRemove.length === 0) return [];
+  await removeRequests(toRemove.map((r) => r.id));
+  return toRemove;
 }
 
 export async function removeAllRequestsForEvent(
@@ -210,32 +313,40 @@ export async function removeAllRequestsForEvent(
   return requests.length - remaining.length;
 }
 
+// Returns the updated request (or undefined if no matching request exists)
+// so the caller can reconcile pending asks against the new copy count —
+// see reconcileRequestCopies in libraryBringDm.ts.
 export async function updateRequestCopies(
   eventId: string,
   gameName: string,
   copies: number,
-): Promise<void> {
+): Promise<GameRequest | undefined> {
   const requests = await loadRequests();
   const idx = requests.findIndex(
     (r) => r.eventId === eventId && r.gameName.toLowerCase() === gameName.toLowerCase(),
   );
-  if (idx >= 0) {
-    requests[idx].copiesNeeded = copies;
-    await saveRequests(requests);
-  }
+  if (idx === -1) return undefined;
+  requests[idx].copiesNeeded = copies;
+  await saveRequests(requests);
+  return requests[idx];
 }
+
+export type ConfirmBringResult =
+  | { status: 'confirmed'; invalidatedAsk?: RequestAsk }
+  | { status: 'not_requested' }
+  | { status: 'not_owner' };
 
 export async function confirmBring(
   guildId: string,
   eventId: string,
   gameName: string,
   userId: string,
-): Promise<'confirmed' | 'not_requested' | 'not_owner'> {
+): Promise<ConfirmBringResult> {
   const requests = await loadRequests();
   const idx = requests.findIndex(
     (r) => r.eventId === eventId && r.gameName.toLowerCase() === gameName.toLowerCase(),
   );
-  if (idx === -1) return 'not_requested';
+  if (idx === -1) return { status: 'not_requested' };
 
   const effectiveOwnerIds = await getEffectiveOwnerIds(guildId, userId);
   const owns = (await loadLibrary()).some(
@@ -244,11 +355,64 @@ export async function confirmBring(
       effectiveOwnerIds.includes(e.userId) &&
       e.gameName.toLowerCase() === gameName.toLowerCase(),
   );
-  if (!owns) return 'not_owner';
+  if (!owns) return { status: 'not_owner' };
 
-  requests[idx].confirmedBy = userId;
+  const req = requests[idx];
+  const askIdx = req.pendingAsks.findIndex((a) => a.ownerId === userId);
+  const invalidatedAsk = askIdx >= 0 ? req.pendingAsks.splice(askIdx, 1)[0] : undefined;
+  if (!req.confirmations.some((c) => c.ownerId === userId)) {
+    req.confirmations.push({ ownerId: userId, confirmedAt: new Date().toISOString() });
+  }
   await saveRequests(requests);
-  return 'confirmed';
+  return { status: 'confirmed', invalidatedAsk };
+}
+
+// Attending owners of gameName who haven't already been asked, confirmed, or
+// declined for this request — the pool reconcileRequestCopies/pickPreferredOwner
+// draw from when a new copy needs to be requested.
+export async function resolveAttendingOwnerIds(
+  guildId: string,
+  ownerIds: string[],
+  rsvps: { yes: string[]; maybe: string[] },
+): Promise<string[]> {
+  const links = await getLibraryLinksForGuild(guildId);
+  const isAttending = (id: string) => rsvps.yes.includes(id) || rsvps.maybe.includes(id);
+  return ownerIds.filter((ownerId) => {
+    const delegateIds = links.filter((l) => l.ownerId === ownerId).map((l) => l.delegateId);
+    return isAttending(ownerId) || delegateIds.some(isAttending);
+  });
+}
+
+// Picks whichever eligible owner currently has the fewest confirmed brings
+// for this event — load-balances repeat asks across a group rather than
+// always landing on the same generous owner. excludeIds filters out anyone
+// already asked, confirmed, or declined for the request being resolved.
+// Returns undefined if every eligible owner has already been tried.
+export async function pickPreferredOwner(
+  eventId: string,
+  attendingOwnerIds: string[],
+  excludeIds: string[] = [],
+): Promise<string | undefined> {
+  const eligible = attendingOwnerIds.filter((id) => !excludeIds.includes(id));
+  if (eligible.length === 0) return undefined;
+  const requests = await getRequestsForEvent(eventId);
+  const bringCounts = new Map<string, number>(eligible.map((id) => [id, 0]));
+  for (const req of requests) {
+    for (const c of req.confirmations) {
+      if (bringCounts.has(c.ownerId)) {
+        bringCounts.set(c.ownerId, (bringCounts.get(c.ownerId) ?? 0) + 1);
+      }
+    }
+  }
+  let minCount = Infinity,
+    chosen = eligible[0];
+  for (const [id, count] of bringCounts) {
+    if (count < minCount) {
+      minCount = count;
+      chosen = id;
+    }
+  }
+  return chosen;
 }
 
 export type GameTag = (typeof GENRE_TAG_DEFINITIONS)[number]['name'];
@@ -283,6 +447,28 @@ async function saveGameInfos(infos: GameInfo[]): Promise<void> {
 
 export async function getGameInfo(gameName: string): Promise<GameInfo | undefined> {
   return (await loadGameInfos()).find((i) => i.gameName.toLowerCase() === gameName.toLowerCase());
+}
+
+// Which of userId's (or their linked delegates') owned expansions apply to
+// gameName — used to nudge "bring the expansions too" alongside a base-game
+// request/confirmation. Returns a display-ready parenthetical, or '' if none.
+export async function buildExpansionNote(
+  guildId: string,
+  userId: string,
+  gameName: string,
+): Promise<string> {
+  const info = await getGameInfo(gameName);
+  if (!info?.bggExpansions?.length) return '';
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const effectiveOwnerIds = await getEffectiveOwnerIds(guildId, userId);
+  const userExpNames = new Set(
+    (await loadLibraryForGuild(guildId))
+      .filter((e) => effectiveOwnerIds.includes(e.userId) && e.isExpansion)
+      .map((e) => norm(e.gameName)),
+  );
+  const ownedExps = info.bggExpansions.filter((name) => userExpNames.has(norm(name)));
+  if (ownedExps.length === 0) return '';
+  return ` (with ${ownedExps.join(', ')})`;
 }
 
 export async function upsertGameInfo(info: GameInfo): Promise<void> {

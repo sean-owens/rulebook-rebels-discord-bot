@@ -33,6 +33,11 @@ export interface GameNight {
   createdAt: string;
   requestPinMessageId?: string;
   gameListPinMessageId?: string;
+  // "Quick Actions" button hub (see src/utils/requestPin.ts's updateHubPin) —
+  // Suggest a Game / Request a Game to Bring / My Games to Bring buttons,
+  // posted once at event-channel creation for members who'd rather tap a
+  // button than type a slash command.
+  hubPinMessageId?: string;
   openChannel?: boolean;
   // Lineup lock + scheduler (see src/utils/scheduler.ts).
   suggestionsLocked?: boolean;

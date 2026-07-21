@@ -20,7 +20,7 @@ import { isValidTimeZone, zonedTimeToUtc } from '../utils/timezone';
 import { archiveEventChannel } from '../utils/archive';
 import { ensureGameNightTags, resolvedGameNightTag } from '../utils/gameNightTags';
 import { updateAnnouncementPin } from '../utils/pins';
-import { updateGameListPin, updateRequestPin } from '../utils/requestPin';
+import { updateGameListPin, updateRequestPin, updateHubPin } from '../utils/requestPin';
 import { findGamesByEvent, upsertGame, GameSuggestion } from '../utils/gameStorage';
 import { buildGameEmbed, buildGameButtons, buildBggAttachment } from '../utils/gameEmbeds';
 import { MAX_GREETERS } from '../utils/greeters';
@@ -319,6 +319,7 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
   if (gn.eventChannelId) {
     await updateGameListPin(interaction.client, gn.id).catch(() => null);
     await updateRequestPin(interaction.client, gn.id).catch(() => null);
+    await updateHubPin(interaction.client, gn.id).catch(() => null);
   }
 
   // Pin the new event (text channels only — forum threads don't use channel pins)

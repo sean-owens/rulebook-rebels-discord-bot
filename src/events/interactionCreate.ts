@@ -8,6 +8,12 @@ import {
 } from '../commands/admin';
 import { execute as executeHost } from '../commands/host';
 import {
+  handleHubGeneralRsvpButton,
+  handleHubGeneralBrowseButton,
+  handleHubGeneralMineButton,
+  handleHubGeneralRandomButton,
+} from '../utils/generalHub';
+import {
   execute as executeMyRoles,
   handleMyRolesTag,
   handleMyRolesDiff,
@@ -36,6 +42,11 @@ import {
   handleUnrequestSelect,
   handleUnrequestAll,
   handleLibraryListNav,
+  handleLibraryConfirmBring,
+  handleLibraryDeclineBring,
+  handleHubRequestButton,
+  handleHubRequestModal,
+  handleHubBringButton,
 } from '../commands/library';
 import { Complexity } from '../utils/libraryStorage';
 import { execute as executeBgg } from '../commands/bgg';
@@ -63,6 +74,15 @@ import {
   handleRefModal,
   handleExpansionSelect as handleMarketplaceExpansionSelect,
   handleSkipExpansions,
+  handleHubMarketplaceSellButton,
+  handleHubMarketplaceSellModal,
+  handleHubMarketplaceTradeButton,
+  handleHubMarketplaceTradeModal,
+  handleHubMarketplaceConditionSelect,
+  handleHubMarketplaceOffersYes,
+  handleHubMarketplaceOffersNo,
+  handleHubMarketplaceBrowseButton,
+  handleHubMarketplaceMyButton,
 } from '../commands/marketplace';
 import {
   execute as executeGame,
@@ -84,10 +104,23 @@ import {
   handleGameTagSelect,
   handleGameTagSkip,
   EVENT_SELECT_PREFIX,
+  handleHubSuggestButton,
+  handleHubSuggestModal,
 } from '../commands/game';
 import { findGameNight, upsertGameNight } from '../utils/storage';
 import { buildGameNightEmbed, buildGameNightButtons } from '../utils/embeds';
-import { execute as executeRoom } from '../commands/room';
+import {
+  execute as executeRoom,
+  handleHubRoomInviteButton,
+  handleHubRoomInviteSelect,
+  handleHubRoomKickButton,
+  handleHubRoomKickSelect,
+  handleHubRoomPersistButton,
+  handleHubRoomPersistModal,
+  handleHubRoomCloseButton,
+  handleHubRoomCloseConfirm,
+  handleHubRoomCloseCancel,
+} from '../commands/room';
 import { extractCommandUsage, recordCommandUsage } from '../utils/commandUsageStorage';
 
 export async function handleInteraction(interaction: Interaction): Promise<void> {
@@ -149,9 +182,19 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handleExpansionSelect(interaction, id.slice('game_exp_'.length));
       else if (id.startsWith('game_tags_'))
         await handleGameTagSelect(interaction, id.slice('game_tags_'.length));
+      else if (id === 'hub_mp_condition_select') await handleHubMarketplaceConditionSelect(interaction);
+    } else if (interaction.isUserSelectMenu()) {
+      const id = interaction.customId;
+      if (id === 'hub_room_invite_select') await handleHubRoomInviteSelect(interaction);
+      else if (id === 'hub_room_kick_select') await handleHubRoomKickSelect(interaction);
     } else if (interaction.isModalSubmit()) {
       if (interaction.customId === 'game_manual') await handleManualGameSubmit(interaction);
       else if (interaction.customId === 'library_edit_modal') await handleEditModal(interaction);
+      else if (interaction.customId === 'hub_suggest_modal') await handleHubSuggestModal(interaction);
+      else if (interaction.customId === 'hub_request_modal') await handleHubRequestModal(interaction);
+      else if (interaction.customId === 'hub_room_persist_modal') await handleHubRoomPersistModal(interaction);
+      else if (interaction.customId === 'hub_mp_sell_modal') await handleHubMarketplaceSellModal(interaction);
+      else if (interaction.customId === 'hub_mp_trade_modal') await handleHubMarketplaceTradeModal(interaction);
       else if (interaction.customId.startsWith('mp_bid_')) {
         await handleBidModal(interaction as unknown as ModalSubmitInteraction, interaction.customId.slice('mp_bid_'.length));
       } else if (interaction.customId.startsWith('mp_price_modal_')) {
@@ -207,6 +250,48 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handleTagsSkip(interaction);
       } else if (id.startsWith('library_unrequest_all_')) {
         await handleUnrequestAll(interaction, id.slice('library_unrequest_all_'.length));
+      } else if (id.startsWith('library_confirmbring_')) {
+        await handleLibraryConfirmBring(interaction, id.slice('library_confirmbring_'.length));
+      } else if (id.startsWith('library_declinebring_')) {
+        await handleLibraryDeclineBring(interaction, id.slice('library_declinebring_'.length));
+      } else if (id === 'hub_suggest') {
+        await handleHubSuggestButton(interaction);
+      } else if (id === 'hub_request') {
+        await handleHubRequestButton(interaction);
+      } else if (id === 'hub_bring') {
+        await handleHubBringButton(interaction);
+      } else if (id === 'hub_general_rsvp') {
+        await handleHubGeneralRsvpButton(interaction);
+      } else if (id === 'hub_general_browse') {
+        await handleHubGeneralBrowseButton(interaction);
+      } else if (id === 'hub_general_mine') {
+        await handleHubGeneralMineButton(interaction);
+      } else if (id === 'hub_general_random') {
+        await handleHubGeneralRandomButton(interaction);
+      } else if (id === 'hub_room_invite') {
+        await handleHubRoomInviteButton(interaction);
+      } else if (id === 'hub_room_kick') {
+        await handleHubRoomKickButton(interaction);
+      } else if (id === 'hub_room_persist') {
+        await handleHubRoomPersistButton(interaction);
+      } else if (id === 'hub_room_close') {
+        await handleHubRoomCloseButton(interaction);
+      } else if (id === 'hub_room_close_confirm') {
+        await handleHubRoomCloseConfirm(interaction);
+      } else if (id === 'hub_room_close_cancel') {
+        await handleHubRoomCloseCancel(interaction);
+      } else if (id === 'hub_mp_sell') {
+        await handleHubMarketplaceSellButton(interaction);
+      } else if (id === 'hub_mp_trade') {
+        await handleHubMarketplaceTradeButton(interaction);
+      } else if (id === 'hub_mp_offers_yes') {
+        await handleHubMarketplaceOffersYes(interaction);
+      } else if (id === 'hub_mp_offers_no') {
+        await handleHubMarketplaceOffersNo(interaction);
+      } else if (id === 'hub_mp_browse') {
+        await handleHubMarketplaceBrowseButton(interaction);
+      } else if (id === 'hub_mp_my') {
+        await handleHubMarketplaceMyButton(interaction);
       } else if (id.startsWith('game_tags_skip_')) {
         await handleGameTagSkip(interaction, id.slice('game_tags_skip_'.length));
       } else if (id === 'game_bring_confirm') {

@@ -66,7 +66,7 @@ describe('scheduleGames', () => {
   it('schedules a single game onto round 1, table 1', () => {
     const result = scheduleGames([makeGame({ id: 'g1' })], 2, 120, NO_REFINEMENTS);
     expect(result.assignments).toEqual([
-      { gameId: 'g1', round: 1, table: 1, playCount: 1, mayNotFinish: false },
+      { gameId: 'g1', round: 1, table: 1, playCount: 1, mayNotFinish: false, slotIndex: 0, startOffsetMinutes: 0 },
     ]);
     expect(result.unscheduled).toEqual([]);
     expect(result.lowInterest).toEqual([]);
@@ -440,6 +440,144 @@ describe('scheduleGames', () => {
     });
   });
 
+  describe('multi-game chaining (fills leftover table time with other games, not just repeats)', () => {
+    it('chains two different shorter games onto a table to fill the anchor table\'s time window', () => {
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'anchor', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 120, rawMaxPlaytime: 120, complexity: 'Heavy' }),
+          makeGame({ id: 'first', minPlayers: 1, seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 70, rawMaxPlaytime: 70 }),
+          makeGame({ id: 'second', minPlayers: 1, seatedPlayers: ['p5', 'p6'], effectiveDurationMinutes: 50, rawMaxPlaytime: 50 }),
+        ],
+        2,
+        600,
+        NO_REFINEMENTS,
+      );
+
+      expect(result.roundDurationsMinutes).toEqual([120]);
+      const anchor = result.assignments.find((a) => a.gameId === 'anchor')!;
+      const first = result.assignments.find((a) => a.gameId === 'first')!;
+      const second = result.assignments.find((a) => a.gameId === 'second')!;
+
+      expect(anchor.table).toBe(1);
+      // Both fillers land on the same (non-anchor) table, chained sequentially.
+      expect(first.table).toBe(2);
+      expect(second.table).toBe(2);
+      expect(first.slotIndex).toBe(0);
+      expect(first.startOffsetMinutes).toBe(0);
+      expect(second.slotIndex).toBe(1);
+      expect(second.startOffsetMinutes).toBe(70);
+    });
+
+    it('does not chain a game that would overflow the round\'s target duration', () => {
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'anchor', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 90, rawMaxPlaytime: 90 }),
+          // Fills table 2 (the round's only other table), leaving 30 min leftover there.
+          makeGame({ id: 'filler', minPlayers: 1, seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 60, rawMaxPlaytime: 60 }),
+          // Doesn't fit in the 30 min left on table 2, and table 1 (the anchor's
+          // own table) has zero leftover — no table in round 1 can hold it.
+          makeGame({ id: 'toobig', minPlayers: 1, seatedPlayers: ['p5', 'p6'], effectiveDurationMinutes: 40, rawMaxPlaytime: 40 }),
+        ],
+        2,
+        600,
+        NO_REFINEMENTS,
+      );
+
+      const filler = result.assignments.find((a) => a.gameId === 'filler')!;
+      const toobig = result.assignments.find((a) => a.gameId === 'toobig')!;
+      expect(filler.round).toBe(1);
+      // 'toobig' can't fit in round 1's remaining 30 minutes on table 2 (and
+      // table 1 is already full with the anchor), so it opens round 2.
+      expect(toobig.round).toBe(2);
+    });
+
+    it('inserts a Heavy break between two Heavy games chained back-to-back at the same table', () => {
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'anchor', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 150, rawMaxPlaytime: 150, complexity: 'Heavy' }),
+          makeGame({ id: 'heavyA', minPlayers: 1, seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 60, rawMaxPlaytime: 60, complexity: 'Heavy' }),
+          makeGame({ id: 'heavyB', minPlayers: 1, seatedPlayers: ['p5', 'p6'], effectiveDurationMinutes: 60, rawMaxPlaytime: 60, complexity: 'Heavy' }),
+        ],
+        2,
+        600,
+        { heavyGameBreakMinutes: 15, maxGameRepeats: 1 },
+      );
+
+      const heavyA = result.assignments.find((a) => a.gameId === 'heavyA')!;
+      const heavyB = result.assignments.find((a) => a.gameId === 'heavyB')!;
+      expect(heavyA.table).toBe(heavyB.table);
+      expect(heavyA.slotIndex).toBe(0);
+      expect(heavyB.slotIndex).toBe(1);
+      // heavyB starts after heavyA's 60 minutes PLUS the 15-min intra-chain break.
+      expect(heavyB.startOffsetMinutes).toBe(75);
+      // The chain's total (60 + 15 + 60 = 135) fits within the 150-min anchor,
+      // so this is purely an intra-chain break — no round-level break is
+      // needed since there's only one round.
+      expect(result.roundBreakMinutesBefore).toEqual([0]);
+    });
+
+    it('does not insert a break for a Heavy game chained after a non-Heavy game', () => {
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'anchor', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 150, rawMaxPlaytime: 150, complexity: 'Heavy' }),
+          makeGame({ id: 'light', minPlayers: 1, seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 60, rawMaxPlaytime: 60, complexity: 'Light' }),
+          makeGame({ id: 'heavy', minPlayers: 1, seatedPlayers: ['p5', 'p6'], effectiveDurationMinutes: 60, rawMaxPlaytime: 60, complexity: 'Heavy' }),
+        ],
+        2,
+        600,
+        { heavyGameBreakMinutes: 15, maxGameRepeats: 1 },
+      );
+
+      const heavy = result.assignments.find((a) => a.gameId === 'heavy')!;
+      // No break inserted before it (light -> heavy isn't a Heavy-Heavy pair),
+      // so it starts immediately after 'light' at minute 60.
+      expect(heavy.startOffsetMinutes).toBe(60);
+    });
+
+    it('best-fits a filler onto the table with the tightest leftover rather than an empty table', () => {
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'anchor', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 100, rawMaxPlaytime: 100 }),
+          // Opens table 2 with 70 min used, leaving 30 min leftover there.
+          makeGame({ id: 'partial', minPlayers: 1, seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 70, rawMaxPlaytime: 70 }),
+          // A 25-min game fits table 2's 30-min leftover (tighter fit) just as
+          // well as the fully-empty table 3's 100-min leftover — best-fit
+          // should prefer table 2, not spread out to the empty table 3.
+          makeGame({ id: 'filler', minPlayers: 1, seatedPlayers: ['p5', 'p6'], effectiveDurationMinutes: 25, rawMaxPlaytime: 25 }),
+        ],
+        3,
+        600,
+        NO_REFINEMENTS,
+      );
+
+      const partial = result.assignments.find((a) => a.gameId === 'partial')!;
+      const filler = result.assignments.find((a) => a.gameId === 'filler')!;
+      expect(filler.table).toBe(partial.table);
+      expect(filler.slotIndex).toBe(1);
+    });
+
+    it('only applies opportunistic repeat-fill to the last slot in a chain', () => {
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'anchor', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 100, rawMaxPlaytime: 100 }),
+          makeGame({ id: 'filler', minPlayers: 1, seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 60, rawMaxPlaytime: 60 }),
+          // Short game chained after 'filler' — leftover after it is 100 - 60 - 15 = 25,
+          // enough for one repeat (rawMaxPlaytime 10) but not more with maxGameRepeats capping it anyway.
+          makeGame({ id: 'short', minPlayers: 1, seatedPlayers: ['p5', 'p6'], effectiveDurationMinutes: 15, rawMaxPlaytime: 10 }),
+        ],
+        2,
+        600,
+        { heavyGameBreakMinutes: 0, maxGameRepeats: 5 },
+      );
+
+      const filler = result.assignments.find((a) => a.gameId === 'filler')!;
+      const short = result.assignments.find((a) => a.gameId === 'short')!;
+      expect(filler.playCount).toBe(1); // not the last slot in its chain — no repeat-fill
+      // leftover = 100 - (60 + 15) = 25; floor(25/10) = 2 extra plays -> playCount 3
+      expect(short.playCount).toBe(3);
+    });
+  });
+
   describe('mayNotFinish flag (window overrun)', () => {
     it('flags every game in a round whose cumulative end runs past the window', () => {
       // Two rounds of 90 min each (no shared players -> two separate rounds
@@ -670,16 +808,16 @@ describe('resolveRsvpComplexityPreferences', () => {
 
 describe('buildScheduleEmbed', () => {
   const games = [
-    { id: 'g1', title: 'Wingspan' },
-    { id: 'g2', title: 'Catan' },
+    { id: 'g1', title: 'Wingspan', seats: ['p1', 'p2'] },
+    { id: 'g2', title: 'Catan', seats: ['p3', 'p4'] },
   ];
   const gn = { title: 'Game Night', startTimeISO: new Date('2026-01-01T18:00:00.000Z').toISOString() };
 
   it('lists each round with real clock times and its table assignments', () => {
     const result = {
       assignments: [
-        { gameId: 'g1', round: 1, table: 1, playCount: 1, mayNotFinish: false },
-        { gameId: 'g2', round: 1, table: 2, playCount: 1, mayNotFinish: false },
+        { gameId: 'g1', round: 1, table: 1, playCount: 1, mayNotFinish: false, slotIndex: 0, startOffsetMinutes: 0 },
+        { gameId: 'g2', round: 1, table: 2, playCount: 1, mayNotFinish: false, slotIndex: 0, startOffsetMinutes: 0 },
       ],
       unscheduled: [],
       lowInterest: [],
@@ -733,7 +871,7 @@ describe('buildScheduleEmbed', () => {
   it('omits the greeters field entirely when the event has none set', () => {
     const result = {
       assignments: [
-        { gameId: 'g1', round: 1, table: 1, playCount: 1, mayNotFinish: false },
+        { gameId: 'g1', round: 1, table: 1, playCount: 1, mayNotFinish: false, slotIndex: 0, startOffsetMinutes: 0 },
       ],
       unscheduled: [],
       lowInterest: [],
@@ -751,7 +889,7 @@ describe('buildScheduleEmbed', () => {
 
   it('notes the play count on the table line when a game repeats', () => {
     const result = {
-      assignments: [{ gameId: 'g1', round: 1, table: 1, playCount: 3, mayNotFinish: false }],
+      assignments: [{ gameId: 'g1', round: 1, table: 1, playCount: 3, mayNotFinish: false, slotIndex: 0, startOffsetMinutes: 0 }],
       unscheduled: [],
       lowInterest: [],
       roundDurationsMinutes: [90],
@@ -766,7 +904,7 @@ describe('buildScheduleEmbed', () => {
 
   it('omits the play-count suffix entirely when a game is only played once', () => {
     const result = {
-      assignments: [{ gameId: 'g1', round: 1, table: 1, playCount: 1, mayNotFinish: false }],
+      assignments: [{ gameId: 'g1', round: 1, table: 1, playCount: 1, mayNotFinish: false, slotIndex: 0, startOffsetMinutes: 0 }],
       unscheduled: [],
       lowInterest: [],
       roundDurationsMinutes: [60],
@@ -776,12 +914,70 @@ describe('buildScheduleEmbed', () => {
     };
     const embed = buildScheduleEmbed(gn, games, result);
     const data = embed.toJSON();
+    expect(data.fields![0].value).toBe('Table 1: **Wingspan** — <@p1>, <@p2>');
+  });
+
+  it('omits the player-mention dash entirely for a game with no seated players', () => {
+    const gamesWithEmptySeats = [{ id: 'g1', title: 'Wingspan', seats: [] }];
+    const result = {
+      assignments: [
+        { gameId: 'g1', round: 1, table: 1, playCount: 1, mayNotFinish: false, slotIndex: 0, startOffsetMinutes: 0 },
+      ],
+      unscheduled: [],
+      lowInterest: [],
+      roundDurationsMinutes: [60],
+      roundBreakMinutesBefore: [0],
+      totalDurationMinutes: 60,
+      fitsInWindow: true,
+    };
+    const embed = buildScheduleEmbed(gn, gamesWithEmptySeats, result);
+    const data = embed.toJSON();
     expect(data.fields![0].value).toBe('Table 1: **Wingspan**');
+  });
+
+  it('lists each slot of a chained table with its own start/end time, computed from the next slot', () => {
+    const result = {
+      assignments: [
+        { gameId: 'g1', round: 1, table: 1, playCount: 1, mayNotFinish: false, slotIndex: 0, startOffsetMinutes: 0 },
+        { gameId: 'g2', round: 1, table: 1, playCount: 1, mayNotFinish: false, slotIndex: 1, startOffsetMinutes: 60 },
+      ],
+      unscheduled: [],
+      lowInterest: [],
+      roundDurationsMinutes: [90],
+      roundBreakMinutesBefore: [0],
+      totalDurationMinutes: 90,
+      fitsInWindow: true,
+    };
+    const embed = buildScheduleEmbed(gn, games, result);
+    const value = embed.toJSON().fields![0].value;
+    const startUnix = Math.floor(new Date('2026-01-01T18:00:00.000Z').getTime() / 1000);
+    expect(value).toBe(
+      `Table 1: **Wingspan** (<t:${startUnix}:t>–<t:${startUnix + 3600}:t>) — <@p1>, <@p2>\n` +
+        `Table 1: **Catan** (<t:${startUnix + 3600}:t>–<t:${startUnix + 5400}:t>) — <@p3>, <@p4>`,
+    );
+  });
+
+  it('keeps the plain single-line form for a table with only one slot, even alongside a chained table', () => {
+    const result = {
+      assignments: [
+        { gameId: 'g1', round: 1, table: 1, playCount: 1, mayNotFinish: false, slotIndex: 0, startOffsetMinutes: 0 },
+        { gameId: 'g2', round: 1, table: 2, playCount: 1, mayNotFinish: false, slotIndex: 0, startOffsetMinutes: 0 },
+      ],
+      unscheduled: [],
+      lowInterest: [],
+      roundDurationsMinutes: [90],
+      roundBreakMinutesBefore: [0],
+      totalDurationMinutes: 90,
+      fitsInWindow: true,
+    };
+    const embed = buildScheduleEmbed(gn, games, result);
+    const value = embed.toJSON().fields![0].value;
+    expect(value).toBe('Table 1: **Wingspan** — <@p1>, <@p2>\nTable 2: **Catan** — <@p3>, <@p4>');
   });
 
   it('shows a break note before a round that has an inserted break', () => {
     const result = {
-      assignments: [{ gameId: 'g1', round: 2, table: 1, playCount: 1, mayNotFinish: false }],
+      assignments: [{ gameId: 'g1', round: 2, table: 1, playCount: 1, mayNotFinish: false, slotIndex: 0, startOffsetMinutes: 0 }],
       unscheduled: [],
       lowInterest: [],
       roundDurationsMinutes: [60, 60],
@@ -798,8 +994,8 @@ describe('buildScheduleEmbed', () => {
   it('shows a warning note on a round flagged as mayNotFinish, and omits it on others', () => {
     const result = {
       assignments: [
-        { gameId: 'g1', round: 1, table: 1, playCount: 1, mayNotFinish: false },
-        { gameId: 'g2', round: 2, table: 1, playCount: 1, mayNotFinish: true },
+        { gameId: 'g1', round: 1, table: 1, playCount: 1, mayNotFinish: false, slotIndex: 0, startOffsetMinutes: 0 },
+        { gameId: 'g2', round: 2, table: 1, playCount: 1, mayNotFinish: true, slotIndex: 0, startOffsetMinutes: 0 },
       ],
       unscheduled: [],
       lowInterest: [],
@@ -1239,6 +1435,276 @@ describe('lockAndScheduleEvent', () => {
       { name: 'sean_o', sourcePlayerId: 'p1', winner: false, startPlayer: false },
       { name: 'Display-p2', sourcePlayerId: 'p2', winner: false, startPlayer: false },
     ]);
+  });
+
+  describe('dropping zero-signup "games to bring" requests', () => {
+    // A send mock that returns a pinnable message object (unlike the shared
+    // makeClient default, which resolves to undefined) — needed because this
+    // path calls updateRequestPin, which sends/edits and pins a message.
+    function makeClientWithPinSupport() {
+      let callCount = 0;
+      const sendMock = vi.fn(async () => {
+        callCount += 1;
+        return { id: `msg-${callCount}`, pin: vi.fn(async () => {}) };
+      });
+      return makeClient(sendMock);
+    }
+
+    it('drops a request for a game that ends up with zero signups, keeps one that still has signups', async () => {
+      const { upsertGameNight, findGameNight } = await import('../src/utils/storage');
+      const { upsertGame } = await import('../src/utils/gameStorage');
+      const { addRequest, getRequestsForEvent } = await import('../src/utils/libraryStorage');
+      const gn = makeGameNight();
+      await upsertGameNight(gn as any);
+      await upsertGame({
+        id: 'game1', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm1', guildId: 'guild-1',
+        bggId: '1', title: 'Wingspan', bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
+        minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: ['p1', 'p2'], waitlist: [],
+        createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Light',
+      } as any);
+      await upsertGame({
+        id: 'game2', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm2', guildId: 'guild-1',
+        bggId: '2', title: 'Catan', bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
+        minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: [], waitlist: [],
+        createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Light',
+      } as any);
+      await addRequest('gn1', 'Wingspan', 'user1');
+      await addRequest('gn1', 'Catan', 'user2');
+      const client = makeClientWithPinSupport();
+
+      await lockAndScheduleEvent(client as any, gn as any, BUFFER_CONFIG);
+
+      const remaining = await getRequestsForEvent('gn1');
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].gameName).toBe('Wingspan');
+
+      const updated = await findGameNight('gn1');
+      expect(updated?.requestPinMessageId).toBeDefined();
+    });
+
+    it('leaves a request untouched when it has no matching game suggestion', async () => {
+      const { upsertGameNight } = await import('../src/utils/storage');
+      const { upsertGame } = await import('../src/utils/gameStorage');
+      const { addRequest, getRequestsForEvent } = await import('../src/utils/libraryStorage');
+      const gn = makeGameNight();
+      await upsertGameNight(gn as any);
+      await upsertGame({
+        id: 'game1', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm1', guildId: 'guild-1',
+        bggId: '1', title: 'Catan', bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
+        minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: [], waitlist: [],
+        createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Light',
+      } as any);
+      // Requested to be brought along, but never suggested as a game to play.
+      await addRequest('gn1', 'Azul', 'user1');
+      const client = makeClientWithPinSupport();
+
+      await lockAndScheduleEvent(client as any, gn as any, BUFFER_CONFIG);
+
+      const remaining = await getRequestsForEvent('gn1');
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].gameName).toBe('Azul');
+    });
+
+    it('does not touch the request pin when no requests were dropped', async () => {
+      const { upsertGameNight } = await import('../src/utils/storage');
+      const { upsertGame } = await import('../src/utils/gameStorage');
+      const gn = makeGameNight();
+      await upsertGameNight(gn as any);
+      // Zero signups, but nobody requested it — nothing to drop.
+      await upsertGame({
+        id: 'game1', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm1', guildId: 'guild-1',
+        bggId: '1', title: 'Catan', bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
+        minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: [], waitlist: [],
+        createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Light',
+      } as any);
+      const client = makeClient();
+
+      await lockAndScheduleEvent(client as any, gn as any, BUFFER_CONFIG);
+
+      expect(client._channel.send).toHaveBeenCalledTimes(1); // schedule-summary embed only
+    });
+
+    it('drops a request even if the owner already confirmed bringing it', async () => {
+      const { upsertGameNight } = await import('../src/utils/storage');
+      const { upsertGame } = await import('../src/utils/gameStorage');
+      const { addGame } = await import('../src/utils/libraryStorage');
+      const { addRequest, getRequestsForEvent, confirmBring } = await import('../src/utils/libraryStorage');
+      const gn = makeGameNight();
+      await upsertGameNight(gn as any);
+      await upsertGame({
+        id: 'game1', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm1', guildId: 'guild-1',
+        bggId: '1', title: 'Catan', bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
+        minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: [], waitlist: [],
+        createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Light',
+      } as any);
+      await addGame('guild-1', 'owner1', 'Catan');
+      await addRequest('gn1', 'Catan', 'user1');
+      expect(await confirmBring('guild-1', 'gn1', 'Catan', 'owner1')).toMatchObject({ status: 'confirmed' });
+      const client = makeClientWithPinSupport();
+
+      await lockAndScheduleEvent(client as any, gn as any, BUFFER_CONFIG);
+
+      expect(await getRequestsForEvent('gn1')).toHaveLength(0);
+    });
+  });
+
+  describe('reminder DMs and stale-DM cleanup at lock', () => {
+    // A client that additionally supports DM sends (client.users.fetch(...).send)
+    // and editing those DMs later (client.channels.fetch(dmChannelId).messages.fetch),
+    // plus a call log to assert relative ordering between DMs and the schedule post.
+    function makeClientWithDmSupport() {
+      const callLog: string[] = [];
+      const sentDms: Array<{ ownerId: string; content: string }> = [];
+      const dmMessages = new Map<string, { content: string; edit: ReturnType<typeof vi.fn> }>();
+      let scheduleSendCount = 0;
+
+      const eventChannel = {
+        send: vi.fn(async () => {
+          callLog.push('schedule-post');
+          scheduleSendCount += 1;
+          return { id: `sched-msg-${scheduleSendCount}`, pin: vi.fn(async () => {}) };
+        }),
+      };
+
+      const client = {
+        channels: {
+          fetch: vi.fn(async (id: string) => {
+            if (id === 'event-channel-1') return eventChannel;
+            return {
+              isTextBased: () => true,
+              messages: { fetch: vi.fn(async (msgId: string) => dmMessages.get(`${id}:${msgId}`)) },
+            };
+          }),
+        },
+        guilds: {
+          fetch: vi.fn(async () => ({
+            members: { fetch: vi.fn(async (id: string) => ({ displayName: `Display-${id}` })) },
+          })),
+        },
+        users: {
+          fetch: vi.fn(async (ownerId: string) => ({
+            id: ownerId,
+            send: vi.fn(async (payload: { content: string }) => {
+              callLog.push('dm-send');
+              sentDms.push({ ownerId, content: payload.content });
+              const channelId = `dm-channel-${ownerId}`;
+              const messageId = `dm-message-${sentDms.length}`;
+              const msg = {
+                content: payload.content,
+                edit: vi.fn(async (editPayload: { content: string }) => {
+                  callLog.push('dm-edit');
+                  msg.content = editPayload.content;
+                }),
+              };
+              dmMessages.set(`${channelId}:${messageId}`, msg);
+              return { id: messageId, channelId };
+            }),
+          })),
+        },
+        _channel: eventChannel,
+      };
+      return { client, callLog, sentDms, dmMessages };
+    }
+
+    it('reminds the dm owner of a surviving unconfirmed request, before posting the schedule', async () => {
+      const { upsertGameNight } = await import('../src/utils/storage');
+      const { upsertGame } = await import('../src/utils/gameStorage');
+      const { addRequest, addPendingAsk } = await import('../src/utils/libraryStorage');
+      const gn = makeGameNight();
+      await upsertGameNight(gn as any);
+      await upsertGame({
+        id: 'game1', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm1', guildId: 'guild-1',
+        bggId: '1', title: 'Wingspan', bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
+        minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: ['p1', 'p2'], waitlist: [],
+        createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Light',
+      } as any);
+      const req = await addRequest('gn1', 'Wingspan', 'user1');
+      await addPendingAsk((req as any).id, 'owner1', 'some-earlier-channel', 'some-earlier-message');
+      const { client, callLog, sentDms } = makeClientWithDmSupport();
+
+      await lockAndScheduleEvent(client as any, gn as any, BUFFER_CONFIG);
+
+      expect(sentDms).toHaveLength(1);
+      expect(sentDms[0].ownerId).toBe('owner1');
+      expect(sentDms[0].content).toContain('Reminder');
+      expect(sentDms[0].content).toContain('Wingspan');
+      expect(callLog.indexOf('dm-send')).toBeLessThan(callLog.indexOf('schedule-post'));
+    });
+
+    it('does not remind an owner who already confirmed', async () => {
+      const { upsertGameNight } = await import('../src/utils/storage');
+      const { upsertGame } = await import('../src/utils/gameStorage');
+      const { addGame, addRequest, confirmBring, addPendingAsk } = await import('../src/utils/libraryStorage');
+      const gn = makeGameNight();
+      await upsertGameNight(gn as any);
+      await upsertGame({
+        id: 'game1', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm1', guildId: 'guild-1',
+        bggId: '1', title: 'Wingspan', bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
+        minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: ['p1', 'p2'], waitlist: [],
+        createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Light',
+      } as any);
+      await addGame('guild-1', 'owner1', 'Wingspan');
+      const req = await addRequest('gn1', 'Wingspan', 'user1');
+      await addPendingAsk((req as any).id, 'owner1', 'some-earlier-channel', 'some-earlier-message');
+      await confirmBring('guild-1', 'gn1', 'Wingspan', 'owner1');
+      const { client, sentDms } = makeClientWithDmSupport();
+
+      await lockAndScheduleEvent(client as any, gn as any, BUFFER_CONFIG);
+
+      expect(sentDms).toHaveLength(0);
+    });
+
+    it('does not remind a request with no outstanding pending ask', async () => {
+      const { upsertGameNight } = await import('../src/utils/storage');
+      const { upsertGame } = await import('../src/utils/gameStorage');
+      const { addRequest } = await import('../src/utils/libraryStorage');
+      const gn = makeGameNight();
+      await upsertGameNight(gn as any);
+      await upsertGame({
+        id: 'game1', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm1', guildId: 'guild-1',
+        bggId: '1', title: 'Wingspan', bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
+        minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: ['p1', 'p2'], waitlist: [],
+        createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Light',
+      } as any);
+      // No addPendingAsk call — nobody's been asked yet, so nobody to remind.
+      await addRequest('gn1', 'Wingspan', 'user1');
+      const { client, sentDms } = makeClientWithDmSupport();
+
+      await lockAndScheduleEvent(client as any, gn as any, BUFFER_CONFIG);
+
+      expect(sentDms).toHaveLength(0);
+    });
+
+    it('invalidates a pending DM for a request dropped due to zero signups, before posting the schedule', async () => {
+      const { upsertGameNight } = await import('../src/utils/storage');
+      const { upsertGame } = await import('../src/utils/gameStorage');
+      const { addRequest, addPendingAsk } = await import('../src/utils/libraryStorage');
+      const gn = makeGameNight();
+      await upsertGameNight(gn as any);
+      await upsertGame({
+        id: 'game1', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm1', guildId: 'guild-1',
+        bggId: '1', title: 'Catan', bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
+        minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: [], waitlist: [],
+        createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Light',
+      } as any);
+      const req = await addRequest('gn1', 'Catan', 'user1');
+      await addPendingAsk((req as any).id, 'owner1', 'dm-channel-owner1', 'dm-message-1');
+      const { client, callLog, dmMessages } = makeClientWithDmSupport();
+      dmMessages.set('dm-channel-owner1:dm-message-1', {
+        content: '🎲 Someone requested that you bring **Catan**!',
+        edit: vi.fn(async (payload: { content: string }) => {
+          callLog.push('dm-edit');
+        }),
+      });
+
+      await lockAndScheduleEvent(client as any, gn as any, BUFFER_CONFIG);
+
+      const editedMsg = dmMessages.get('dm-channel-owner1:dm-message-1');
+      expect(editedMsg?.edit).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('No longer needed'), components: [] }),
+      );
+      expect(callLog.indexOf('dm-edit')).toBeLessThan(callLog.indexOf('schedule-post'));
+    });
   });
 });
 

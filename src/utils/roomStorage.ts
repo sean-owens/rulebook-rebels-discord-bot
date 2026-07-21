@@ -14,6 +14,10 @@ export interface PrivateRoom {
   expiresAt?: string;
   // When true, the room never auto-closes and must be closed via `/room close`.
   persistent?: boolean;
+  // "Quick Actions" button hub (see updateRoomHubPin in room.ts) — Suggest a
+  // Game / Invite / Kick / Toggle Auto-Expire / Close Room, posted once at
+  // room creation for members who'd rather tap a button than type a command.
+  hubPinMessageId?: string;
 }
 
 export async function loadRooms(): Promise<PrivateRoom[]> {
