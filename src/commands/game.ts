@@ -1500,14 +1500,15 @@ export async function handleGameLeave(
   if (promotedUserId) {
     const nowHasGroup2 = (game.waitlist ?? []).length >= game.minPlayers;
     if (prevHadGroup2 && !nowHasGroup2) {
-      const updatedReq = await updateRequestCopies(game.eventId, game.title, 1);
+      // Only updates copiesNeeded in storage — no DM goes out here. This can
+      // only run pre-lock (this handler already refuses once locked), and no
+      // "please bring this" ask happens before lock; the lock-time pass in
+      // lockAndScheduleEvent picks up whatever copiesNeeded ends up being.
+      await updateRequestCopies(game.eventId, game.title, 1);
       try {
         await updateRequestPin(interaction.client, game.eventId);
       } catch {
         /* no event channel */
-      }
-      if (updatedReq && gameNight) {
-        await reconcileRequestCopies(interaction.client, gameNight.guildId, gameNight.rsvps, updatedReq, gameNight.date);
       }
     }
     try {
@@ -1582,14 +1583,13 @@ export async function handleWaitlistJoin(
 
   const nowHasGroup2 = game.waitlist.length >= game.minPlayers;
   if (nowHasGroup2 && !prevHadGroup2) {
-    const updatedReq = await updateRequestCopies(game.eventId, game.title, 2);
+    // Only updates copiesNeeded in storage — see handleGameLeave above for why
+    // no reconcileRequestCopies/DM call happens here.
+    await updateRequestCopies(game.eventId, game.title, 2);
     try {
       await updateRequestPin(interaction.client, game.eventId);
     } catch {
       /* no event channel */
-    }
-    if (updatedReq && gameNight) {
-      await reconcileRequestCopies(interaction.client, gameNight.guildId, gameNight.rsvps, updatedReq, gameNight.date);
     }
   }
 
@@ -1631,14 +1631,13 @@ export async function handleWaitlistLeave(
 
   const nowHasGroup2 = game.waitlist.length >= game.minPlayers;
   if (prevHadGroup2 && !nowHasGroup2) {
-    const updatedReq = await updateRequestCopies(game.eventId, game.title, 1);
+    // Only updates copiesNeeded in storage — see handleGameLeave above for why
+    // no reconcileRequestCopies/DM call happens here.
+    await updateRequestCopies(game.eventId, game.title, 1);
     try {
       await updateRequestPin(interaction.client, game.eventId);
     } catch {
       /* no event channel */
-    }
-    if (updatedReq && gameNight) {
-      await reconcileRequestCopies(interaction.client, gameNight.guildId, gameNight.rsvps, updatedReq, gameNight.date);
     }
   }
 
@@ -1938,11 +1937,15 @@ export async function handleBringConfirm(interaction: ButtonInteraction): Promis
       if (confirmed.invalidatedAsk) {
         await invalidateBringDm(interaction.client, confirmed.invalidatedAsk, 'Confirmed via /library bring — thanks!');
       }
-      const updatedReq = (await getRequestsForEvent(pending.eventId)).find(
-        (r) => r.gameName.toLowerCase() === pending.gameName.toLowerCase(),
-      );
-      if (updatedReq) {
-        await reconcileRequestCopies(interaction.client, gameNight.guildId, gameNight.rsvps, updatedReq, gameNight.date);
+      // Same "don't ask before lock" rule as resolveRequestFlow/handleBring —
+      // only chase down more owners for any still-needed copies once locked.
+      if (isLineupLocked(gameNight)) {
+        const updatedReq = (await getRequestsForEvent(pending.eventId)).find(
+          (r) => r.gameName.toLowerCase() === pending.gameName.toLowerCase(),
+        );
+        if (updatedReq) {
+          await reconcileRequestCopies(interaction.client, gameNight.guildId, gameNight.rsvps, updatedReq, gameNight.date);
+        }
       }
     }
   }

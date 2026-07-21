@@ -1548,7 +1548,7 @@ describe('lockAndScheduleEvent', () => {
     });
   });
 
-  describe('reminder DMs and stale-DM cleanup at lock', () => {
+  describe('owner-asking and stale-DM cleanup at lock', () => {
     // A client that additionally supports DM sends (client.users.fetch(...).send)
     // and editing those DMs later (client.channels.fetch(dmChannelId).messages.fetch),
     // plus a call log to assert relative ordering between DMs and the schedule post.
@@ -1606,36 +1606,14 @@ describe('lockAndScheduleEvent', () => {
       return { client, callLog, sentDms, dmMessages };
     }
 
-    it('reminds the dm owner of a surviving unconfirmed request, before posting the schedule', async () => {
+    it('asks the owner of a never-before-asked request, before posting the schedule', async () => {
+      // Under the deferred-ask design, no "please bring this" DM goes out
+      // before lock — this is the very first ask for the request, not a
+      // reminder to someone already pending.
       const { upsertGameNight } = await import('../src/utils/storage');
       const { upsertGame } = await import('../src/utils/gameStorage');
-      const { addRequest, addPendingAsk } = await import('../src/utils/libraryStorage');
-      const gn = makeGameNight();
-      await upsertGameNight(gn as any);
-      await upsertGame({
-        id: 'game1', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm1', guildId: 'guild-1',
-        bggId: '1', title: 'Wingspan', bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
-        minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: ['p1', 'p2'], waitlist: [],
-        createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Light',
-      } as any);
-      const req = await addRequest('gn1', 'Wingspan', 'user1');
-      await addPendingAsk((req as any).id, 'owner1', 'some-earlier-channel', 'some-earlier-message');
-      const { client, callLog, sentDms } = makeClientWithDmSupport();
-
-      await lockAndScheduleEvent(client as any, gn as any, BUFFER_CONFIG);
-
-      expect(sentDms).toHaveLength(1);
-      expect(sentDms[0].ownerId).toBe('owner1');
-      expect(sentDms[0].content).toContain('Reminder');
-      expect(sentDms[0].content).toContain('Wingspan');
-      expect(callLog.indexOf('dm-send')).toBeLessThan(callLog.indexOf('schedule-post'));
-    });
-
-    it('does not remind an owner who already confirmed', async () => {
-      const { upsertGameNight } = await import('../src/utils/storage');
-      const { upsertGame } = await import('../src/utils/gameStorage');
-      const { addGame, addRequest, confirmBring, addPendingAsk } = await import('../src/utils/libraryStorage');
-      const gn = makeGameNight();
+      const { addGame, addRequest } = await import('../src/utils/libraryStorage');
+      const gn = makeGameNight({ rsvps: { yes: ['owner1'], maybe: [], no: [] } });
       await upsertGameNight(gn as any);
       await upsertGame({
         id: 'game1', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm1', guildId: 'guild-1',
@@ -1644,8 +1622,33 @@ describe('lockAndScheduleEvent', () => {
         createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Light',
       } as any);
       await addGame('guild-1', 'owner1', 'Wingspan');
-      const req = await addRequest('gn1', 'Wingspan', 'user1');
-      await addPendingAsk((req as any).id, 'owner1', 'some-earlier-channel', 'some-earlier-message');
+      await addRequest('gn1', 'Wingspan', 'user1');
+      const { client, callLog, sentDms } = makeClientWithDmSupport();
+
+      await lockAndScheduleEvent(client as any, gn as any, BUFFER_CONFIG);
+
+      expect(sentDms).toHaveLength(1);
+      expect(sentDms[0].ownerId).toBe('owner1');
+      expect(sentDms[0].content).toContain('Wingspan');
+      expect(callLog.indexOf('dm-send')).toBeLessThan(callLog.indexOf('schedule-post'));
+    });
+
+    it('does not ask an owner who already confirmed before lock', async () => {
+      // A member can proactively confirm via /library bring before the event
+      // ever locks — that satisfies the request, so lock shouldn't ask anyone.
+      const { upsertGameNight } = await import('../src/utils/storage');
+      const { upsertGame } = await import('../src/utils/gameStorage');
+      const { addGame, addRequest, confirmBring } = await import('../src/utils/libraryStorage');
+      const gn = makeGameNight({ rsvps: { yes: ['owner1'], maybe: [], no: [] } });
+      await upsertGameNight(gn as any);
+      await upsertGame({
+        id: 'game1', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm1', guildId: 'guild-1',
+        bggId: '1', title: 'Wingspan', bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
+        minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: ['p1', 'p2'], waitlist: [],
+        createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Light',
+      } as any);
+      await addGame('guild-1', 'owner1', 'Wingspan');
+      await addRequest('gn1', 'Wingspan', 'user1');
       await confirmBring('guild-1', 'gn1', 'Wingspan', 'owner1');
       const { client, sentDms } = makeClientWithDmSupport();
 
@@ -1654,7 +1657,7 @@ describe('lockAndScheduleEvent', () => {
       expect(sentDms).toHaveLength(0);
     });
 
-    it('does not remind a request with no outstanding pending ask', async () => {
+    it('sends no ask when the requested game has no owner in the library', async () => {
       const { upsertGameNight } = await import('../src/utils/storage');
       const { upsertGame } = await import('../src/utils/gameStorage');
       const { addRequest } = await import('../src/utils/libraryStorage');
@@ -1666,7 +1669,7 @@ describe('lockAndScheduleEvent', () => {
         minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: ['p1', 'p2'], waitlist: [],
         createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Light',
       } as any);
-      // No addPendingAsk call — nobody's been asked yet, so nobody to remind.
+      // No addGame call — nobody owns Wingspan, so there's no one eligible to ask.
       await addRequest('gn1', 'Wingspan', 'user1');
       const { client, sentDms } = makeClientWithDmSupport();
 

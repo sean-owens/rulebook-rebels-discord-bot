@@ -154,9 +154,29 @@ describe('bring-request DM notifications', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('DMs the sole owner with a confirm button when /library request succeeds', async () => {
+  it('does not DM anyone before the lineup locks — the ask is deferred', async () => {
+    // No "please bring this" DM goes out at request-creation time anymore;
+    // it waits for lock so pickPreferredOwner sees final confirmed-brings
+    // counts instead of an early, mostly-arbitrary snapshot.
     await addGame('g1', 'alice', 'Wingspan');
     const event = makeEvent({ rsvps: { yes: ['alice'], maybe: [], no: [] } });
+    mockLoadGameNights.mockReturnValue([event]);
+
+    const { client, sentTo } = makeDmClient();
+    const interaction = makeRequestInteraction('Wingspan', client);
+    await execute(interaction);
+
+    expect(sentTo).toEqual([]);
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('will be asked to bring it once the lineup locks') }),
+    );
+    const [req] = await getRequestsForEvent('event-1');
+    expect(req.pendingAsks).toEqual([]);
+  });
+
+  it('DMs the sole owner with a confirm button when /library request succeeds after the lineup is already locked', async () => {
+    await addGame('g1', 'alice', 'Wingspan');
+    const event = makeEvent({ rsvps: { yes: ['alice'], maybe: [], no: [] }, suggestionsLocked: true });
     mockLoadGameNights.mockReturnValue([event]);
 
     const { client, sentTo } = makeDmClient();
@@ -171,10 +191,10 @@ describe('bring-request DM notifications', () => {
     expect(req.pendingAsks[0].dmMessageId).toBeTruthy();
   });
 
-  it('load-balances the DM to whichever attending owner has fewest confirmed brings, when no copy-select is shown', async () => {
+  it('load-balances the DM to whichever attending owner has fewest confirmed brings, for a late request made after the lineup locks', async () => {
     await addGame('g1', 'alice', 'Wingspan');
     await addGame('g1', 'bob', 'Wingspan');
-    const event = makeEvent({ rsvps: { yes: ['alice', 'bob'], maybe: [], no: [] } });
+    const event = makeEvent({ rsvps: { yes: ['alice', 'bob'], maybe: [], no: [] }, suggestionsLocked: true });
     mockLoadGameNights.mockReturnValue([event]);
 
     const { client, sentTo } = makeDmClient();
@@ -190,7 +210,7 @@ describe('bring-request DM notifications', () => {
 
   it('does not DM anyone when the request is a duplicate', async () => {
     await addGame('g1', 'alice', 'Wingspan');
-    const event = makeEvent({ rsvps: { yes: ['alice'], maybe: [], no: [] } });
+    const event = makeEvent({ rsvps: { yes: ['alice'], maybe: [], no: [] }, suggestionsLocked: true });
     mockLoadGameNights.mockReturnValue([event]);
 
     const { client: client1 } = makeDmClient();
@@ -540,7 +560,7 @@ describe('hub buttons ("🙋 Request a Game to Bring" / "📋 My Games to Bring"
 
   it('handleHubRequestModal resolves the event from the channel and creates the request', async () => {
     await addGame('g1', 'alice', 'Wingspan');
-    const event = makeEvent({ rsvps: { yes: ['alice'], maybe: [], no: [] } });
+    const event = makeEvent({ rsvps: { yes: ['alice'], maybe: [], no: [] }, suggestionsLocked: true });
     mockLoadGameNights.mockReturnValue([event]);
 
     const { client, sentTo } = makeDmClient();

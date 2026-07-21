@@ -10,9 +10,9 @@ import { GuildConfig, getGuildConfig } from './config';
 import { GameNight, loadGameNights, upsertGameNight } from './storage';
 import { resolvePlayerNames } from './playerNames';
 import { getMemberPreferences } from './gameRoles';
-import { removeZeroSignupRequests, getRequestsForEvent, buildExpansionNote } from './libraryStorage';
+import { removeZeroSignupRequests, getRequestsForEvent } from './libraryStorage';
 import { updateRequestPin } from './requestPin';
-import { sendBringReminderDm, invalidateBringDm } from './libraryBringDm';
+import { invalidateBringDm, reconcileRequestCopies } from './libraryBringDm';
 import {
   buildBgStatsPlayUrl,
   buildBgStatsButton,
@@ -727,10 +727,11 @@ export async function lockAndScheduleEvent(
   gn.scheduledAt = new Date().toISOString();
   await upsertGameNight(gn);
 
-  // "Games to bring" cleanup + owner notification happens before the public
+  // "Games to bring" cleanup + owner asking happens before the public
   // schedule post, so that post reflects the final state: drop any request
-  // nobody signed up to play, then remind owners of whatever's left that's
-  // still unconfirmed.
+  // nobody signed up to play, then ask an owner for whatever's left — no
+  // "please bring this" DM goes out before lock (see reconcileRequestCopies),
+  // so this is the actual first ask for nearly every request, not a reminder.
   const zeroSignupTitles = games.filter((g) => g.seats.length === 0).map((g) => g.title);
   if (zeroSignupTitles.length > 0) {
     const dropped = await removeZeroSignupRequests(gn.id, zeroSignupTitles);
@@ -750,10 +751,7 @@ export async function lockAndScheduleEvent(
 
   const remainingRequests = await getRequestsForEvent(gn.id);
   for (const req of remainingRequests) {
-    for (const ask of req.pendingAsks) {
-      const expansionNote = await buildExpansionNote(gn.guildId, ask.ownerId, req.gameName);
-      await sendBringReminderDm(client, req, ask.ownerId, gn.date, expansionNote);
-    }
+    await reconcileRequestCopies(client, gn.guildId, gn.rsvps, req, gn.date);
   }
 
   if (gn.eventChannelId) {
