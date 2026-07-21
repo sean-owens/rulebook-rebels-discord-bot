@@ -418,7 +418,7 @@ export function buildScheduleEmbed(
 
   if (gn.greeters && gn.greeters.length > 0) {
     embed.addFields({
-      name: '🙋 Greeters',
+      name: '👋 Greeters',
       value: gn.greeters.map((userId) => `<@${userId}>`).join(' and '),
     });
   }

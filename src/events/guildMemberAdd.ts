@@ -19,12 +19,12 @@ export async function handleGuildMemberAdd(member: GuildMember): Promise<void> {
       }
 
       fields.push({
-        name: '🎮 Events',
+        name: '📅 Events',
         value: `Check out <#${config.announcementsChannelId || 'announcements'}> for upcoming events. Click **Going** or **Maybe** on any event post to RSVP — you'll automatically get access to that event's private channel!`,
       });
 
       fields.push({
-        name: '🎭 Game Preferences',
+        name: '🏷️ Game Preferences',
         value: `Use \`/myroles\` to set your preferred complexity level and tag the game genres you enjoy most!`,
       });
 

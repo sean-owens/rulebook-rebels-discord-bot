@@ -848,7 +848,7 @@ describe('buildScheduleEmbed', () => {
     };
     const embed = buildScheduleEmbed(gnWithGreeters, games, result);
     const data = embed.toJSON();
-    expect(data.fields![0].name).toBe('🙋 Greeters');
+    expect(data.fields![0].name).toBe('👋 Greeters');
     expect(data.fields![0].value).toBe('<@u1> and <@u2>');
   });
 

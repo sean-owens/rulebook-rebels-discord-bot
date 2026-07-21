@@ -61,7 +61,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         value: 'Set your game genre preferences so others can see what you like to play.',
       },
       {
-        name: '🎲  /bgg',
+        name: '🔗  /bgg',
         value: [
           '`link` — Connect your BoardGameGeek account to this server',
           '`unlink` — Remove your linked BoardGameGeek account',
@@ -98,7 +98,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       ...(isHost
         ? [
             {
-              name: '🎙️  /host — Event & moderation tools',
+              name: '🎪  /host — Event & moderation tools',
               value: [
                 '`/host event create` — Schedule a new game night',
                 '`/host event edit` — Update an existing game night',

@@ -2322,7 +2322,7 @@ export async function handleLibraryRequestSelect(
   }
 
   const owners = ownerIds.map((id) => `<@${id}>`);
-  await interaction.update({ content: '✓ Request submitted!', components: [] });
+  await interaction.update({ content: '✅ Request submitted!', components: [] });
   await interaction.followUp({
     content: `<@${interaction.user.id}> requested **${canonicalName}** for the event on ${event.date}. Owner${owners.length !== 1 ? 's' : ''}: ${owners.join(', ')}`,
     ephemeral: false,
@@ -2376,7 +2376,7 @@ export async function handleLibraryRequestCopySelect(
   }
 
   const owners = pending.ownerIds.map((id) => `<@${id}>`);
-  await interaction.update({ content: '✓ Request submitted!', components: [] });
+  await interaction.update({ content: '✅ Request submitted!', components: [] });
   await interaction.followUp({
     content: `<@${interaction.user.id}> requested **${pending.canonicalName}** for the event on ${pending.eventDate}. Owner${owners.length !== 1 ? 's' : ''}: ${owners.join(', ')} — bringing: <@${preferredOwnerId}>`,
     ephemeral: false,

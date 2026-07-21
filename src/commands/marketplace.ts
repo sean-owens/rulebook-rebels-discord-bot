@@ -1364,11 +1364,11 @@ async function handleConditions(interaction: ChatInputCommandInteraction): Promi
         value: 'Very minimal wear and tear. All materials present. You would give this to a friend as a gift.',
       },
       {
-        name: '✅ Good',
+        name: '👌 Good',
         value: 'Minor damage to the box and/or contents. All materials present. May have been used once or twice.',
       },
       {
-        name: '⚠️ Acceptable',
+        name: '🟠 Acceptable',
         value: 'Some box damage but item is intact. Possible split corners. May be missing a non-crucial piece or rules (available online). Scuffing on the item.',
       },
     );
@@ -1534,7 +1534,7 @@ async function handleReopen(interaction: ChatInputCommandInteraction): Promise<v
 
 export function buildMarketplaceHubEmbed(): EmbedBuilder {
   return new EmbedBuilder()
-    .setTitle('🎯 Quick Actions')
+    .setTitle('🎮 Quick Actions')
     .setColor(0x57f287)
     .setDescription('Prefer tapping over typing? Use the buttons below instead of slash commands.')
     .addFields(
@@ -1594,7 +1594,7 @@ export async function updateMarketplaceHubThread(client: Client, guildId: string
 
   let thread: ThreadChannel;
   try {
-    thread = await forumChannel.threads.create({ name: '🎯 Quick Actions', message: payload });
+    thread = await forumChannel.threads.create({ name: '🎮 Quick Actions', message: payload });
   } catch (err) {
     console.warn(`Could not create marketplace hub thread in guild ${guildId}:`, err);
     return;

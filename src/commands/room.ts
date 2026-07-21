@@ -606,7 +606,7 @@ export function buildRoomHubEmbed(): EmbedBuilder {
     .setDescription('Prefer tapping over typing? Use the buttons below instead of slash commands.')
     .addFields(
       { name: '🎲 Suggest a Game', value: 'Add a game to play in this room.' },
-      { name: '👋 Invite', value: 'Add more people to this room.' },
+      { name: '➕ Invite', value: 'Add more people to this room.' },
       { name: '👢 Kick', value: 'Remove someone from this room.' },
       { name: '📌 Toggle Auto-Expire', value: 'Make this room persistent, or set a new expiration date.' },
       { name: '🔒 Close Room', value: 'Close and delete this room.' },
@@ -616,7 +616,7 @@ export function buildRoomHubEmbed(): EmbedBuilder {
 export function buildRoomHubButtons(): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId('hub_suggest').setLabel('🎲 Suggest a Game').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId('hub_room_invite').setLabel('👋 Invite').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('hub_room_invite').setLabel('➕ Invite').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('hub_room_kick').setLabel('👢 Kick').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('hub_room_persist').setLabel('📌 Toggle Auto-Expire').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('hub_room_close').setLabel('🔒 Close Room').setStyle(ButtonStyle.Danger),
