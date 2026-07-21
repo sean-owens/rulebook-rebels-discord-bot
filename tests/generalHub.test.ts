@@ -255,7 +255,7 @@ describe('general "Quick Actions" hub', () => {
       await handleHubGeneralMineButton(interaction);
 
       const replyCall = interaction.reply.mock.calls[0][0];
-      expect(replyCall.embeds[0].data.description).toContain('Azul');
+      expect(replyCall.embeds[0].data.fields[0].value).toContain('Azul');
     });
 
     it('Random Game delegates with no filters applied', async () => {

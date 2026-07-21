@@ -1439,6 +1439,54 @@ export async function handleLibraryViewSelect(
   await interaction.editReply({ content: '', embeds: [embed], components: [] });
 }
 
+interface MineSession {
+  pages: string[];
+  totalGames: number;
+  pageIndex: number;
+}
+const mineSessions = new Map<string, MineSession>();
+
+// Reuses /library list's LIST_PAGE_CHARS budget (safely under Discord's
+// 1024-char embed field limit) and its addFields-as-a-single-field pattern —
+// a user linked to several delegates' libraries can easily exceed the
+// 4096-char embed *description* limit that a single unpaginated field hit in
+// production, so this splits the same way list already does.
+function buildMineEmbed(pages: string[], pageIdx: number, totalGames: number): EmbedBuilder {
+  return new EmbedBuilder()
+    .setTitle('Your Games')
+    .setColor(0x5865f2)
+    .addFields({ name: '​', value: pages[pageIdx] })
+    .setFooter({
+      text:
+        pages.length > 1
+          ? `Page ${pageIdx + 1} of ${pages.length} • ${totalGames} game${totalGames !== 1 ? 's' : ''}`
+          : `${totalGames} game${totalGames !== 1 ? 's' : ''}`,
+    });
+}
+
+function buildMineButtons(pageIdx: number, totalPages: number): ActionRowBuilder<ButtonBuilder>[] {
+  if (totalPages <= 1) return [];
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId('library_mine_prev')
+        .setLabel('← Previous')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(pageIdx === 0),
+      new ButtonBuilder()
+        .setCustomId('library_mine_page')
+        .setLabel(`Page ${pageIdx + 1} of ${totalPages}`)
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true),
+      new ButtonBuilder()
+        .setCustomId('library_mine_next')
+        .setLabel('Next →')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(pageIdx === totalPages - 1),
+    ),
+  ];
+}
+
 export async function handleMine(interaction: ChatInputCommandInteraction | ButtonInteraction): Promise<void> {
   const guildId = interaction.guildId!;
   const userId = interaction.user.id;
@@ -1454,17 +1502,52 @@ export async function handleMine(interaction: ChatInputCommandInteraction | Butt
 
   const sorted = [...entries].sort((a, b) => a.gameName.localeCompare(b.gameName));
 
-  const embed = new EmbedBuilder()
-    .setTitle('Your Games')
-    .setColor(0x5865f2)
-    .setDescription(
-      sorted
-        .map((e) => `• ${e.gameName}${e.userId !== userId ? ` *(shared from <@${e.userId}>)*` : ''}`)
-        .join('\n'),
-    )
-    .setFooter({ text: `${sorted.length} game${sorted.length !== 1 ? 's' : ''}` });
+  const pages: string[] = [];
+  let current = '';
+  for (const e of sorted) {
+    const line = `• ${e.gameName}${e.userId !== userId ? ` *(shared from <@${e.userId}>)*` : ''}`;
+    if (current && current.length + line.length + 1 > LIST_PAGE_CHARS) {
+      pages.push(current);
+      current = '';
+    }
+    current += (current ? '\n' : '') + line;
+  }
+  if (current) pages.push(current);
 
-  await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+  mineSessions.set(userId, { pages, totalGames: sorted.length, pageIndex: 0 });
+
+  await interaction.reply({
+    embeds: [buildMineEmbed(pages, 0, sorted.length)],
+    components: buildMineButtons(0, pages.length),
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+export async function handleLibraryMineNav(
+  interaction: ButtonInteraction,
+  direction: 'prev' | 'next',
+): Promise<void> {
+  const session = mineSessions.get(interaction.user.id);
+  if (!session) {
+    await interaction.update({
+      content: 'This list has expired — run `/library mine` again.',
+      embeds: [],
+      components: [],
+    });
+    return;
+  }
+
+  const newPage = direction === 'next' ? session.pageIndex + 1 : session.pageIndex - 1;
+  if (newPage < 0 || newPage >= session.pages.length) {
+    await interaction.deferUpdate();
+    return;
+  }
+
+  session.pageIndex = newPage;
+  await interaction.update({
+    embeds: [buildMineEmbed(session.pages, newPage, session.totalGames)],
+    components: buildMineButtons(newPage, session.pages.length),
+  });
 }
 
 function buildEditModal(
