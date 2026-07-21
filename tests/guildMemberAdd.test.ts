@@ -34,6 +34,7 @@ describe('handleGuildMemberAdd', () => {
 
     expect(send).toHaveBeenCalled();
     const dm = send.mock.calls[0][0] as string;
+    expect(dm).toContain('/hub');
     expect(dm).toContain('/myroles');
     expect(dm).toContain('/library list');
     expect(dm).toContain('/game suggest');
@@ -52,8 +53,10 @@ describe('handleGuildMemberAdd', () => {
     expect(channelSend).toHaveBeenCalled();
     const embed = channelSend.mock.calls[0][0].embeds[0].toJSON();
     const fieldNames = embed.fields.map((f: any) => f.name);
+    expect(fieldNames).toContain('🎮 Quick Actions');
     expect(fieldNames).toContain('📚 Browse the Library');
     expect(fieldNames).toContain('🎲 Suggest a Game');
+    expect(embed.fields.find((f: any) => f.name === '🎮 Quick Actions').value).toContain('/hub');
     expect(embed.fields.find((f: any) => f.name === '📚 Browse the Library').value).toContain(
       '/library list',
     );
