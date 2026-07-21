@@ -501,7 +501,7 @@ describe('marketplace "Quick Actions" hub', () => {
       await updateMarketplaceHubThread(client as any, 'guild-1');
 
       expect(forumChannel.threads.create).toHaveBeenCalledWith(
-        expect.objectContaining({ name: '🎯 Quick Actions' }),
+        expect.objectContaining({ name: '🎮 Quick Actions' }),
       );
       const config = await getGuildConfig('guild-1');
       expect(config.marketplaceHubThreadId).toBe('thread-1');

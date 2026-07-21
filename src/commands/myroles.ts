@@ -13,6 +13,8 @@ import { getGameRoles, GameRole } from '../utils/gameRoles';
 const GENRE_PAGE_SIZE = 20; // 4 rows of genre buttons, row 5 for controls
 const MAX_GENRE_TAGS = 5;
 
+const COMPLEXITY_ICON: Record<string, string> = { Light: '🟢', Medium: '🟡', Heavy: '🔴' };
+
 const pendingSelections = new Map<string, Set<string>>();
 
 export const data = new SlashCommandBuilder()
@@ -40,7 +42,7 @@ function buildDifficultyStep(
         difficultyTags.map((t) =>
           new ButtonBuilder()
             .setCustomId(`myroles_diff_${t.roleId}`)
-            .setLabel(`⚖️ ${t.name}`)
+            .setLabel(`${COMPLEXITY_ICON[t.name] ?? '⚪'} ${t.name}`)
             .setStyle(selected.has(t.roleId) ? ButtonStyle.Success : ButtonStyle.Primary),
         ),
       ),

@@ -596,11 +596,11 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.7m Quick Actions Hub (button panel)
 
-**What it does:** A pinned "🎯 Quick Actions" **forum post** (not a plain channel message — forum channels pin threads, not messages) in the configured marketplace channel, with buttons for 📦 Sell an Item, 🔄 Propose a Trade, 🔍 Browse Listings, and 📋 My Listings. Created (or refreshed) automatically whenever `/admin marketplace config` (3.9m) sets the channel. Sell/Trade need an item name, which a modal only supports as free text (no autocomplete like the slash command's `item` option) — so the wizard collects the name via modal, then condition via a native select, then (sell only) offers-allowed via buttons, before handing off to the exact same listing-creation flow (BGG lookup, expansion select, price screen) the slash commands use. Trades skip the offers-allowed step since trades are always open to offers, same as `/marketplace post trade`.
+**What it does:** A pinned "🎮 Quick Actions" **forum post** (not a plain channel message — forum channels pin threads, not messages) in the configured marketplace channel, with buttons for 📦 Sell an Item, 🔄 Propose a Trade, 🔍 Browse Listings, and 📋 My Listings. Created (or refreshed) automatically whenever `/admin marketplace config` (3.9m) sets the channel. Sell/Trade need an item name, which a modal only supports as free text (no autocomplete like the slash command's `item` option) — so the wizard collects the name via modal, then condition via a native select, then (sell only) offers-allowed via buttons, before handing off to the exact same listing-creation flow (BGG lookup, expansion select, price screen) the slash commands use. Trades skip the offers-allowed step since trades are always open to offers, same as `/marketplace post trade`.
 
 **Prerequisites:** a marketplace forum channel configured via `/admin marketplace config` (3.9m).
 
-- [ ] Configure the marketplace channel — confirm a "🎯 Quick Actions" post appears in the forum, pinned to the top
+- [ ] Configure the marketplace channel — confirm a "🎮 Quick Actions" post appears in the forum, pinned to the top
 - [ ] Tap "📦 Sell an Item" — confirm a modal asks for an item name
 - [ ] Submit the modal — confirm a condition select appears (New / Like New / Very Good / Good / Acceptable)
 - [ ] Select a condition — confirm "✅ Allow Offers" / "🔒 Firm Price" buttons appear
@@ -682,12 +682,12 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.8f Quick Actions Hub (button panel)
 
-**What it does:** A pinned "🎮 Quick Actions" message posted automatically the moment a room is created, alongside the existing plain-text welcome message — buttons for 🎲 Suggest a Game, 👋 Invite, 👢 Kick, 📌 Toggle Auto-Expire, and 🔒 Close Room. The Suggest a Game button is the exact same one used in event channels (same modal, same underlying flow) — it just resolves this room instead of an event when tapped here. Invite/Kick use Discord's native member-picker (a dropdown of server members) instead of typing mentions or a user option, and Close Room adds a Yes/Cancel confirmation step that the slash command itself doesn't have, since a misplaced tap is easier than a mistyped command for something this irreversible. Every button enforces the same "room creator or host/admin" permission check as its slash-command equivalent.
+**What it does:** A pinned "🎮 Quick Actions" message posted automatically the moment a room is created, alongside the existing plain-text welcome message — buttons for 🎲 Suggest a Game, ➕ Invite, 👢 Kick, 📌 Toggle Auto-Expire, and 🔒 Close Room. The Suggest a Game button is the exact same one used in event channels (same modal, same underlying flow) — it just resolves this room instead of an event when tapped here. Invite/Kick use Discord's native member-picker (a dropdown of server members) instead of typing mentions or a user option, and Close Room adds a Yes/Cancel confirmation step that the slash command itself doesn't have, since a misplaced tap is easier than a mistyped command for something this irreversible. Every button enforces the same "room creator or host/admin" permission check as its slash-command equivalent.
 
 - [ ] Create a room — confirm the "🎮 Quick Actions" message appears, pinned, alongside the separate plain-text welcome message
 - [ ] Tap "🎲 Suggest a Game" — confirm the same modal/flow as the event-channel hub, correctly suggesting into this room
-- [ ] Tap "👋 Invite" as the room's creator — confirm a member-picker appears; selecting one or more people grants them channel access and adds them to the room, identical to `/room invite`
-- [ ] Tap "👋 Invite" as a member with no elevated role who isn't the room's creator — confirm the same permission error `/room invite` gives
+- [ ] Tap "➕ Invite" as the room's creator — confirm a member-picker appears; selecting one or more people grants them channel access and adds them to the room, identical to `/room invite`
+- [ ] Tap "➕ Invite" as a member with no elevated role who isn't the room's creator — confirm the same permission error `/room invite` gives
 - [ ] Tap "👢 Kick" with nobody individually invited yet — confirm "Nobody has been individually invited to this room..." instead of an empty/broken picker
 - [ ] Tap "👢 Kick" and select someone invited to the room — confirm they lose access, identical to `/room kick`
 - [ ] Tap "👢 Kick" and select the room's creator — confirm "You can't remove the room's creator..." same as the command
@@ -738,7 +738,7 @@ Hosts retain full Regular Member access, so this part fully repeats Part 1's che
 
 **What it does:** Displays an ephemeral embed listing all available commands, tier-filtered to the invoking user's permissions.
 
-- [ ] 👑 Run `/help` as a host — confirm the **🎙️ /host** section appears in addition to user commands, but **no Admin section**
+- [ ] 👑 Run `/help` as a host — confirm the **🎪 /host** section appears in addition to user commands, but **no Admin section**
 - [ ] Confirm `/game cancel` description says "Remove your own game suggestion"
 - [ ] Confirm `/library clear` description says "Remove all your own games at once"
 - [ ] Confirm the response is ephemeral
@@ -1233,11 +1233,11 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.7m Quick Actions Hub (button panel)
 
-**What it does:** A pinned "🎯 Quick Actions" **forum post** (not a plain channel message — forum channels pin threads, not messages) in the configured marketplace channel, with buttons for 📦 Sell an Item, 🔄 Propose a Trade, 🔍 Browse Listings, and 📋 My Listings. Created (or refreshed) automatically whenever `/admin marketplace config` (3.9m) sets the channel. Sell/Trade need an item name, which a modal only supports as free text (no autocomplete like the slash command's `item` option) — so the wizard collects the name via modal, then condition via a native select, then (sell only) offers-allowed via buttons, before handing off to the exact same listing-creation flow (BGG lookup, expansion select, price screen) the slash commands use. Trades skip the offers-allowed step since trades are always open to offers, same as `/marketplace post trade`.
+**What it does:** A pinned "🎮 Quick Actions" **forum post** (not a plain channel message — forum channels pin threads, not messages) in the configured marketplace channel, with buttons for 📦 Sell an Item, 🔄 Propose a Trade, 🔍 Browse Listings, and 📋 My Listings. Created (or refreshed) automatically whenever `/admin marketplace config` (3.9m) sets the channel. Sell/Trade need an item name, which a modal only supports as free text (no autocomplete like the slash command's `item` option) — so the wizard collects the name via modal, then condition via a native select, then (sell only) offers-allowed via buttons, before handing off to the exact same listing-creation flow (BGG lookup, expansion select, price screen) the slash commands use. Trades skip the offers-allowed step since trades are always open to offers, same as `/marketplace post trade`.
 
 **Prerequisites:** a marketplace forum channel configured via `/admin marketplace config` (3.9m).
 
-- [ ] Configure the marketplace channel — confirm a "🎯 Quick Actions" post appears in the forum, pinned to the top
+- [ ] Configure the marketplace channel — confirm a "🎮 Quick Actions" post appears in the forum, pinned to the top
 - [ ] Tap "📦 Sell an Item" — confirm a modal asks for an item name
 - [ ] Submit the modal — confirm a condition select appears (New / Like New / Very Good / Good / Acceptable)
 - [ ] Select a condition — confirm "✅ Allow Offers" / "🔒 Firm Price" buttons appear
@@ -1432,12 +1432,12 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.9f Quick Actions Hub (button panel)
 
-**What it does:** A pinned "🎮 Quick Actions" message posted automatically the moment a room is created, alongside the existing plain-text welcome message — buttons for 🎲 Suggest a Game, 👋 Invite, 👢 Kick, 📌 Toggle Auto-Expire, and 🔒 Close Room. The Suggest a Game button is the exact same one used in event channels (same modal, same underlying flow) — it just resolves this room instead of an event when tapped here. Invite/Kick use Discord's native member-picker (a dropdown of server members) instead of typing mentions or a user option, and Close Room adds a Yes/Cancel confirmation step that the slash command itself doesn't have, since a misplaced tap is easier than a mistyped command for something this irreversible. Every button enforces the same "room creator or host/admin" permission check as its slash-command equivalent.
+**What it does:** A pinned "🎮 Quick Actions" message posted automatically the moment a room is created, alongside the existing plain-text welcome message — buttons for 🎲 Suggest a Game, ➕ Invite, 👢 Kick, 📌 Toggle Auto-Expire, and 🔒 Close Room. The Suggest a Game button is the exact same one used in event channels (same modal, same underlying flow) — it just resolves this room instead of an event when tapped here. Invite/Kick use Discord's native member-picker (a dropdown of server members) instead of typing mentions or a user option, and Close Room adds a Yes/Cancel confirmation step that the slash command itself doesn't have, since a misplaced tap is easier than a mistyped command for something this irreversible. Every button enforces the same "room creator or host/admin" permission check as its slash-command equivalent.
 
 - [ ] Create a room — confirm the "🎮 Quick Actions" message appears, pinned, alongside the separate plain-text welcome message
 - [ ] Tap "🎲 Suggest a Game" — confirm the same modal/flow as the event-channel hub, correctly suggesting into this room
-- [ ] Tap "👋 Invite" as the room's creator — confirm a member-picker appears; selecting one or more people grants them channel access and adds them to the room, identical to `/room invite`
-- [ ] Tap "👋 Invite" as a member with no elevated role who isn't the room's creator — confirm the same permission error `/room invite` gives
+- [ ] Tap "➕ Invite" as the room's creator — confirm a member-picker appears; selecting one or more people grants them channel access and adds them to the room, identical to `/room invite`
+- [ ] Tap "➕ Invite" as a member with no elevated role who isn't the room's creator — confirm the same permission error `/room invite` gives
 - [ ] Tap "👢 Kick" with nobody individually invited yet — confirm "Nobody has been individually invited to this room..." instead of an empty/broken picker
 - [ ] Tap "👢 Kick" and select someone invited to the room — confirm they lose access, identical to `/room kick`
 - [ ] Tap "👢 Kick" and select the room's creator — confirm "You can't remove the room's creator..." same as the command
@@ -1474,7 +1474,7 @@ Admins retain full Regular Member and Host access, so this part fully repeats Pa
 
 **What it does:** Displays an ephemeral embed listing all available commands, tier-filtered to the invoking user's permissions.
 
-- [ ] Run `/help` as an admin — confirm all three sections appear: user commands, **🎙️ /host**, and **🔧 /admin**, now split across **🔧 /admin — Server & library configuration** and **🔧 /admin — Welcome, marketplace & rooms** (regression check: this used to be one field that silently exceeded Discord's 1024-character field limit and made `/help` fail with no response at all for every admin)
+- [ ] Run `/help` as an admin — confirm all three sections appear: user commands, **🎪 /host**, and **🔧 /admin**, now split across **🔧 /admin — Server & library configuration** and **🔧 /admin — Welcome, marketplace & rooms** (regression check: this used to be one field that silently exceeded Discord's 1024-character field limit and made `/help` fail with no response at all for every admin)
 - [ ] Confirm `/game cancel` description says "Remove your own game suggestion"
 - [ ] Confirm `/library clear` description says "Remove all your own games at once"
 - [ ] Confirm the response is ephemeral
@@ -2196,8 +2196,8 @@ See 2.8f for the full checklist — this Admin-tier pass just confirms Admins re
 - [ ] Try setting a regular text channel instead of a forum channel — confirm error: "must be a Forum Channel"
 - [ ] Run `/admin marketplace config negotiation_mode:Private` — confirm mode changes to private
 - [ ] After setting a forum channel, confirm the six tags (`For Sale`, `For Trade`, `Active`, `Pending`, `Sold`, `Closed`) are visible in the channel's tag list
-- [ ] After setting a forum channel, also confirm a pinned "🎯 Quick Actions" post appears (1.7m/2.7m) — created alongside the tags, not requiring a listing to be posted first
-- [ ] Re-run `/admin marketplace config channel:...` pointing at the same channel again — confirm the existing "🎯 Quick Actions" post is refreshed in place rather than a second one being created
+- [ ] After setting a forum channel, also confirm a pinned "🎮 Quick Actions" post appears (1.7m/2.7m) — created alongside the tags, not requiring a listing to be posted first
+- [ ] Re-run `/admin marketplace config channel:...` pointing at the same channel again — confirm the existing "🎮 Quick Actions" post is refreshed in place rather than a second one being created
 
 ### 3.9n `/admin marketplace purge`
 
@@ -2314,11 +2314,11 @@ See 2.8f for the full checklist — this Admin-tier pass just confirms Admins re
 
 ### 3.10f Quick Actions Hub (button panel)
 
-**What it does:** A pinned "🎮 Quick Actions" message posted automatically the moment a room is created, alongside the existing plain-text welcome message — buttons for 🎲 Suggest a Game, 👋 Invite, 👢 Kick, 📌 Toggle Auto-Expire, and 🔒 Close Room. The Suggest a Game button is the exact same one used in event channels (same modal, same underlying flow) — it just resolves this room instead of an event when tapped here. Invite/Kick use Discord's native member-picker (a dropdown of server members) instead of typing mentions or a user option, and Close Room adds a Yes/Cancel confirmation step that the slash command itself doesn't have, since a misplaced tap is easier than a mistyped command for something this irreversible. Every button enforces the same "room creator or host/admin" permission check as its slash-command equivalent.
+**What it does:** A pinned "🎮 Quick Actions" message posted automatically the moment a room is created, alongside the existing plain-text welcome message — buttons for 🎲 Suggest a Game, ➕ Invite, 👢 Kick, 📌 Toggle Auto-Expire, and 🔒 Close Room. The Suggest a Game button is the exact same one used in event channels (same modal, same underlying flow) — it just resolves this room instead of an event when tapped here. Invite/Kick use Discord's native member-picker (a dropdown of server members) instead of typing mentions or a user option, and Close Room adds a Yes/Cancel confirmation step that the slash command itself doesn't have, since a misplaced tap is easier than a mistyped command for something this irreversible. Every button enforces the same "room creator or host/admin" permission check as its slash-command equivalent.
 
 - [ ] Create a room — confirm the "🎮 Quick Actions" message appears, pinned, alongside the separate plain-text welcome message
 - [ ] Tap "🎲 Suggest a Game" — confirm the same modal/flow as the event-channel hub, correctly suggesting into this room
-- [ ] Tap "👋 Invite" as an Admin on a room you didn't create — confirm a member-picker appears; selecting one or more people grants them channel access and adds them to the room, identical to `/room invite`
+- [ ] Tap "➕ Invite" as an Admin on a room you didn't create — confirm a member-picker appears; selecting one or more people grants them channel access and adds them to the room, identical to `/room invite`
 - [ ] Tap "👢 Kick" and select someone invited to the room — confirm they lose access, identical to `/room kick`
 - [ ] Tap "👢 Kick" and select the room's creator — confirm "You can't remove the room's creator..." same as the command
 - [ ] Tap "📌 Toggle Auto-Expire" on a room with a set expiration date — confirm it immediately becomes persistent (no modal), same as `/room persist enabled:true`
@@ -2406,7 +2406,7 @@ Round headers show real clock start/end times (Discord's auto-localizing `<t:...
 
 If a round's cumulative start time — summed from the event's start across every prior round and inserted break — runs past the event's configured end time, every game in that round gets a "⚠️ This round is projected to start and/or run past the event's end time" note in its round's field. This is a per-round check (all tables in a round share the same start/end clock), separate from the whole-schedule `fitsInWindow` check that drives the embed's overall color and footer text — a schedule can fit overall while an individual late round still gets flagged, and vice versa isn't possible (the last round's flag and the footer always agree). An event with no configured end time never shows this warning, since there's no window to run past.
 
-If the event has greeters set (`/host event greeters`, 2.8f), a "🙋 Greeters" field listing them (`@mention`s, "and"-joined for two) appears as the very first field, ahead of the round breakdown. Events with no greeters set show no such field at all.
+If the event has greeters set (`/host event greeters`, 2.8f), a "👋 Greeters" field listing them (`@mention`s, "and"-joined for two) appears as the very first field, ahead of the round breakdown. Events with no greeters set show no such field at all.
 
 Locking also cleans up and follows up on the "Games to Bring" request pin (`/library request`, 1.4h/2.4h/3.4h) — in this order, all before the public schedule embed is posted: (1) any request whose title matches a suggested game that ends up with zero seated players is dropped and the pin is refreshed, even if an owner had already confirmed bringing it via `/library bring` — nobody signed up to play it, so there's no reason to ask an owner to lug it over; if that request had a pending "please bring this" DM outstanding, that DM is edited to say it's no longer needed and its button removed; (2) every request still on the pin at this point that hasn't been confirmed yet gets a one-time reminder DM to whichever owner the original request DM went to. A request with no matching suggested game at all (e.g. something brought along just to teach or show off, never suggested as a game to play) is left alone by the drop step — it was never tied to the signup system in the first place — but can still receive the unconfirmed-reminder DM. A request created before this feature shipped (no recorded DM owner) is silently skipped by the reminder step rather than erroring.
 
@@ -2417,8 +2417,8 @@ Locking also cleans up and follows up on the "Games to Bring" request pin (`/lib
 - To test the BG Stats buttons specifically, also set `post_bgstats_links:true` (3.9a), and link at least one seated test account's BGG account (`/bgg link`) so you can see the username-vs-display-name fallback in action.
 
 - [ ] With the lock threshold crossed, confirm the bot posts a "🔒 Lineup Locked" embed in the event channel listing each round's table assignments
-- [ ] With greeters set on the event (2.8f) before it locks, confirm the locked schedule embed's first field is "🙋 Greeters" listing them by mention, ahead of the Round 1 field
-- [ ] With no greeters set, confirm the schedule embed has no "🙋 Greeters" field at all
+- [ ] With greeters set on the event (2.8f) before it locks, confirm the locked schedule embed's first field is "👋 Greeters" listing them by mention, ahead of the Round 1 field
+- [ ] With no greeters set, confirm the schedule embed has no "👋 Greeters" field at all
 - [ ] Confirm round headers show real `<t:...:t>` start/end clock times, not just an estimated duration
 - [ ] Confirm each table's line lists that game's seated players as `@mention`s, comma-separated, after the title (and after the time range, for a chained table's slot)
 - [ ] Confirm two games that share a seated player never appear in the same round
@@ -2636,7 +2636,7 @@ These test cases involve genuine back-and-forth between two distinct Discord ide
 **What it does:** When a new member joins the server, the bot sends a welcome DM and posts a message in the configured welcome channel.
 
 - [ ] Have a second account join the server (a fresh account, or an existing test account you first kick and then re-invite) — confirm the welcome message is automatically sent to the welcome channel and to the new member via DM
-- [ ] Confirm the welcome channel embed includes a link to the rules channel, Facebook group, and BGG group (if configured via `/admin welcome config`), plus a "🎮 Events" field (not "Game Nights") pointing at the announcements channel, "📚 Browse the Library" (`/library list`), and "🎲 Suggest a Game" (`/game suggest`) fields — note it deliberately does **not** mention `/library add`, since a brand-new member shouldn't feel pressed to add their own games on day one
+- [ ] Confirm the welcome channel embed includes a link to the rules channel, Facebook group, and BGG group (if configured via `/admin welcome config`), plus a "📅 Events" field (not "Game Nights") pointing at the announcements channel, "🏷️ Game Preferences" (`/myroles`), "📚 Browse the Library" (`/library list`), and "🎲 Suggest a Game" (`/game suggest`) fields — note it deliberately does **not** mention `/library add`, since a brand-new member shouldn't feel pressed to add their own games on day one
 - [ ] Confirm the DM lists `/myroles`, `/library list`, and `/game suggest`, and points to both `/getting-started` and `/help` — and, like the channel embed, does not mention `/library add`
 
 **Edge cases:**
