@@ -349,11 +349,21 @@ export async function handleAutocomplete(interaction: AutocompleteInteraction): 
 
 // ── Embed builders ──────────────────────────────────────────────────────────
 
+function bundleDisplayTitle(itemName: string, expansionCount: number, includesBase: boolean): string {
+  if (includesBase && expansionCount > 0) {
+    return `${itemName} + Base Game + ${expansionCount} expansion${expansionCount > 1 ? 's' : ''}`;
+  } else if (includesBase) {
+    return `${itemName} + Base Game`;
+  } else if (expansionCount > 0) {
+    return `${itemName} + ${expansionCount} expansion${expansionCount > 1 ? 's' : ''}`;
+  }
+  return itemName;
+}
+
 function listingEmbed(listing: MarketplaceListing): EmbedBuilder {
   const expCount = listing.expansions?.length ?? 0;
-  const displayTitle = expCount > 0
-    ? `${listing.itemName} + ${expCount} expansion${expCount > 1 ? 's' : ''}`
-    : listing.itemName;
+  const includesBase = !!(listing.includesBaseGame && listing.parentItem);
+  const displayTitle = bundleDisplayTitle(listing.itemName, expCount, includesBase);
   const type = listing.type === 'sell' ? '🏷️ For Sale' : '🔄 For Trade';
   const statusEmoji: Record<string, string> = {
     active: '🟢',
@@ -376,7 +386,9 @@ function listingEmbed(listing: MarketplaceListing): EmbedBuilder {
   }
   if (listing.parentItem) {
     const parentUrl = `https://boardgamegeek.com/boardgame/${listing.parentItem.bggId}`;
-    descLines.push(`[Base item on BGG](${parentUrl})`);
+    descLines.push(includesBase
+      ? `[Base game on BGG](${parentUrl})`
+      : `[Base game on BGG](${parentUrl}) (not included)`);
   }
   if (listing.referenceLink) {
     descLines.push(`[Reference link](${listing.referenceLink})`);
@@ -424,6 +436,10 @@ function listingEmbed(listing: MarketplaceListing): EmbedBuilder {
       name: `Includes ${listing.expansions.length} Expansion${listing.expansions.length > 1 ? 's' : ''}`,
       value: listing.expansions.map((e) => `• ${e.name}`).join('\n').slice(0, 1024),
     });
+  }
+
+  if (includesBase) {
+    fields.push({ name: 'Includes Base Game', value: `• ${listing.parentItem!.name}` });
   }
 
   if (listing.notes) fields.push({ name: 'Notes', value: listing.notes });
@@ -572,9 +588,8 @@ const CONDITION_LABEL: Record<string, string> = {
 function buildThreadTitle(listing: MarketplaceListing): string {
   const prefix = listing.type === 'sell' ? '[SELL]' : '[TRADE]';
   const expCount = listing.expansions?.length ?? 0;
-  const itemLabel = expCount > 0
-    ? `${listing.itemName} + ${expCount} expansion${expCount > 1 ? 's' : ''}`
-    : listing.itemName;
+  const includesBase = !!(listing.includesBaseGame && listing.parentItem);
+  const itemLabel = bundleDisplayTitle(listing.itemName, expCount, includesBase);
   const meta: string[] = [];
   if (listing.askingPrice != null) meta.push(formatPrice(listing.askingPrice));
   if (listing.condition) meta.push(CONDITION_LABEL[listing.condition] ?? listing.condition);
@@ -815,6 +830,8 @@ async function createSellDraftAndContinue(
     await showNoBggPrompt(interaction, itemName, draftId);
   } else if (!isExpansion && availableExpansions.length > 0) {
     await showExpansionSelect(interaction, stored, draftId);
+  } else if (isExpansion && parentItem) {
+    await showIncludeBaseGameSelect(interaction, stored, draftId);
   } else {
     await showPriceScreen(interaction, stored, draftId);
   }
@@ -895,16 +912,80 @@ export async function handleSkipExpansions(
   }
 }
 
+async function showIncludeBaseGameSelect(
+  interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction,
+  draft: SellDraft,
+  draftId: string,
+): Promise<void> {
+  const parentItem = draft.parentItem!;
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(`mp_base_yes_${draftId}`).setLabel(`✅ Include ${parentItem.name}`).setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`mp_base_no_${draftId}`).setLabel('➡️ Just the Expansion').setStyle(ButtonStyle.Secondary),
+  );
+
+  const embed = new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle(`${draft.itemName} is an expansion`)
+    .setDescription(
+      `This is an expansion for **${parentItem.name}**. Are you including the base game in this listing, ` +
+      `or just the expansion by itself?`,
+    );
+  if (draft.thumbnail) embed.setThumbnail(draft.thumbnail);
+
+  await interaction.editReply({ embeds: [embed], components: [row] });
+}
+
+async function continueAfterBaseGameChoice(
+  interaction: ButtonInteraction,
+  draft: SellDraft,
+  draftId: string,
+): Promise<void> {
+  if (draft.listingType === 'sell') {
+    await showPriceScreen(interaction, draft, draftId);
+  } else {
+    await createTradeListing(interaction, draft);
+  }
+}
+
+export async function handleIncludeBaseGameYes(
+  interaction: ButtonInteraction,
+  draftId: string,
+): Promise<void> {
+  await interaction.deferUpdate();
+  const draft = sellDrafts.get(draftId);
+  if (!draft || draft.userId !== interaction.user.id || draft.expiresAt < Date.now()) {
+    await interaction.editReply({ content: 'This session has expired. Please run the command again.', embeds: [], components: [] });
+    return;
+  }
+  const updated = updateDraft(draftId, { includesBaseGame: true })!;
+  await continueAfterBaseGameChoice(interaction, updated, draftId);
+}
+
+export async function handleIncludeBaseGameNo(
+  interaction: ButtonInteraction,
+  draftId: string,
+): Promise<void> {
+  await interaction.deferUpdate();
+  const draft = sellDrafts.get(draftId);
+  if (!draft || draft.userId !== interaction.user.id || draft.expiresAt < Date.now()) {
+    await interaction.editReply({ content: 'This session has expired. Please run the command again.', embeds: [], components: [] });
+    return;
+  }
+  const updated = updateDraft(draftId, { includesBaseGame: false })!;
+  await continueAfterBaseGameChoice(interaction, updated, draftId);
+}
+
 async function showPriceScreen(
   interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction,
   draft: SellDraft,
   draftId: string,
 ): Promise<void> {
-  const { itemName, bggId, thumbnail, condition, expansions, priceCheckOnly } = draft;
-  const hasExpansions = expansions && expansions.length > 0;
-  const titleLabel = hasExpansions
-    ? `${itemName} + ${expansions!.length} expansion${expansions!.length > 1 ? 's' : ''}`
-    : itemName;
+  const { itemName, bggId, thumbnail, condition, expansions, isExpansion, parentItem, includesBaseGame, priceCheckOnly } = draft;
+  const expansionCount = expansions?.length ?? 0;
+  const includeBase = !!(includesBaseGame && parentItem);
+  const bundleExtras = [...(expansions ?? []), ...(includeBase ? [parentItem!] : [])];
+  const hasBundle = bundleExtras.length > 0;
+  const titleLabel = bundleDisplayTitle(itemName, expansionCount, includeBase);
   let suggestedPrice: number | undefined;
 
   const priceEmbed = new EmbedBuilder()
@@ -919,10 +1000,10 @@ async function showPriceScreen(
   if (thumbnail) priceEmbed.setThumbnail(thumbnail);
 
   if (bggId) {
-    if (hasExpansions) {
-      // Fetch prices for base item and all selected expansions in parallel
-      const allIds = [bggId, ...expansions!.map((e) => e.bggId)];
-      const allNames = [itemName, ...expansions!.map((e) => e.name)];
+    if (hasBundle) {
+      // Fetch prices for the primary item and all bundle extras (expansions and/or the base game) in parallel
+      const allIds = [bggId, ...bundleExtras.map((e) => e.bggId)];
+      const allNames = [itemName, ...bundleExtras.map((e) => e.name)];
       const allPrices = await Promise.all(
         allIds.map((id) => fetchBGGMarketplacePrices(id).catch(() => null)),
       );
@@ -934,7 +1015,7 @@ async function showPriceScreen(
 
       for (let i = 0; i < allIds.length; i++) {
         const p = allPrices[i];
-        const label = i === 0 ? `Base — ${allNames[i]}` : allNames[i];
+        const label = i === 0 ? (isExpansion ? allNames[i] : `Base — ${allNames[i]}`) : allNames[i];
         if (p && p.listings.length > 0) {
           hasAnyData = true;
           totalListings += p.listings.length;
@@ -1003,7 +1084,7 @@ async function showPriceScreen(
 
   const buttons = new ActionRowBuilder<ButtonBuilder>().addComponents(
     ...(suggestedPrice != null
-      ? [new ButtonBuilder().setCustomId(`mp_price_use_${draftId}`).setLabel(`Use ${formatPrice(suggestedPrice)}${hasExpansions ? ' (combined estimate)' : ' (median)'}`).setStyle(ButtonStyle.Success)]
+      ? [new ButtonBuilder().setCustomId(`mp_price_use_${draftId}`).setLabel(`Use ${formatPrice(suggestedPrice)}${hasBundle ? ' (combined estimate)' : ' (median)'}`).setStyle(ButtonStyle.Success)]
       : []),
     new ButtonBuilder().setCustomId(`mp_price_custom_${draftId}`).setLabel('Enter my own price').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId(`mp_price_none_${draftId}`).setLabel('List as open to offers').setStyle(ButtonStyle.Secondary),
@@ -1034,7 +1115,7 @@ async function finalizeSellListing(
   draft: Omit<SellDraft, 'expiresAt'>,
   price: number | undefined,
 ): Promise<void> {
-  const { guildId, userId, username, itemName, bggId, thumbnail, condition, notes, referenceLink, bidsAllowed, expansions, parentItem } = draft;
+  const { guildId, userId, username, itemName, bggId, thumbnail, condition, notes, referenceLink, bidsAllowed, expansions, parentItem, includesBaseGame } = draft;
   const config = await getGuildConfig(guildId);
 
   const listing = await createListing(guildId, {
@@ -1052,6 +1133,7 @@ async function finalizeSellListing(
     bidsAllowed,
     expansions: expansions && expansions.length > 0 ? expansions : undefined,
     parentItem,
+    includesBaseGame,
   });
 
   await appendMarketplaceLog({
@@ -1208,6 +1290,8 @@ async function createTradeDraftAndContinue(
     await showNoBggPrompt(interaction, itemName, draftId);
   } else if (!isExpansion && availableExpansions.length > 0) {
     await showExpansionSelect(interaction, stored, draftId);
+  } else if (isExpansion && parentItem) {
+    await showIncludeBaseGameSelect(interaction, stored, draftId);
   } else {
     await createTradeListing(interaction, stored);
   }
@@ -1282,6 +1366,8 @@ async function handlePriceCheck(interaction: ChatInputCommandInteraction): Promi
 
   if (!isExpansion && availableExpansions.length > 0) {
     await showExpansionSelect(interaction, stored, draftId);
+  } else if (isExpansion && parentItem) {
+    await showIncludeBaseGameSelect(interaction, stored, draftId);
   } else {
     await showPriceScreen(interaction, stored, draftId);
   }
@@ -1291,7 +1377,7 @@ async function createTradeListing(
   interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction,
   draft: Omit<SellDraft, 'expiresAt'>,
 ): Promise<void> {
-  const { guildId, userId, username, itemName, bggId, thumbnail, condition, notes, referenceLink, lookingFor, expansions, parentItem } = draft;
+  const { guildId, userId, username, itemName, bggId, thumbnail, condition, notes, referenceLink, lookingFor, expansions, parentItem, includesBaseGame } = draft;
   const config = await getGuildConfig(guildId);
 
   const listing = await createListing(guildId, {
@@ -1302,6 +1388,7 @@ async function createTradeListing(
     lookingFor,
     expansions: expansions && expansions.length > 0 ? expansions : undefined,
     parentItem,
+    includesBaseGame,
   });
 
   await appendMarketplaceLog({

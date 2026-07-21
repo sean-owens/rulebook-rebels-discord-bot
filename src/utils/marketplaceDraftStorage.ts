@@ -18,6 +18,7 @@ export interface SellDraft {
   availableExpansions?: { bggId: string; name: string }[];
   expansions?: { bggId: string; name: string }[];
   parentItem?: { bggId: string; name: string };
+  includesBaseGame?: boolean;
   condition: Condition;
   notes?: string;
   referenceLink?: string;
