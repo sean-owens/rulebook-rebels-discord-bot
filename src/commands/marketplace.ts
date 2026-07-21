@@ -1532,7 +1532,7 @@ async function handleReopen(interaction: ChatInputCommandInteraction): Promise<v
 // (thread) rather than a plain pinned message, using discord.js's ThreadChannel
 // pin()/unpin() (forum-only; backed by Discord's ChannelFlags.Pinned bit).
 
-function buildMarketplaceHubEmbed(): EmbedBuilder {
+export function buildMarketplaceHubEmbed(): EmbedBuilder {
   return new EmbedBuilder()
     .setTitle('🎯 Quick Actions')
     .setColor(0x57f287)
@@ -1545,7 +1545,7 @@ function buildMarketplaceHubEmbed(): EmbedBuilder {
     );
 }
 
-function buildMarketplaceHubButtons(): ActionRowBuilder<ButtonBuilder> {
+export function buildMarketplaceHubButtons(): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId('hub_mp_sell').setLabel('📦 Sell an Item').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId('hub_mp_trade').setLabel('🔄 Propose a Trade').setStyle(ButtonStyle.Primary),

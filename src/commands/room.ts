@@ -599,7 +599,7 @@ async function closeRoom(client: Client, room: PrivateRoom, reason: string): Pro
 // `hub_suggest` customId, routed to the same handler in game.ts, which is
 // already room-aware via findRoomByChannel/roomToGameNightAdapter).
 
-function buildRoomHubEmbed(): EmbedBuilder {
+export function buildRoomHubEmbed(): EmbedBuilder {
   return new EmbedBuilder()
     .setTitle('🎮 Quick Actions')
     .setColor(0x57f287)
@@ -613,7 +613,7 @@ function buildRoomHubEmbed(): EmbedBuilder {
     );
 }
 
-function buildRoomHubButtons(): ActionRowBuilder<ButtonBuilder> {
+export function buildRoomHubButtons(): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId('hub_suggest').setLabel('🎲 Suggest a Game').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId('hub_room_invite').setLabel('👋 Invite').setStyle(ButtonStyle.Secondary),

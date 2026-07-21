@@ -23,7 +23,7 @@ import { handleList, handleMine, resolveRandomGames } from '../commands/library'
 // library.ts already falls back to the soonest upcoming event when there's
 // no specific event-channel context, which is exactly the situation here.
 
-function buildGeneralHubEmbed(): EmbedBuilder {
+export function buildGeneralHubEmbed(): EmbedBuilder {
   return new EmbedBuilder()
     .setTitle('🎮 Quick Actions')
     .setColor(0x57f287)
@@ -37,7 +37,7 @@ function buildGeneralHubEmbed(): EmbedBuilder {
     );
 }
 
-function buildGeneralHubButtons(): ActionRowBuilder<ButtonBuilder> {
+export function buildGeneralHubButtons(): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId('hub_general_rsvp').setLabel('✅ RSVP to Next Event').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId('hub_general_browse').setLabel('📚 Browse Library').setStyle(ButtonStyle.Primary),

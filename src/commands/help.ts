@@ -91,6 +91,10 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
           '`persist` — Turn a room\'s auto-expiration on or off (run inside it) — the creator or any host/admin can do this',
         ].join('\n'),
       },
+      {
+        name: '🎮  /hub',
+        value: 'Get the "Quick Actions" buttons for wherever you are — an event channel, private room, marketplace, or general chat — as an ephemeral reply only you can see, in case you missed the pinned one.',
+      },
       ...(isHost
         ? [
             {
