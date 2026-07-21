@@ -11,6 +11,7 @@ import { data as gettingStartedCommand } from './commands/gettingStarted';
 import { data as bggCommand } from './commands/bgg';
 import { data as marketplaceCommand } from './commands/marketplace';
 import { data as roomCommand } from './commands/room';
+import { data as hubCommand } from './commands/hub';
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.DISCORD_CLIENT_ID;
@@ -33,6 +34,7 @@ const commands = [
   bggCommand.toJSON(),
   marketplaceCommand.toJSON(),
   roomCommand.toJSON(),
+  hubCommand.toJSON(),
 ];
 const rest = new REST().setToken(token);
 

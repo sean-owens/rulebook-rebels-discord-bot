@@ -121,6 +121,7 @@ import {
   handleHubRoomCloseConfirm,
   handleHubRoomCloseCancel,
 } from '../commands/room';
+import { execute as executeHub } from '../commands/hub';
 import { extractCommandUsage, recordCommandUsage } from '../utils/commandUsageStorage';
 
 export async function handleInteraction(interaction: Interaction): Promise<void> {
@@ -155,6 +156,7 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
       else if (interaction.commandName === 'bgg') await executeBgg(interaction);
       else if (interaction.commandName === 'marketplace') await executeMarketplace(interaction);
       else if (interaction.commandName === 'room') await executeRoom(interaction);
+      else if (interaction.commandName === 'hub') await executeHub(interaction);
     } else if (interaction.isStringSelectMenu()) {
       const id = interaction.customId;
       if (id.startsWith(EVENT_SELECT_PREFIX)) await handleEventSelect(interaction);

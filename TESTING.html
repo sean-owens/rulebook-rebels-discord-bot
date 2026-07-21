@@ -1225,6 +1225,20 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ---
 
+## 1.10 `/hub` — On-Demand Quick Actions
+
+**What it does:** Every pinned "Quick Actions" hub (event, 1.3h; room, 1.8f; marketplace, 1.7m; general chat, 1.9a) is a standing message someone can scroll past or lose track of. `/hub` reposts the same buttons on demand as an ephemeral reply only the runner can see, by detecting which context the channel it's run in matches — no arguments needed. Reuses the exact same embed/button-building functions as each pinned hub, so the buttons behave identically (same customIds, same handlers).
+
+- [ ] Run `/hub` inside a private room — confirm an ephemeral reply with the same embed/buttons as that room's pinned hub (1.8f)
+- [ ] Run `/hub` inside an active event channel — confirm an ephemeral reply with the same embed/buttons as that event's pinned hub (1.3h)
+- [ ] Run `/hub` inside a **cancelled or archived** event's channel — confirm it falls through to the "no hub for this channel" message rather than showing a stale event hub
+- [ ] Run `/hub` inside the marketplace's pinned hub thread — confirm an ephemeral reply with the same embed/buttons as the marketplace hub (1.7m)
+- [ ] Run `/hub` inside the configured general-chat hub channel (3.9q) — confirm an ephemeral reply with the same embed/buttons as the general hub (1.9a)
+- [ ] Run `/hub` in any other channel (not a room, event, marketplace hub thread, or configured general channel) — confirm a graceful ephemeral message explaining no hub applies here, rather than an error
+- [ ] Confirm every button on the `/hub` reply works exactly the same as tapping it on the pinned message (same handlers, same customIds)
+
+---
+
 # Part 2 — Host Tests (Host role / Manage Events permission)
 
 Hosts retain full Regular Member access, so this part fully repeats Part 1's checks (run them against a Host-role account) before adding the Host-only commands in 2.8.
