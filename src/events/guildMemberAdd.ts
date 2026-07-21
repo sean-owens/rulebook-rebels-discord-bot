@@ -24,6 +24,11 @@ export async function handleGuildMemberAdd(member: GuildMember): Promise<void> {
       });
 
       fields.push({
+        name: '🎮 Quick Actions',
+        value: `Run \`/hub\` in an event channel, private room, the marketplace, or general chat to pull up tappable buttons instead of typing commands.`,
+      });
+
+      fields.push({
         name: '🏷️ Game Preferences',
         value: `Use \`/myroles\` to set your preferred complexity level and tag the game genres you enjoy most!`,
       });
@@ -80,6 +85,7 @@ export async function handleGuildMemberAdd(member: GuildMember): Promise<void> {
         `👋 Hey **${member.displayName}**, welcome to **${member.guild.name}**!`,
         ``,
         `A few commands to get you going:`,
+        `> • \`/hub\` — pull up tappable buttons for whatever channel you're in, if you'd rather tap than type`,
         `> • \`/myroles\` — set your preferred complexity and favorite genres`,
         `> • \`/library list\` — see what games the group already owns`,
         `> • \`/game suggest\` — put a game up for an upcoming night (run inside that event's channel)`,
