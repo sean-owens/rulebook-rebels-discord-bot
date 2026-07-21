@@ -728,7 +728,8 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run `/hub` inside a private room — confirm an ephemeral reply with the same embed/buttons as that room's pinned hub (1.8f)
 - [ ] Run `/hub` inside an active event channel — confirm an ephemeral reply with the same embed/buttons as that event's pinned hub (1.3h)
 - [ ] Run `/hub` inside a **cancelled or archived** event's channel — confirm it falls through to the "no hub for this channel" message rather than showing a stale event hub
-- [ ] Run `/hub` inside the marketplace's pinned hub thread — confirm an ephemeral reply with the same embed/buttons as the marketplace hub (1.7m)
+- [ ] Run `/hub` inside the marketplace's pinned hub thread (Forum mode) — confirm an ephemeral reply with the same embed/buttons as the marketplace hub (1.7m)
+- [ ] Run `/hub` directly in the marketplace channel (Text mode — no separate hub thread, so this must match on the channel itself) — confirm the same ephemeral marketplace hub reply
 - [ ] Run `/hub` inside the configured general-chat hub channel (3.9q) — confirm an ephemeral reply with the same embed/buttons as the general hub (1.9a)
 - [ ] Run `/hub` in any other channel (not a room, event, marketplace hub thread, or configured general channel) — confirm a graceful ephemeral message explaining no hub applies here, rather than an error
 - [ ] Confirm every button on the `/hub` reply works exactly the same as tapping it on the pinned message (same handlers, same customIds)

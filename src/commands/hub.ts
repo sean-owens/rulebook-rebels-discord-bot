@@ -46,7 +46,12 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
   const config = await getGuildConfig(interaction.guildId!);
 
-  if (config.marketplaceHubThreadId && channelId === config.marketplaceHubThreadId) {
+  // Forum mode: the hub lives in its own pinned thread. Text mode: there's no
+  // separate hub thread — the hub is a pinned message inside the marketplace
+  // channel itself, so typing /hub there should match on marketplaceChannelId.
+  const inMarketplaceHubThread = !!config.marketplaceHubThreadId && channelId === config.marketplaceHubThreadId;
+  const inMarketplaceTextChannel = !!config.marketplaceChannelId && channelId === config.marketplaceChannelId;
+  if (inMarketplaceHubThread || inMarketplaceTextChannel) {
     await interaction.reply({
       embeds: [buildMarketplaceHubEmbed()],
       components: [buildMarketplaceHubButtons()],
