@@ -49,7 +49,7 @@ import {
 import { appendMarketplaceLog } from '../utils/marketplaceLog';
 import { getGuildConfig, updateGuildConfig } from '../utils/config';
 import { removeGame, getGamesByUser } from '../utils/libraryStorage';
-import { searchCatalog } from '../utils/bggCatalog';
+import { searchCatalog, getCatalogEntryById, BGGCatalogEntry } from '../utils/bggCatalog';
 import { fetchBGGMarketplacePrices, getBGGGame } from '../utils/bgg';
 import {
   SellDraft,
@@ -341,7 +341,12 @@ export async function handleAutocomplete(interaction: AutocompleteInteraction): 
   const results = searchCatalog(focused).slice(0, 24);
   const choices = results.map((r) => ({
     name: `${r.isExpansion ? '[Expansion] ' : ''}${r.name} (${r.year ?? '?'})`.slice(0, 100),
-    value: r.name,
+    // Encodes the BGG id rather than the name so resolveMarketplaceItem can
+    // tell an explicit pick apart from free-typed text that happens to match
+    // some other entry's name exactly (see resolveMarketplaceItem's __bgg__
+    // branch) — the root cause of a game like "Gloom" silently winning over
+    // "Gloomhaven" when a user types "gloom" and submits before finishing.
+    value: `__bgg__:${r.id}`,
   }));
   // Prefix with __custom__: so the handler knows to skip the BGG catalog lookup
   choices.push({ name: `📝 "${focused.slice(0, 75)}" — not on BGG / custom item`, value: `__custom__:${focused}`.slice(0, 100) });
@@ -897,6 +902,219 @@ async function updateTextChannelListingMessage(
   }
 }
 
+// ── Item resolution (search-match confirmation) ─────────────────────────────
+// Shared by post sell/trade/price — resolving a raw "item" value (whether
+// from a slash-command autocomplete field or the hub wizard's free-text
+// modal) into BGG catalog data, one way, in one place.
+
+async function resolveCatalogDetails(entry: BGGCatalogEntry): Promise<{
+  bggId: string;
+  thumbnail?: string;
+  isExpansion: boolean;
+  availableExpansions: { bggId: string; name: string }[];
+  parentItem?: { bggId: string; name: string };
+}> {
+  const bggId = String(entry.id);
+  const details = await getBGGGame(bggId).catch(() => null);
+  return {
+    bggId,
+    thumbnail: details?.thumbnail ?? undefined,
+    isExpansion: entry.isExpansion,
+    availableExpansions:
+      !entry.isExpansion && details?.expansions
+        ? details.expansions.map((e) => ({ bggId: e.id, name: e.name }))
+        : [],
+    parentItem:
+      entry.isExpansion && details?.parentGame
+        ? { bggId: details.parentGame.id, name: details.parentGame.name }
+        : undefined,
+  };
+}
+
+interface ResolvedMarketplaceItem {
+  itemName: string;
+  bggId?: string;
+  thumbnail?: string;
+  isExpansion: boolean;
+  availableExpansions: { bggId: string; name: string }[];
+  parentItem?: { bggId: string; name: string };
+  // False only when bggId came from a free-text guess (searchCatalog's top
+  // result for unselected/typed text) rather than an explicit pick — the
+  // only case where the match needs confirming before it's trusted. An
+  // explicit __bgg__: pick or __custom__: choice is always confident, since
+  // there's nothing ambiguous about either.
+  confident: boolean;
+  // The catalog entry's real name/year, present whenever bggId is set —
+  // itemName intentionally stays the user's own raw text (unchanged from
+  // before this fix) so listing titles still reflect what they typed;
+  // matchedName/matchedYear are what actually get attached, used for the
+  // confirmation prompt and the /marketplace price "best guess" note.
+  matchedName?: string;
+  matchedYear?: number | null;
+}
+
+async function resolveMarketplaceItem(rawItem: string): Promise<ResolvedMarketplaceItem> {
+  if (rawItem.startsWith('__custom__:')) {
+    return {
+      itemName: rawItem.slice('__custom__:'.length),
+      isExpansion: false,
+      availableExpansions: [],
+      confident: true,
+    };
+  }
+
+  if (rawItem.startsWith('__bgg__:')) {
+    const entry = getCatalogEntryById(rawItem.slice('__bgg__:'.length));
+    if (entry) {
+      try {
+        const details = await resolveCatalogDetails(entry);
+        return { itemName: entry.name, ...details, confident: true, matchedName: entry.name, matchedYear: entry.year };
+      } catch {
+        // BGG lookup is best-effort
+      }
+    }
+    // Catalog entry vanished since the dropdown was shown — treat as unmatched.
+    return { itemName: rawItem, isExpansion: false, availableExpansions: [], confident: true };
+  }
+
+  // Free-typed text — an unselected autocomplete suggestion, or the hub
+  // wizard's modal, which has no autocomplete at all. A match here is only
+  // ever a guess (see the "Gloom" vs "Gloomhaven" example above).
+  try {
+    const results = searchCatalog(rawItem);
+    if (results.length > 0) {
+      const entry = results[0];
+      const details = await resolveCatalogDetails(entry);
+      return { itemName: rawItem, ...details, confident: false, matchedName: entry.name, matchedYear: entry.year };
+    }
+  } catch {
+    // BGG lookup is best-effort
+  }
+  return { itemName: rawItem, isExpansion: false, availableExpansions: [], confident: true };
+}
+
+// The shared "what's next" branch after an item has been resolved (and, if
+// needed, confirmed) — used at initial draft creation and after every
+// confirmation-prompt outcome. Identical for sell/trade except the final step.
+async function continueAfterItemResolved(
+  interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction,
+  draft: SellDraft,
+  draftId: string,
+): Promise<void> {
+  if (!draft.bggId) {
+    await showNoBggPrompt(interaction, draft.itemName, draftId);
+  } else if (!draft.isExpansion && (draft.availableExpansions?.length ?? 0) > 0) {
+    await showExpansionSelect(interaction, draft, draftId);
+  } else if (draft.isExpansion && draft.parentItem) {
+    await showIncludeBaseGameSelect(interaction, draft, draftId);
+  } else if (draft.listingType === 'sell') {
+    await showPriceScreen(interaction, draft, draftId);
+  } else {
+    await createTradeListing(interaction, draft);
+  }
+}
+
+async function showConfirmMatchPrompt(
+  interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction,
+  draft: SellDraft,
+  draftId: string,
+  matchedName: string,
+  matchedYear: number | null | undefined,
+): Promise<void> {
+  const embed = new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle('Found a possible match')
+    .setDescription(
+      `You searched for **${draft.itemName}** — is this the game you meant?\n\n` +
+      `${draft.isExpansion ? '🧩' : '🎲'} **${matchedName}**${matchedYear ? ` (${matchedYear})` : ''}`,
+    );
+  if (draft.thumbnail) embed.setThumbnail(draft.thumbnail);
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(`mp_match_yes_${draftId}`).setLabel("Yes, that's it").setStyle(ButtonStyle.Success).setEmoji('✅'),
+    new ButtonBuilder().setCustomId(`mp_match_search_${draftId}`).setLabel('Search again').setStyle(ButtonStyle.Secondary).setEmoji('🔍'),
+    new ButtonBuilder().setCustomId(`mp_match_notbgg_${draftId}`).setLabel('Not on BGG').setStyle(ButtonStyle.Secondary).setEmoji('📝'),
+  );
+
+  await interaction.editReply({ embeds: [embed], components: [row] });
+}
+
+export async function handleMatchConfirmYes(interaction: ButtonInteraction, draftId: string): Promise<void> {
+  await interaction.deferUpdate();
+  const draft = sellDrafts.get(draftId);
+  if (!draft || draft.userId !== interaction.user.id || draft.expiresAt < Date.now()) {
+    await interaction.editReply({ content: 'This session has expired. Please run the command again.', embeds: [], components: [] });
+    return;
+  }
+  await continueAfterItemResolved(interaction, draft, draftId);
+}
+
+export async function handleMatchConfirmNotBgg(interaction: ButtonInteraction, draftId: string): Promise<void> {
+  await interaction.deferUpdate();
+  const draft = sellDrafts.get(draftId);
+  if (!draft || draft.userId !== interaction.user.id || draft.expiresAt < Date.now()) {
+    await interaction.editReply({ content: 'This session has expired. Please run the command again.', embeds: [], components: [] });
+    return;
+  }
+  const updated = updateDraft(draftId, {
+    bggId: undefined,
+    thumbnail: undefined,
+    isExpansion: false,
+    availableExpansions: [],
+    parentItem: undefined,
+  })!;
+  await showNoBggPrompt(interaction, updated.itemName, draftId);
+}
+
+export async function handleMatchConfirmSearchAgain(interaction: ButtonInteraction, draftId: string): Promise<void> {
+  const draft = sellDrafts.get(draftId);
+  if (!draft || draft.userId !== interaction.user.id || draft.expiresAt < Date.now()) {
+    await interaction.reply({ content: 'This session has expired. Please run the command again.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  const modal = new ModalBuilder()
+    .setCustomId(`mp_match_research_modal_${draftId}`)
+    .setTitle('Search Again')
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('item')
+          .setLabel('Item name')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('e.g. Gloomhaven')
+          .setRequired(true)
+          .setMaxLength(100),
+      ),
+    );
+  await interaction.showModal(modal);
+}
+
+export async function handleMatchResearchModal(interaction: ModalSubmitInteraction, draftId: string): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const draft = sellDrafts.get(draftId);
+  if (!draft || draft.userId !== interaction.user.id || draft.expiresAt < Date.now()) {
+    await interaction.editReply({ content: 'This session has expired. Please run the command again.' });
+    return;
+  }
+
+  const rawItem = interaction.fields.getTextInputValue('item').trim();
+  const resolution = await resolveMarketplaceItem(rawItem);
+  const updated = updateDraft(draftId, {
+    itemName: resolution.itemName,
+    bggId: resolution.bggId,
+    thumbnail: resolution.thumbnail,
+    isExpansion: resolution.isExpansion,
+    availableExpansions: resolution.availableExpansions,
+    parentItem: resolution.parentItem,
+  })!;
+
+  if (updated.bggId && !resolution.confident && resolution.matchedName) {
+    await showConfirmMatchPrompt(interaction, updated, draftId, resolution.matchedName, resolution.matchedYear);
+    return;
+  }
+  await continueAfterItemResolved(interaction, updated, draftId);
+}
+
 // ── /marketplace post sell ──────────────────────────────────────────────────
 
 async function handlePostSell(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -913,9 +1131,6 @@ async function handlePostSell(interaction: ChatInputCommandInteraction): Promise
     return;
   }
 
-  const isCustomItem = rawItem.startsWith('__custom__:');
-  const itemName = isCustomItem ? rawItem.slice('__custom__:'.length) : rawItem;
-
   const displayName = interaction.member
     ? (interaction.member as { displayName?: string }).displayName ?? interaction.user.username
     : interaction.user.username;
@@ -925,69 +1140,43 @@ async function handlePostSell(interaction: ChatInputCommandInteraction): Promise
     guildId,
     interaction.user.id,
     displayName,
-    itemName,
-    isCustomItem,
+    rawItem,
     condition,
     notes,
     bidsAllowed,
   );
 }
 
-// Shared by the slash command above and the marketplace hub's Sell wizard
-// (see handleHubMarketplaceOffersButton below) — everything after the item
-// name/condition/offers-allowed choice is resolved identically regardless of
-// how those were collected. skipCatalogSearch mirrors the slash command's
-// "__custom__:" sentinel — the hub wizard always attempts a catalog match
-// (there's no autocomplete step to have picked "use as custom text" from).
+// Shared by the slash command above, the marketplace hub's Sell wizard (see
+// handleHubMarketplaceOffers below), and "search again" on the match-
+// confirmation prompt — everything after the item name/condition/offers-
+// allowed choice is resolved identically regardless of how those were
+// collected. rawItem may carry a __custom__:/__bgg__: sentinel (slash-command
+// autocomplete) or be plain free-typed text (hub wizard modal, or an
+// unselected autocomplete suggestion) — resolveMarketplaceItem sorts that out.
 async function createSellDraftAndContinue(
   interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction,
   guildId: string,
   userId: string,
   displayName: string,
-  itemName: string,
-  skipCatalogSearch: boolean,
+  rawItem: string,
   condition: Condition,
   notes: string | undefined,
   bidsAllowed: boolean,
 ): Promise<void> {
-  let bggId: string | undefined;
-  let thumbnail: string | undefined;
-  let isExpansion = false;
-  let availableExpansions: { bggId: string; name: string }[] = [];
-  let parentItem: { bggId: string; name: string } | undefined;
-
-  if (!skipCatalogSearch) {
-    try {
-      const results = searchCatalog(itemName);
-      if (results.length > 0) {
-        const catalogEntry = results[0];
-        bggId = String(catalogEntry.id);
-        isExpansion = catalogEntry.isExpansion;
-        const details = await getBGGGame(bggId).catch(() => null);
-        if (details?.thumbnail) thumbnail = details.thumbnail;
-        if (!isExpansion && details?.expansions) {
-          availableExpansions = details.expansions.map((e) => ({ bggId: e.id, name: e.name }));
-        }
-        if (isExpansion && details?.parentGame) {
-          parentItem = { bggId: details.parentGame.id, name: details.parentGame.name };
-        }
-      }
-    } catch {
-      // BGG lookup is best-effort
-    }
-  }
+  const resolution = await resolveMarketplaceItem(rawItem);
 
   const draft: Omit<SellDraft, 'expiresAt'> = {
     listingType: 'sell',
     guildId,
     userId,
     username: displayName,
-    itemName,
-    bggId,
-    thumbnail,
-    isExpansion,
-    availableExpansions,
-    parentItem,
+    itemName: resolution.itemName,
+    bggId: resolution.bggId,
+    thumbnail: resolution.thumbnail,
+    isExpansion: resolution.isExpansion,
+    availableExpansions: resolution.availableExpansions,
+    parentItem: resolution.parentItem,
     condition,
     notes,
     bidsAllowed,
@@ -996,15 +1185,11 @@ async function createSellDraftAndContinue(
   const draftId = storeDraft(draft);
   const stored = sellDrafts.get(draftId)!;
 
-  if (!bggId) {
-    await showNoBggPrompt(interaction, itemName, draftId);
-  } else if (!isExpansion && availableExpansions.length > 0) {
-    await showExpansionSelect(interaction, stored, draftId);
-  } else if (isExpansion && parentItem) {
-    await showIncludeBaseGameSelect(interaction, stored, draftId);
-  } else {
-    await showPriceScreen(interaction, stored, draftId);
+  if (stored.bggId && !resolution.confident && resolution.matchedName) {
+    await showConfirmMatchPrompt(interaction, stored, draftId, resolution.matchedName, resolution.matchedYear);
+    return;
   }
+  await continueAfterItemResolved(interaction, stored, draftId);
 }
 
 async function showExpansionSelect(
@@ -1150,7 +1335,7 @@ async function showPriceScreen(
   draft: SellDraft,
   draftId: string,
 ): Promise<void> {
-  const { itemName, bggId, thumbnail, condition, expansions, isExpansion, parentItem, includesBaseGame, priceCheckOnly } = draft;
+  const { itemName, bggId, thumbnail, condition, expansions, isExpansion, parentItem, includesBaseGame, priceCheckOnly, matchNote } = draft;
   const expansionCount = expansions?.length ?? 0;
   const includeBase = !!(includesBaseGame && parentItem);
   const bundleExtras = [...(expansions ?? []), ...(includeBase ? [parentItem!] : [])];
@@ -1161,7 +1346,7 @@ async function showPriceScreen(
   const priceEmbed = new EmbedBuilder()
     .setColor(0x57f287)
     .setTitle(priceCheckOnly ? `Price check — ${titleLabel}` : `Set a price for ${titleLabel}`)
-    .setDescription('Pick an option below.');
+    .setDescription(matchNote ? `${matchNote}\n\nPick an option below.` : 'Pick an option below.');
 
   if (!priceCheckOnly) {
     priceEmbed.addFields({ name: 'Condition', value: CONDITION_LABELS[condition], inline: true });
@@ -1364,9 +1549,6 @@ async function handlePostTrade(interaction: ChatInputCommandInteraction): Promis
     return;
   }
 
-  const isCustomItem = rawItem.startsWith('__custom__:');
-  const itemName = isCustomItem ? rawItem.slice('__custom__:'.length) : rawItem;
-
   const username = interaction.member
     ? (interaction.member as { displayName?: string }).displayName ?? interaction.user.username
     : interaction.user.username;
@@ -1376,66 +1558,40 @@ async function handlePostTrade(interaction: ChatInputCommandInteraction): Promis
     guildId,
     interaction.user.id,
     username,
-    itemName,
-    isCustomItem,
+    rawItem,
     condition,
     notes,
     lookingFor,
   );
 }
 
-// Shared by the slash command above and the marketplace hub's Trade wizard
-// (see handleHubMarketplaceTradeModal below) — see createSellDraftAndContinue
-// above for why skipCatalogSearch exists.
+// Shared by the slash command above, the marketplace hub's Trade wizard (see
+// handleHubMarketplaceConditionSelect below), and "search again" on the
+// match-confirmation prompt — see createSellDraftAndContinue above for how
+// rawItem gets resolved.
 async function createTradeDraftAndContinue(
   interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction,
   guildId: string,
   userId: string,
   username: string,
-  itemName: string,
-  skipCatalogSearch: boolean,
+  rawItem: string,
   condition: Condition,
   notes: string | undefined,
   lookingFor: string | undefined,
 ): Promise<void> {
-  let bggId: string | undefined;
-  let thumbnail: string | undefined;
-  let isExpansion = false;
-  let availableExpansions: { bggId: string; name: string }[] = [];
-  let parentItem: { bggId: string; name: string } | undefined;
-
-  if (!skipCatalogSearch) {
-    try {
-      const results = searchCatalog(itemName);
-      if (results.length > 0) {
-        const catalogEntry = results[0];
-        bggId = String(catalogEntry.id);
-        isExpansion = catalogEntry.isExpansion;
-        const details = await getBGGGame(bggId).catch(() => null);
-        if (details?.thumbnail) thumbnail = details.thumbnail;
-        if (!isExpansion && details?.expansions) {
-          availableExpansions = details.expansions.map((e) => ({ bggId: e.id, name: e.name }));
-        }
-        if (isExpansion && details?.parentGame) {
-          parentItem = { bggId: details.parentGame.id, name: details.parentGame.name };
-        }
-      }
-    } catch {
-      // best-effort
-    }
-  }
+  const resolution = await resolveMarketplaceItem(rawItem);
 
   const draft: Omit<SellDraft, 'expiresAt'> = {
     listingType: 'trade',
     guildId,
     userId,
     username,
-    itemName,
-    bggId,
-    thumbnail,
-    isExpansion,
-    availableExpansions,
-    parentItem,
+    itemName: resolution.itemName,
+    bggId: resolution.bggId,
+    thumbnail: resolution.thumbnail,
+    isExpansion: resolution.isExpansion,
+    availableExpansions: resolution.availableExpansions,
+    parentItem: resolution.parentItem,
     condition,
     notes,
     bidsAllowed: true,
@@ -1445,15 +1601,11 @@ async function createTradeDraftAndContinue(
   const draftId = storeDraft(draft);
   const stored = sellDrafts.get(draftId)!;
 
-  if (!bggId) {
-    await showNoBggPrompt(interaction, itemName, draftId);
-  } else if (!isExpansion && availableExpansions.length > 0) {
-    await showExpansionSelect(interaction, stored, draftId);
-  } else if (isExpansion && parentItem) {
-    await showIncludeBaseGameSelect(interaction, stored, draftId);
-  } else {
-    await createTradeListing(interaction, stored);
+  if (stored.bggId && !resolution.confident && resolution.matchedName) {
+    await showConfirmMatchPrompt(interaction, stored, draftId, resolution.matchedName, resolution.matchedYear);
+    return;
   }
+  await continueAfterItemResolved(interaction, stored, draftId);
 }
 
 // ── /marketplace price ───────────────────────────────────────────────────────
@@ -1468,39 +1620,15 @@ async function handlePriceCheck(interaction: ChatInputCommandInteraction): Promi
     return;
   }
 
-  const isCustomItem = rawItem.startsWith('__custom__:');
-  const itemName = isCustomItem ? rawItem.slice('__custom__:'.length) : rawItem;
-
-  if (isCustomItem || !itemName.trim()) {
+  if (rawItem.startsWith('__custom__:')) {
+    const itemName = rawItem.slice('__custom__:'.length);
     await interaction.editReply({ content: `**${itemName}** is not in the BGG catalog — no marketplace price data available for custom items.` });
     return;
   }
 
-  let bggId: string | undefined;
-  let thumbnail: string | undefined;
-  let isExpansion = false;
-  let availableExpansions: { bggId: string; name: string }[] = [];
-  let parentItem: { bggId: string; name: string } | undefined;
-
-  try {
-    const results = searchCatalog(itemName);
-    if (results.length > 0) {
-      const catalogEntry = results[0];
-      bggId = String(catalogEntry.id);
-      isExpansion = catalogEntry.isExpansion;
-      const details = await getBGGGame(bggId).catch(() => null);
-      if (details?.thumbnail) thumbnail = details.thumbnail;
-      if (!isExpansion && details?.expansions) {
-        availableExpansions = details.expansions.map((e) => ({ bggId: e.id, name: e.name }));
-      }
-      if (isExpansion && details?.parentGame) {
-        parentItem = { bggId: details.parentGame.id, name: details.parentGame.name };
-      }
-    }
-  } catch { /* best effort */ }
-
-  if (!bggId) {
-    await interaction.editReply({ content: `No BGG entry found for **${itemName}** — can't look up pricing.` });
+  const resolution = await resolveMarketplaceItem(rawItem);
+  if (!resolution.bggId) {
+    await interaction.editReply({ content: `No BGG entry found for **${resolution.itemName}** — can't look up pricing.` });
     return;
   }
 
@@ -1509,23 +1637,29 @@ async function handlePriceCheck(interaction: ChatInputCommandInteraction): Promi
     guildId: interaction.guildId!,
     userId: interaction.user.id,
     username: '',
-    itemName,
-    bggId,
-    thumbnail,
-    isExpansion,
-    availableExpansions,
-    parentItem,
+    itemName: resolution.itemName,
+    bggId: resolution.bggId,
+    thumbnail: resolution.thumbnail,
+    isExpansion: resolution.isExpansion,
+    availableExpansions: resolution.availableExpansions,
+    parentItem: resolution.parentItem,
     condition: 'good',
     bidsAllowed: false,
     priceCheckOnly: true,
+    // No interactive confirmation step for price check (read-only, lower
+    // stakes) — just surface an unconfirmed guess in the embed instead of
+    // silently showing prices for the wrong game.
+    matchNote: !resolution.confident && resolution.matchedName
+      ? `⚠️ Best-guess match for "${rawItem}" — showing prices for **${resolution.matchedName}**${resolution.matchedYear ? ` (${resolution.matchedYear})` : ''}.`
+      : undefined,
   };
 
   const draftId = storeDraft(draft);
   const stored = sellDrafts.get(draftId)!;
 
-  if (!isExpansion && availableExpansions.length > 0) {
+  if (!resolution.isExpansion && resolution.availableExpansions.length > 0) {
     await showExpansionSelect(interaction, stored, draftId);
-  } else if (isExpansion && parentItem) {
+  } else if (resolution.isExpansion && resolution.parentItem) {
     await showIncludeBaseGameSelect(interaction, stored, draftId);
   } else {
     await showPriceScreen(interaction, stored, draftId);
@@ -2060,7 +2194,6 @@ export async function handleHubMarketplaceConditionSelect(interaction: StringSel
       interaction.user.id,
       hubDisplayName(interaction),
       pending.itemName,
-      false,
       condition,
       undefined,
       undefined,
@@ -2097,7 +2230,6 @@ async function handleHubMarketplaceOffers(interaction: ButtonInteraction, bidsAl
     interaction.user.id,
     hubDisplayName(interaction),
     pending.itemName,
-    false,
     pending.condition,
     undefined,
     bidsAllowed,

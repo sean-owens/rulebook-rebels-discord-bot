@@ -23,7 +23,12 @@ import {
   handleHubMarketplaceMyButton,
   handleIncludeBaseGameYes,
   handleIncludeBaseGameNo,
+  handleMatchConfirmYes,
+  handleMatchConfirmNotBgg,
+  handleMatchConfirmSearchAgain,
+  handleMatchResearchModal,
   handlePriceNone,
+  execute,
 } from '../src/commands/marketplace';
 import {
   createListing,
@@ -741,12 +746,27 @@ describe('marketplace "Quick Actions" hub', () => {
       _resetCatalog();
     });
 
+    // The hub wizard collects the item name via a free-text modal (no
+    // autocomplete), so resolveMarketplaceItem always treats a catalog match
+    // there as unconfirmed — every one of these flows must pass through the
+    // match-confirmation prompt (tapping "Yes, that's it") before it reaches
+    // the expansion-select/base-game step.
+    async function confirmMatch(offersInteraction: any, userId: string, client: any): Promise<any> {
+      const confirmCall = offersInteraction.editReply.mock.calls[0][0];
+      expect(confirmCall.embeds[0].data.title).toBe('Found a possible match');
+      const draftId = confirmCall.components[0].components[0].data.custom_id.slice('mp_match_yes_'.length);
+      const interaction = makeButtonInteraction(userId, client);
+      await handleMatchConfirmYes(interaction, draftId);
+      return interaction;
+    }
+
     it('offers the expansion-select step (not the base-game prompt) when selling the base game', async () => {
       await handleHubMarketplaceSellModal(makeModalInteraction('base-1', 'Wingspan', {}));
       await handleHubMarketplaceConditionSelect(makeSelectInteraction('base-1', 'good', {}));
-      const interaction = makeButtonInteraction('base-1', {});
+      const offersInteraction = makeButtonInteraction('base-1', {});
+      await handleHubMarketplaceOffersYes(offersInteraction);
 
-      await handleHubMarketplaceOffersYes(interaction);
+      const interaction = await confirmMatch(offersInteraction, 'base-1', {});
 
       const call = interaction.editReply.mock.calls[0][0];
       expect(call.embeds[0].data.title).toContain('Expansions for Wingspan');
@@ -756,9 +776,10 @@ describe('marketplace "Quick Actions" hub', () => {
     it('offers to include the base game (not an expansion-select) when selling an expansion', async () => {
       await handleHubMarketplaceSellModal(makeModalInteraction('exp-1', 'Wingspan: European Expansion', {}));
       await handleHubMarketplaceConditionSelect(makeSelectInteraction('exp-1', 'good', {}));
-      const interaction = makeButtonInteraction('exp-1', {});
+      const offersInteraction = makeButtonInteraction('exp-1', {});
+      await handleHubMarketplaceOffersYes(offersInteraction);
 
-      await handleHubMarketplaceOffersYes(interaction);
+      const interaction = await confirmMatch(offersInteraction, 'exp-1', {});
 
       const call = interaction.editReply.mock.calls[0][0];
       expect(call.embeds[0].data.title).toBe('Wingspan: European Expansion is an expansion');
@@ -770,8 +791,9 @@ describe('marketplace "Quick Actions" hub', () => {
     it('including the base game carries through to the price screen title and the final listing', async () => {
       await handleHubMarketplaceSellModal(makeModalInteraction('exp-2', 'Wingspan: European Expansion', {}));
       await handleHubMarketplaceConditionSelect(makeSelectInteraction('exp-2', 'good', {}));
-      const promptInteraction = makeButtonInteraction('exp-2', {});
-      await handleHubMarketplaceOffersYes(promptInteraction);
+      const offersInteraction = makeButtonInteraction('exp-2', {});
+      await handleHubMarketplaceOffersYes(offersInteraction);
+      const promptInteraction = await confirmMatch(offersInteraction, 'exp-2', {});
       const draftId = promptInteraction.editReply.mock.calls[0][0].components[0].components[0].data.custom_id.slice('mp_base_yes_'.length);
 
       const yesInteraction = makeButtonInteraction('exp-2', {});
@@ -794,8 +816,9 @@ describe('marketplace "Quick Actions" hub', () => {
     it('declining the base game leaves it out of the final listing', async () => {
       await handleHubMarketplaceSellModal(makeModalInteraction('exp-3', 'Wingspan: European Expansion', {}));
       await handleHubMarketplaceConditionSelect(makeSelectInteraction('exp-3', 'good', {}));
-      const promptInteraction = makeButtonInteraction('exp-3', {});
-      await handleHubMarketplaceOffersYes(promptInteraction);
+      const offersInteraction = makeButtonInteraction('exp-3', {});
+      await handleHubMarketplaceOffersYes(offersInteraction);
+      const promptInteraction = await confirmMatch(offersInteraction, 'exp-3', {});
       const draftId = promptInteraction.editReply.mock.calls[0][0].components[0].components[1].data.custom_id.slice('mp_base_no_'.length);
 
       const noInteraction = makeButtonInteraction('exp-3', {});
@@ -812,5 +835,135 @@ describe('marketplace "Quick Actions" hub', () => {
       const created = listings.find((l) => l.itemName === 'Wingspan: European Expansion' && l.userId === 'exp-3');
       expect(created?.includesBaseGame).toBe(false);
     });
+  });
+});
+
+// Regression coverage for a bug where a marketplace search silently attached
+// the wrong BGG game — e.g. typing "gloom" (meaning "Gloomhaven") matched the
+// shorter, unrelated game "Gloom" with no confirmation shown. The fix:
+// autocomplete now encodes the BGG id (__bgg__:<id>) so an explicit pick is
+// unambiguous and never needs confirming; any other value (free-typed text,
+// or the hub wizard's modal, which has no autocomplete at all) only ever
+// counts as a guess and must be confirmed before it's attached to the draft.
+describe('/marketplace post sell — catalog match confirmation', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-match-confirm-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+    _resetCatalog();
+    _loadFromCsvText(EXPANSION_TEST_CSV);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    _resetCatalog();
+  });
+
+  function makeSellInteraction(rawItem: string) {
+    return {
+      guildId: 'guild-1',
+      user: { id: 'seller-1', username: 'seller-1' },
+      member: null,
+      client: { channels: { fetch: vi.fn(async () => { throw new Error('no marketplace channel configured in test'); }) } },
+      options: {
+        getSubcommandGroup: (_allowNull?: boolean) => 'post',
+        getSubcommand: () => 'sell',
+        getString: (name: string) => {
+          if (name === 'item') return rawItem;
+          if (name === 'condition') return 'good';
+          return null;
+        },
+        getBoolean: () => true,
+      },
+      deferReply: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
+      reply: vi.fn(async () => {}),
+      update: vi.fn(async () => {}),
+      deferUpdate: vi.fn(async () => {}),
+      showModal: vi.fn(async () => {}),
+    } as any;
+  }
+
+  it('an explicit __bgg__: autocomplete pick skips the confirmation prompt entirely', async () => {
+    const interaction = makeSellInteraction('__bgg__:266192'); // Wingspan
+    await execute(interaction);
+
+    // Straight to expansion-select (Wingspan has an available expansion) —
+    // no "Found a possible match" step in between.
+    const call = interaction.editReply.mock.calls[0][0];
+    expect(call.embeds[0].data.title).toContain('Expansions for Wingspan');
+  });
+
+  it('free-typed text that exactly matches a catalog entry shows a confirmation prompt instead of proceeding silently', async () => {
+    const interaction = makeSellInteraction('Wingspan');
+    await execute(interaction);
+
+    const call = interaction.editReply.mock.calls[0][0];
+    expect(call.embeds[0].data.title).toBe('Found a possible match');
+    expect(call.embeds[0].data.description).toContain('Wingspan');
+    const customIds = call.components[0].components.map((c: any) => c.data.custom_id);
+    expect(customIds[0]).toMatch(/^mp_match_yes_/);
+    expect(customIds[1]).toMatch(/^mp_match_search_/);
+    expect(customIds[2]).toMatch(/^mp_match_notbgg_/);
+  });
+
+  it('tapping "Yes, that\'s it" continues the wizard using the confirmed match', async () => {
+    const offersInteraction = makeSellInteraction('Wingspan');
+    await execute(offersInteraction);
+    const draftId = offersInteraction.editReply.mock.calls[0][0].components[0].components[0].data.custom_id.slice('mp_match_yes_'.length);
+
+    const yesInteraction = makeSellInteraction('');
+    await handleMatchConfirmYes(yesInteraction, draftId);
+
+    const call = yesInteraction.editReply.mock.calls[0][0];
+    expect(call.embeds[0].data.title).toContain('Expansions for Wingspan');
+  });
+
+  it('"Not on BGG" clears the matched game and falls back to the custom-item prompt', async () => {
+    const offersInteraction = makeSellInteraction('Wingspan');
+    await execute(offersInteraction);
+    const confirmCall = offersInteraction.editReply.mock.calls[0][0];
+    const draftId = confirmCall.components[0].components[2].data.custom_id.slice('mp_match_notbgg_'.length);
+
+    const notBggInteraction = makeSellInteraction('');
+    await handleMatchConfirmNotBgg(notBggInteraction, draftId);
+
+    expect(notBggInteraction.editReply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining("wasn't found on BoardGameGeek") }),
+    );
+  });
+
+  it('"Search again" shows a modal, and re-resolving still requires confirmation for another free-typed match', async () => {
+    const offersInteraction = makeSellInteraction('Wingspan');
+    await execute(offersInteraction);
+    const draftId = offersInteraction.editReply.mock.calls[0][0].components[0].components[0].data.custom_id.slice('mp_match_yes_'.length);
+
+    const searchAgainInteraction = makeSellInteraction('');
+    await handleMatchConfirmSearchAgain(searchAgainInteraction, draftId);
+    expect(searchAgainInteraction.showModal).toHaveBeenCalledTimes(1);
+    const modal = searchAgainInteraction.showModal.mock.calls[0][0].toJSON();
+    expect(modal.custom_id).toBe(`mp_match_research_modal_${draftId}`);
+
+    const modalInteraction = {
+      ...makeSellInteraction(''),
+      fields: { getTextInputValue: (name: string) => (name === 'item' ? 'Wingspan: European Expansion' : '') },
+    };
+    await handleMatchResearchModal(modalInteraction, draftId);
+
+    const call = modalInteraction.editReply.mock.calls[0][0];
+    expect(call.embeds[0].data.title).toBe('Found a possible match');
+    expect(call.embeds[0].data.description).toContain('Wingspan: European Expansion');
+  });
+
+  it('a __custom__: pick (the "not on BGG" autocomplete choice) skips confirmation — nothing to confirm', async () => {
+    const interaction = makeSellInteraction('__custom__:My Homemade Prototype');
+    await execute(interaction);
+
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining("wasn't found on BoardGameGeek") }),
+    );
   });
 });

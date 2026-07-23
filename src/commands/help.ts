@@ -95,6 +95,14 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         name: '🎮  /hub',
         value: 'Get the "Quick Actions" buttons for wherever you are — an event channel, private room, marketplace, or general chat — as an ephemeral reply only you can see, in case you missed the pinned one.',
       },
+      {
+        name: '🍿  /snacks',
+        value: [
+          '`add` — Add a snack to the list for this event or private room',
+          '`list` — See the current snacks list',
+          '`remove` — Remove one of your own snacks from the list',
+        ].join('\n'),
+      },
       ...(isHost
         ? [
             {

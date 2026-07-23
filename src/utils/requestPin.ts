@@ -213,6 +213,7 @@ export function buildHubEmbed(): EmbedBuilder {
       { name: '🎲 Suggest a Game', value: "Add a game to this event's lineup." },
       { name: '🙋 Request a Game to Bring', value: 'Ask an owner to bring a specific game.' },
       { name: '📋 My Games to Bring', value: "See which of your games have been requested." },
+      { name: '🍿 Snacks', value: 'See or add to the snacks list.' },
     );
 }
 
@@ -221,6 +222,7 @@ export function buildHubButtons(): ActionRowBuilder<ButtonBuilder> {
     new ButtonBuilder().setCustomId('hub_suggest').setLabel('🎲 Suggest a Game').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId('hub_request').setLabel('🙋 Request a Game to Bring').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId('hub_bring').setLabel('📋 My Games to Bring').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('hub_snacks').setLabel('🍿 Snacks').setStyle(ButtonStyle.Secondary),
   );
 }
 

@@ -26,6 +26,11 @@ export interface SellDraft {
   lookingFor?: string;
   suggestedPrice?: number;
   priceCheckOnly?: boolean;
+  // Set when bggId came from an unconfirmed free-text guess rather than an
+  // explicit pick — /marketplace price has no interactive confirmation step
+  // (see resolveMarketplaceItem/showConfirmMatchPrompt in marketplace.ts), so
+  // this surfaces the mismatch risk in the price embed instead of staying silent.
+  matchNote?: string;
   expiresAt: number;
 }
 

@@ -42,6 +42,7 @@ import {
   handleLibraryDeclineBring,
   handleHubRequestButton,
   handleHubRequestModal,
+  handleHubViewModal,
   handleHubBringButton,
 } from '../src/commands/library';
 import { addGame, getRequestsForEvent, getRequestById, addPendingAsk, addRequest } from '../src/utils/libraryStorage';
@@ -596,6 +597,41 @@ describe('hub buttons ("🙋 Request a Game to Bring" / "📋 My Games to Bring"
 
     expect(interaction.reply).toHaveBeenCalledWith(
       expect.objectContaining({ content: expect.stringContaining('Could not find this event') }),
+    );
+  });
+
+  it('handleHubViewModal resolves an exact match, the same as /library view', async () => {
+    await addGame('g1', 'alice', 'Catan');
+    mockLoadGameNights.mockReturnValue([]);
+    const interaction = {
+      guildId: 'g1',
+      user: { id: 'alice' },
+      fields: { getTextInputValue: (name: string) => (name === 'game' ? 'Catan' : '') },
+      deferReply: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
+    } as any;
+
+    await handleHubViewModal(interaction);
+
+    const call = interaction.editReply.mock.calls[0][0];
+    expect(call.embeds[0].data.title).toBe('Catan');
+  });
+
+  it('handleHubViewModal shows a "did you mean" select for a partial match', async () => {
+    await addGame('g1', 'alice', 'Catan');
+    mockLoadGameNights.mockReturnValue([]);
+    const interaction = {
+      guildId: 'g1',
+      user: { id: 'alice' },
+      fields: { getTextInputValue: (name: string) => (name === 'game' ? 'cat' : '') },
+      deferReply: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
+    } as any;
+
+    await handleHubViewModal(interaction);
+
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('did you mean') }),
     );
   });
 });

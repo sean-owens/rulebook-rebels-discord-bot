@@ -609,18 +609,23 @@ export function buildRoomHubEmbed(): EmbedBuilder {
       { name: '➕ Invite', value: 'Add more people to this room.' },
       { name: '👢 Kick', value: 'Remove someone from this room.' },
       { name: '📌 Toggle Auto-Expire', value: 'Make this room persistent, or set a new expiration date.' },
-      { name: '🔒 Close Room', value: 'Close and delete this room.' },
+      { name: '🍿 Snacks', value: 'See or add to the snacks list.' },
     );
 }
 
-export function buildRoomHubButtons(): ActionRowBuilder<ButtonBuilder> {
-  return new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId('hub_suggest').setLabel('🎲 Suggest a Game').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId('hub_room_invite').setLabel('➕ Invite').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('hub_room_kick').setLabel('👢 Kick').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('hub_room_persist').setLabel('📌 Toggle Auto-Expire').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('hub_room_close').setLabel('🔒 Close Room').setStyle(ButtonStyle.Danger),
-  );
+// Close Room isn't on this panel — it's the one destructive action here, and
+// with the row already full (Discord caps an action row at 5 buttons) it's
+// left as a deliberate typed command (`/room close`) rather than a tap target.
+export function buildRoomHubButtons(): ActionRowBuilder<ButtonBuilder>[] {
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId('hub_suggest').setLabel('🎲 Suggest a Game').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('hub_room_invite').setLabel('➕ Invite').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('hub_room_kick').setLabel('👢 Kick').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('hub_room_persist').setLabel('📌 Toggle Auto-Expire').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('hub_snacks').setLabel('🍿 Snacks').setStyle(ButtonStyle.Secondary),
+    ),
+  ];
 }
 
 export async function updateRoomHubPin(client: Client, roomId: string): Promise<void> {
@@ -635,7 +640,7 @@ export async function updateRoomHubPin(client: Client, roomId: string): Promise<
     return;
   }
 
-  const payload = { embeds: [buildRoomHubEmbed()], components: [buildRoomHubButtons()] };
+  const payload = { embeds: [buildRoomHubEmbed()], components: buildRoomHubButtons() };
 
   if (room.hubPinMessageId) {
     try {
@@ -895,45 +900,6 @@ export async function handleHubRoomPersistModal(interaction: ModalSubmitInteract
   await updateRoomChannelDisplay(interaction.client, room);
 }
 
-export async function handleHubRoomCloseButton(interaction: ButtonInteraction): Promise<void> {
-  const room = await requireManageableRoom(
-    interaction,
-    "Only the room's creator or a host/admin can close this room.",
-  );
-  if (!room) return;
-
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId('hub_room_close_confirm').setLabel('Yes, close this room').setStyle(ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId('hub_room_close_cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary),
-  );
-  await interaction.reply({
-    content: 'Are you sure you want to close and delete this room? This cannot be undone.',
-    components: [row],
-    flags: MessageFlags.Ephemeral,
-  });
-}
-
-export async function handleHubRoomCloseConfirm(interaction: ButtonInteraction): Promise<void> {
-  const room = await findRoomByChannel(interaction.channelId!);
-  if (!room) {
-    await interaction.update({ content: 'This room no longer exists.', components: [] });
-    return;
-  }
-  if (!canManageRoom(interaction, room)) {
-    await interaction.update({
-      content: "Only the room's creator or a host/admin can close this room.",
-      components: [],
-    });
-    return;
-  }
-
-  await interaction.update({ content: 'Closing this room…', components: [] });
-  await closeRoom(interaction.client, room, 'Private room closed');
-}
-
-export async function handleHubRoomCloseCancel(interaction: ButtonInteraction): Promise<void> {
-  await interaction.update({ content: 'Cancelled — this room stays open.', components: [] });
-}
 
 export async function checkExpiredRooms(client: Client): Promise<void> {
   const now = Date.now();
