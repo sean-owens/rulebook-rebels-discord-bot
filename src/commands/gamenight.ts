@@ -225,11 +225,14 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
     })) as TextChannel;
     eventChannelId = eventChannel.id;
 
-    // Bot always needs explicit access so it can manage the channel
+    // Bot always needs explicit access so it can manage the channel. PinMessages is
+    // its own permission split off from ManageMessages (see discord link.md) — both
+    // are required to actually pin the Quick Actions/Game Lineup/Games to Bring pins.
     await eventChannel.permissionOverwrites.create(me, {
       ViewChannel: true,
       SendMessages: true,
       ManageMessages: true,
+      PinMessages: true,
     });
 
     if (!defaults.openEventChannels) {
