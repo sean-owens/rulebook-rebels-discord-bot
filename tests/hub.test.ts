@@ -134,7 +134,7 @@ describe('/hub', () => {
     const reply = interaction.reply.mock.calls[0][0];
     const customIds = reply.components[0].components.map((c: any) => c.toJSON().custom_id);
     expect(customIds).toContain('hub_general_browse');
-    expect(customIds).toContain('hub_general_rsvp');
+    expect(customIds).toContain('hub_general_view');
   });
 
   it('replies with a graceful ephemeral message when the channel matches no hub', async () => {

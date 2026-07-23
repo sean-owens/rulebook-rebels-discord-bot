@@ -1374,7 +1374,16 @@ function buildPartialMatchSelect(
 
 async function handleView(interaction: ChatInputCommandInteraction): Promise<void> {
   const gameName = interaction.options.getString('game', true).trim();
+  await resolveViewFlow(interaction, gameName);
+}
 
+// Shared by the slash command above and the general hub's "🔍 View a Game"
+// button/modal (see handleHubViewModal below) — mirrors resolveRequestFlow's
+// slash-command/hub-modal sharing pattern.
+async function resolveViewFlow(
+  interaction: ChatInputCommandInteraction | ModalSubmitInteraction,
+  gameName: string,
+): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   await enrichFromBGG(gameName, false);
 
@@ -2331,6 +2340,15 @@ export async function handleHubRequestButton(interaction: ButtonInteraction): Pr
 export async function handleHubRequestModal(interaction: ModalSubmitInteraction): Promise<void> {
   const gameName = interaction.fields.getTextInputValue('game').trim();
   await resolveRequestFlow(interaction, gameName);
+}
+
+// ── General hub button: "🔍 View a Game" ────────────────────────────────────
+// The modal itself (hub_view_modal) is built in generalHub.ts's
+// handleHubGeneralViewButton, alongside the rest of the general hub's UI.
+
+export async function handleHubViewModal(interaction: ModalSubmitInteraction): Promise<void> {
+  const gameName = interaction.fields.getTextInputValue('game').trim();
+  await resolveViewFlow(interaction, gameName);
 }
 
 // ── Hub button: "📋 My Games to Bring" ─────────────────────────────────────

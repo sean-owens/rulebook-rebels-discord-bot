@@ -8,10 +8,12 @@ import {
   Client,
   EmbedBuilder,
   MessageFlags,
+  ModalBuilder,
   TextChannel,
+  TextInputBuilder,
+  TextInputStyle,
 } from 'discord.js';
 import { getGuildConfig, updateGuildConfig } from './config';
-import { loadGameNights } from './storage';
 import { handleList, handleMine, resolveRandomGames } from '../commands/library';
 
 // ── "Quick Actions" button hub for general chat ─────────────────────────────
@@ -29,7 +31,7 @@ export function buildGeneralHubEmbed(): EmbedBuilder {
     .setColor(0x57f287)
     .setDescription('Prefer tapping over typing? Use the buttons below instead of slash commands.')
     .addFields(
-      { name: '✅ RSVP to Next Event', value: 'Jump to the next event to RSVP.' },
+      { name: '🔍 View a Game', value: 'Look up any game in the library.' },
       { name: '📚 Browse Library', value: 'See every game the group owns.' },
       { name: '📋 My Games', value: "See the games you've added to the library." },
       { name: '🎲 Random Game', value: 'Get 3 random picks, tailored to your /myroles if set.' },
@@ -39,7 +41,7 @@ export function buildGeneralHubEmbed(): EmbedBuilder {
 
 export function buildGeneralHubButtons(): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId('hub_general_rsvp').setLabel('✅ RSVP to Next Event').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('hub_general_view').setLabel('🔍 View a Game').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId('hub_general_browse').setLabel('📚 Browse Library').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId('hub_general_mine').setLabel('📋 My Games').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('hub_general_random').setLabel('🎲 Random Game').setStyle(ButtonStyle.Secondary),
@@ -118,27 +120,22 @@ export async function handleGeneralHubConfig(interaction: ChatInputCommandIntera
 
 // ── Hub buttons ──────────────────────────────────────────────────────────────
 
-export async function handleHubGeneralRsvpButton(interaction: ButtonInteraction): Promise<void> {
-  const now = new Date();
-  const upcoming = (await loadGameNights())
-    .filter((gn) => !gn.cancelled && !gn.archived && new Date(gn.startTimeISO) > now)
-    .sort((a, b) => new Date(a.startTimeISO).getTime() - new Date(b.startTimeISO).getTime());
-
-  if (upcoming.length === 0) {
-    await interaction.reply({ content: "There's no upcoming event to RSVP to yet.", flags: MessageFlags.Ephemeral });
-    return;
-  }
-
-  const next = upcoming[0];
-  const jumpUrl = `https://discord.com/channels/${next.guildId}/${next.channelId}/${next.messageId}`;
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setLabel(`Jump to ${next.title ?? 'the event'} — ${next.date}`).setStyle(ButtonStyle.Link).setURL(jumpUrl),
-  );
-  await interaction.reply({
-    content: 'Tap below to RSVP:',
-    components: [row],
-    flags: MessageFlags.Ephemeral,
-  });
+export async function handleHubGeneralViewButton(interaction: ButtonInteraction): Promise<void> {
+  const modal = new ModalBuilder()
+    .setCustomId('hub_view_modal')
+    .setTitle('View a Game')
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('game')
+          .setLabel('Game name')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('e.g. Catan')
+          .setRequired(true)
+          .setMaxLength(100),
+      ),
+    );
+  await interaction.showModal(modal);
 }
 
 export async function handleHubGeneralBrowseButton(interaction: ButtonInteraction): Promise<void> {

@@ -6,40 +6,13 @@ import { ChannelType } from 'discord.js';
 import {
   updateGeneralHubPin,
   handleGeneralHubConfig,
-  handleHubGeneralRsvpButton,
+  handleHubGeneralViewButton,
   handleHubGeneralBrowseButton,
   handleHubGeneralMineButton,
   handleHubGeneralRandomButton,
 } from '../src/utils/generalHub';
 import { getGuildConfig, updateGuildConfig } from '../src/utils/config';
-import { upsertGameNight, GameNight } from '../src/utils/storage';
 import { addGame } from '../src/utils/libraryStorage';
-
-function makeGameNight(overrides: Partial<GameNight> = {}): GameNight {
-  const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-  return {
-    id: overrides.id ?? 'gn1',
-    title: overrides.title ?? 'Board Game Bash',
-    date: 'August 22',
-    time: '7pm',
-    location: 'TBD',
-    link: '',
-    description: '',
-    messageId: 'announce-msg-1',
-    channelId: 'announcements',
-    guildId: 'guild-1',
-    discordEventId: null,
-    eventChannelId: 'event-channel-1',
-    startTimeISO: future,
-    endTimeISO: null,
-    rsvps: { yes: [], maybe: [], no: [] },
-    createdBy: 'host1',
-    cancelled: false,
-    archived: false,
-    createdAt: new Date().toISOString(),
-    ...overrides,
-  };
-}
 
 function makeChannelClient() {
   let nextId = 1;
@@ -187,44 +160,19 @@ describe('general "Quick Actions" hub', () => {
     });
   });
 
-  describe('handleHubGeneralRsvpButton', () => {
+  describe('handleHubGeneralViewButton', () => {
     function makeButtonInteraction() {
-      return { reply: vi.fn(async () => {}) } as any;
+      return { showModal: vi.fn(async () => {}) } as any;
     }
 
-    it('replies with a link button jumping to the soonest upcoming event', async () => {
-      await upsertGameNight(makeGameNight({ id: 'gn1', title: 'Board Game Bash', date: 'August 22' }));
+    it('shows a modal asking for the game name', async () => {
       const interaction = makeButtonInteraction();
 
-      await handleHubGeneralRsvpButton(interaction);
+      await handleHubGeneralViewButton(interaction);
 
-      const replyCall = interaction.reply.mock.calls[0][0];
-      const button = replyCall.components[0].components[0].toJSON();
-      expect(button.url).toBe('https://discord.com/channels/guild-1/announcements/announce-msg-1');
-      expect(button.style).toBe(5); // ButtonStyle.Link
-    });
-
-    it('replies with a graceful message when there is no upcoming event', async () => {
-      const interaction = makeButtonInteraction();
-      await handleHubGeneralRsvpButton(interaction);
-
-      expect(interaction.reply).toHaveBeenCalledWith(
-        expect.objectContaining({ content: expect.stringContaining('no upcoming event') }),
-      );
-    });
-
-    it('picks the soonest of multiple upcoming events', async () => {
-      const soon = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-      const later = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString();
-      await upsertGameNight(makeGameNight({ id: 'gn-later', messageId: 'later-msg', startTimeISO: later }));
-      await upsertGameNight(makeGameNight({ id: 'gn-soon', messageId: 'soon-msg', startTimeISO: soon }));
-      const interaction = makeButtonInteraction();
-
-      await handleHubGeneralRsvpButton(interaction);
-
-      const replyCall = interaction.reply.mock.calls[0][0];
-      const button = replyCall.components[0].components[0].toJSON();
-      expect(button.url).toContain('soon-msg');
+      expect(interaction.showModal).toHaveBeenCalledTimes(1);
+      const modal = interaction.showModal.mock.calls[0][0].toJSON();
+      expect(modal.custom_id).toBe('hub_view_modal');
     });
   });
 

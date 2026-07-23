@@ -3,6 +3,7 @@ import {
   searchCatalog,
   isCatalogLoaded,
   normalizeName,
+  getCatalogEntryById,
   _loadFromCsvText,
   _resetCatalog,
 } from '../src/utils/bggCatalog';
@@ -124,5 +125,26 @@ describe('searchCatalog', () => {
     const expResults = searchCatalog('wingspan european expansion');
     const exp = expResults.find((r) => r.isExpansion);
     expect(exp?.rank).toBeNull();
+  });
+});
+
+describe('getCatalogEntryById', () => {
+  beforeEach(() => {
+    _resetCatalog();
+    _loadFromCsvText(TEST_CSV);
+  });
+
+  it('finds an entry by its exact BGG id, regardless of name collisions', () => {
+    const entry = getCatalogEntryById('174430');
+    expect(entry?.name).toBe('Gloomhaven');
+  });
+
+  it('returns undefined for an id not in the catalog', () => {
+    expect(getCatalogEntryById('999999999')).toBeUndefined();
+  });
+
+  it('returns undefined when the catalog is not loaded', () => {
+    _resetCatalog();
+    expect(getCatalogEntryById('174430')).toBeUndefined();
   });
 });

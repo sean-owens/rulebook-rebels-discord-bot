@@ -12,6 +12,7 @@ export interface BGGCatalogEntry {
 
 let entries: BGGCatalogEntry[] = [];
 let exactIndex = new Map<string, BGGCatalogEntry[]>();
+let idIndex = new Map<string, BGGCatalogEntry>();
 let wordIndex = new Map<string, number[]>();
 let sortedWords: string[] = [];
 let _loaded = false;
@@ -94,6 +95,7 @@ function buildIndexes(csvText: string): void {
 
   entries = [];
   exactIndex = new Map();
+  idIndex = new Map();
   wordIndex = new Map();
 
   for (let i = 1; i < lines.length; i++) {
@@ -117,6 +119,7 @@ function buildIndexes(csvText: string): void {
     const key = normalizeName(name);
     if (!exactIndex.has(key)) exactIndex.set(key, []);
     exactIndex.get(key)!.push(entry);
+    idIndex.set(id, entry);
 
     for (const word of tokenize(name)) {
       if (!wordIndex.has(word)) wordIndex.set(word, []);
@@ -181,6 +184,14 @@ function sortResults(arr: BGGCatalogEntry[]): BGGCatalogEntry[] {
   });
 }
 
+// Looks up a specific entry by BGG id — used to resolve an explicit
+// autocomplete pick (marketplace.ts encodes the id into the suggestion's
+// value) without re-running a name search, which could return a different
+// entry than the one actually offered/clicked.
+export function getCatalogEntryById(id: string): BGGCatalogEntry | undefined {
+  return idIndex.get(id);
+}
+
 export function searchCatalog(query: string, limit = 5): BGGCatalogEntry[] {
   if (!_loaded || !query.trim()) return [];
 
@@ -217,6 +228,7 @@ export function _loadFromCsvText(csvText: string): void {
 export function _resetCatalog(): void {
   entries = [];
   exactIndex = new Map();
+  idIndex = new Map();
   wordIndex = new Map();
   sortedWords = [];
   _loaded = false;

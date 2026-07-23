@@ -25,7 +25,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   if (room) {
     await interaction.reply({
       embeds: [buildRoomHubEmbed()],
-      components: [buildRoomHubButtons()],
+      components: buildRoomHubButtons(),
       flags: MessageFlags.Ephemeral,
     });
     return;

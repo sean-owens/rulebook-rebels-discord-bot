@@ -218,7 +218,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.3h Quick Actions Hub (button panel)
 
-**What it does:** A pinned "🎮 Quick Actions" message with three buttons — 🎲 Suggest a Game, 🙋 Request a Game to Bring, 📋 My Games to Bring — posted automatically in the event channel the moment it's created, alongside (not replacing) the existing plain-text welcome message. Built for members on mobile who'd rather tap a button than learn/type a slash command; each button leads to the exact same result as its slash-command equivalent, just entered via a modal (popup text form) instead of command options. Because the hub only ever lives inside one specific event channel, it always resolves that event directly from the channel — there's no event picker step here, unlike running the bare slash commands outside an event channel.
+**What it does:** A pinned "🎮 Quick Actions" message with four buttons — 🎲 Suggest a Game, 🙋 Request a Game to Bring, 📋 My Games to Bring, 🍿 Snacks — posted automatically in the event channel the moment it's created, alongside (not replacing) the existing plain-text welcome message. Built for members on mobile who'd rather tap a button than learn/type a slash command; each button leads to the exact same result as its slash-command equivalent, just entered via a modal (popup text form) instead of command options. Because the hub only ever lives inside one specific event channel, it always resolves that event directly from the channel — there's no event picker step here, unlike running the bare slash commands outside an event channel.
 
 - [ ] Create a new event — confirm the "🎮 Quick Actions" message appears in the new event channel, pinned, alongside the separate plain-text welcome message
 - [ ] Tap "🎲 Suggest a Game" — confirm a modal pops up asking for a game title
@@ -230,6 +230,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Submit the modal with a game not in the library, or whose owner(s) aren't attending — confirm the same error messages `/library request` gives
 - [ ] Tap "📋 My Games to Bring" — confirm it shows the same ephemeral embed `/library bring` (no game param) shows for this event, listing only requests tied to games you (or a linked delegate) own
 - [ ] Tap "📋 My Games to Bring" with nothing of yours requested — confirm "None of your games have been requested for this event"
+- [ ] Tap "🍿 Snacks" — confirm the same panel described in 1.11d, scoped to this event
 - [ ] Manually un-pin the hub message — confirm it stays unpinned afterward (known limitation: unlike the Game Lineup/Games to Bring pins, which refresh and re-pin on every suggest/request, nothing currently re-triggers the hub pin after event creation, so there's no later action that would restore it)
 
 ## 1.4 `/library` — Game Library
@@ -520,6 +521,14 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Click **Skip** — confirm the listing posts with no reference link and no BGG thumbnail
 - [ ] Click **Add Link** and submit a non-URL string (e.g. plain text) — confirm graceful validation rather than a broken link field
 
+#### Catalog match confirmation (regression: a search like "gloom" no longer silently attaches the wrong game, e.g. "Gloom" instead of the intended "Gloomhaven")
+- [ ] Type an item name and pick a real suggestion from the autocomplete dropdown — confirm it goes straight to the next step (price screen / expansion select / include-base-game prompt) with **no** "Found a possible match" confirmation in between
+- [ ] Type an item name and submit **without** picking a suggestion (e.g. type "gloom" and press Enter before the dropdown is used) where that text happens to exactly match a *different*, shorter real BGG entry — confirm a "Found a possible match" prompt appears showing the matched game's name/year (and thumbnail, if any), instead of silently attaching it
+- [ ] On that prompt, tap "✅ Yes, that's it" — confirm the wizard continues normally from there (expansion select / include-base-game / price screen) using the matched game's data
+- [ ] On that prompt, tap "🔍 Search again" — confirm a modal appears asking for a new item name; submit one — confirm it re-resolves and shows another confirmation prompt if it matches something (still unconfirmed, since typed text is never an explicit pick), or the no-BGG-match reference-link prompt if it matches nothing
+- [ ] On that prompt, tap "📝 Not on BGG" — confirm it clears the matched game and falls through to the same reference-link prompt (Add Link / Skip) as an item with no BGG match at all
+- [ ] Use the marketplace hub's "📦 Sell an Item" / "🔄 Propose a Trade" wizard (1.7m) instead of the slash command — confirm every item name entered there (always free-typed, since a modal has no autocomplete) goes through this same confirmation step whenever it matches a catalog entry
+
 ### 1.7b `/marketplace post trade`
 
 **What it does:** Creates a trade listing for an item you want to trade away.
@@ -540,6 +549,8 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run with an item that IS an expansion — confirm the include-base-game prompt appears instead of an expansion-select step; choosing to include the base game shows a per-item price breakdown including the base game
 - [ ] Run with a custom/non-BGG item (type a name not in the catalog) — confirm "not in the BGG catalog" error
 - [ ] Confirm no listing is created and nothing is posted to the marketplace channel
+- [ ] Pick a real autocomplete suggestion — confirm the price embed shows no "best-guess" note
+- [ ] Type text and submit **without** picking a suggestion, where it happens to exactly match a different real BGG entry — confirm the price embed includes a "⚠️ Best-guess match" note naming the actual game the prices are for (unlike `post sell`/`post trade`, price check has no interactive confirmation step — it's read-only, so the note is shown instead)
 
 ### 1.7d `/marketplace conditions`
 
@@ -695,7 +706,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.8f Quick Actions Hub (button panel)
 
-**What it does:** A pinned "🎮 Quick Actions" message posted automatically the moment a room is created, alongside the existing plain-text welcome message — buttons for 🎲 Suggest a Game, ➕ Invite, 👢 Kick, 📌 Toggle Auto-Expire, and 🔒 Close Room. The Suggest a Game button is the exact same one used in event channels (same modal, same underlying flow) — it just resolves this room instead of an event when tapped here. Invite/Kick use Discord's native member-picker (a dropdown of server members) instead of typing mentions or a user option, and Close Room adds a Yes/Cancel confirmation step that the slash command itself doesn't have, since a misplaced tap is easier than a mistyped command for something this irreversible. Every button enforces the same "room creator or host/admin" permission check as its slash-command equivalent.
+**What it does:** A pinned "🎮 Quick Actions" message posted automatically the moment a room is created, alongside the existing plain-text welcome message — buttons for 🎲 Suggest a Game, ➕ Invite, 👢 Kick, 📌 Toggle Auto-Expire, and 🍿 Snacks. Close Room isn't on this panel — with the row already at Discord's 5-button cap, closing (the one destructive action here) is left as a deliberate typed `/room close` rather than a tap target. The Suggest a Game button is the exact same one used in event channels (same modal, same underlying flow) — it just resolves this room instead of an event when tapped here. Invite/Kick use Discord's native member-picker (a dropdown of server members) instead of typing mentions or a user option. Every button enforces the same "room creator or host/admin" permission check as its slash-command equivalent — except 🍿 Snacks, which (like `/snacks`) has no creator/host/admin restriction at all.
 
 - [ ] Create a room — confirm the "🎮 Quick Actions" message appears, pinned, alongside the separate plain-text welcome message
 - [ ] Tap "🎲 Suggest a Game" — confirm the same modal/flow as the event-channel hub, correctly suggesting into this room
@@ -706,22 +717,22 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Tap "👢 Kick" and select the room's creator — confirm "You can't remove the room's creator..." same as the command
 - [ ] Tap "📌 Toggle Auto-Expire" on a room with a set expiration date — confirm it immediately becomes persistent (no modal), same as `/room persist enabled:true`
 - [ ] Tap "📌 Toggle Auto-Expire" on a persistent room — confirm a modal asks for a new expiration date, and submitting it sets the date and turns persistence back off, same as `/room persist enabled:false date:...`
-- [ ] Tap "🔒 Close Room" — confirm a "this cannot be undone" Yes/Cancel prompt appears rather than closing immediately
-- [ ] Tap "Cancel" on that prompt — confirm the room stays open
-- [ ] Tap "Yes, close this room" — confirm the room is closed and its channel deleted, identical to `/room close`
+- [ ] Tap "🍿 Snacks" — confirm the same panel described in 1.11d, scoped to this room; unlike every other button here, a member with no elevated role who didn't create the room can use it too
+- [ ] Confirm there is no "Close Room" button on this panel — closing a room is still available, just only via `/room close`
 
 ## 1.9 General Chat — Quick Actions Hub
 
 ### 1.9a Quick Actions Hub (button panel)
 
-**What it does:** A pinned "🎮 Quick Actions" message in a designated, already-populated chat channel (e.g. #general) — set via `/admin general config` (3.9q). Unlike the event/room/marketplace hubs, this one isn't tied to any single command; it's a standalone panel of the most-used member actions that don't otherwise have a home: ✅ RSVP to Next Event, 📚 Browse Library, 📋 My Games, 🎲 Random Game, and 🙋 Request a Game to Bring. The Request button is the *exact same* `/library request` hub button used in event channels — since that flow already falls back to the soonest upcoming event when there's no specific event-channel context, it works correctly from any channel with no changes.
+**What it does:** A pinned "🎮 Quick Actions" message in a designated, already-populated chat channel (e.g. #general) — set via `/admin general config` (3.9q). Unlike the event/room/marketplace hubs, this one isn't tied to any single command; it's a standalone panel of the most-used member actions that don't otherwise have a home: 🔍 View a Game, 📚 Browse Library, 📋 My Games, 🎲 Random Game, and 🙋 Request a Game to Bring. All five are library-focused — there's no RSVP shortcut here; RSVP happens on the event's own announcement post. The Request button is the *exact same* `/library request` hub button used in event channels — since that flow already falls back to the soonest upcoming event when there's no specific event-channel context, it works correctly from any channel with no changes. View works the same way, delegating to `/library view` (1.4e) via a one-field modal (there's no autocomplete available in a modal, so it always goes through the same exact-match/partial-match resolution `/library view` itself uses).
 
 **Prerequisites:** a channel configured via `/admin general config` (3.9q).
 
 - [ ] Configure the general hub channel — confirm the "🎮 Quick Actions" message appears there, pinned
-- [ ] Tap "✅ RSVP to Next Event" with an upcoming event — confirm an ephemeral reply with a link button that jumps directly to that event's announcement post
-- [ ] Tap "✅ RSVP to Next Event" with no upcoming events — confirm "There's no upcoming event to RSVP to yet" instead of an error
-- [ ] With 2+ upcoming events, tap "✅ RSVP to Next Event" — confirm it jumps to the **soonest** one, not just the first one created
+- [ ] Tap "🔍 View a Game" — confirm a modal appears asking for a game name
+- [ ] Submit a name that's an exact match in the library — confirm the same embed `/library view` (1.4e) would show
+- [ ] Submit a partial/misspelled name — confirm a "did you mean" select menu appears, same as `/library view`
+- [ ] Submit a name with no match at all — confirm the same "wasn't found in the library" message as `/library view`
 - [ ] Tap "📚 Browse Library" — confirm the same output as `/library list` (1.4a)
 - [ ] Tap "📋 My Games" — confirm the same output as `/library mine` (1.4b), listing only your own (and shared-with-you) games
 - [ ] Tap "🎲 Random Game" — confirm the same output as running `/library random` with no options, including the personalization fallback to your `/myroles` (1.5) preferences if set
@@ -741,6 +752,50 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run `/hub` inside the configured general-chat hub channel (3.9q) — confirm an ephemeral reply with the same embed/buttons as the general hub (1.9a)
 - [ ] Run `/hub` in any other channel (not a room, event, marketplace hub thread, or configured general channel) — confirm a graceful ephemeral message explaining no hub applies here, rather than an error
 - [ ] Confirm every button on the `/hub` reply works exactly the same as tapping it on the pinned message (same handlers, same customIds)
+
+---
+
+## 1.11 `/snacks` — Snack Sign-Up
+
+**Prerequisites:** an event channel or private room to run these in — `/snacks` replies with a context error anywhere else.
+
+### 1.11a `/snacks add`
+
+**What it does:** Adds an item to the snack sign-up list for the event or private room channel you run it in. There's no matching/dedup against what others already listed — it's just a running list of who's bringing what. Creates (on the first add) or updates a pinned "🍿 Snacks List" message in the channel, mirroring how the Game Lineup/Games to Bring pins work.
+
+- [ ] Run inside an event channel — confirm a pinned "🍿 Snacks List" message appears (created on first use) listing your item next to your display name
+- [ ] Run inside a private room — confirm the same, scoped to that room's channel
+- [ ] Run a second time with a different item, same person — confirm both items now show under your name, not just the latest
+- [ ] Run as a different person in the same channel — confirm both people's items show together on the same pinned list
+- [ ] Run outside of an event channel or private room — confirm "This must be used inside an event channel or a private room" and nothing is added
+- [ ] Manually un-pin the Snacks List message, then add another item — confirm the existing message is edited and re-pinned rather than a duplicate being posted
+
+### 1.11b `/snacks list`
+
+**What it does:** Shows the current snack sign-up list for this channel ephemerally — the same content as the pinned message, for anyone who wants a private look without scrolling.
+
+- [ ] Run with items already on the list — confirm the ephemeral reply matches the pinned message
+- [ ] Run with nothing added yet — confirm "No snacks have been added yet"
+- [ ] Run outside of an event channel or private room — confirm the same context error as `/snacks add`
+
+### 1.11c `/snacks remove`
+
+**What it does:** Removes one of your own snack items from this channel's list. If you've only added one item it's removed directly; if you've added more than one, you're shown a select menu to pick which one. Nobody can remove someone else's item.
+
+- [ ] Run having added exactly one item — confirm it's removed immediately and the pinned list updates
+- [ ] Run having added two or more items — confirm a select menu (listing only your own items) lets you choose which one to remove, and only that one disappears from the pinned list
+- [ ] Run having added nothing — confirm "You haven't added any snacks yet"
+- [ ] Run outside of an event channel or private room — confirm the same context error as `/snacks add`
+
+### 1.11d Quick Actions Hub (button panel)
+
+**What it does:** Both the event-channel hub (1.3h) and the private-room hub (1.8f) get a 🍿 Snacks button. Tapping it shows an ephemeral view of the current list, plus ➕ Add a Snack and 🗑️ Remove Mine buttons. Add opens the same one-field modal `/snacks add` fills in via options; Remove Mine follows the same direct-removal/select-menu logic as `/snacks remove`, depending on how many items you've personally added.
+
+- [ ] Tap "🍿 Snacks" — confirm an ephemeral reply showing the current list (or "No snacks have been added yet"), with Add and Remove Mine buttons
+- [ ] Tap "🍿 Snacks" having added nothing yourself — confirm "🗑️ Remove Mine" is disabled
+- [ ] Tap "➕ Add a Snack" — confirm a modal asks what you're bringing, and submitting it adds to the list and updates the pinned message, same as `/snacks add`
+- [ ] Tap "🗑️ Remove Mine" having added exactly one item — confirm it's removed directly, same as `/snacks remove`
+- [ ] Tap "🗑️ Remove Mine" having added more than one item — confirm a select menu lets you pick which one to remove
 
 ---
 
@@ -1171,6 +1226,14 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Click **Skip** — confirm the listing posts with no reference link and no BGG thumbnail
 - [ ] Click **Add Link** and submit a non-URL string (e.g. plain text) — confirm graceful validation rather than a broken link field
 
+#### Catalog match confirmation (regression: a search like "gloom" no longer silently attaches the wrong game, e.g. "Gloom" instead of the intended "Gloomhaven")
+- [ ] Type an item name and pick a real suggestion from the autocomplete dropdown — confirm it goes straight to the next step (price screen / expansion select / include-base-game prompt) with **no** "Found a possible match" confirmation in between
+- [ ] Type an item name and submit **without** picking a suggestion (e.g. type "gloom" and press Enter before the dropdown is used) where that text happens to exactly match a *different*, shorter real BGG entry — confirm a "Found a possible match" prompt appears showing the matched game's name/year (and thumbnail, if any), instead of silently attaching it
+- [ ] On that prompt, tap "✅ Yes, that's it" — confirm the wizard continues normally from there (expansion select / include-base-game / price screen) using the matched game's data
+- [ ] On that prompt, tap "🔍 Search again" — confirm a modal appears asking for a new item name; submit one — confirm it re-resolves and shows another confirmation prompt if it matches something (still unconfirmed, since typed text is never an explicit pick), or the no-BGG-match reference-link prompt if it matches nothing
+- [ ] On that prompt, tap "📝 Not on BGG" — confirm it clears the matched game and falls through to the same reference-link prompt (Add Link / Skip) as an item with no BGG match at all
+- [ ] Use the marketplace hub's "📦 Sell an Item" / "🔄 Propose a Trade" wizard (2.7m) instead of the slash command — confirm every item name entered there (always free-typed, since a modal has no autocomplete) goes through this same confirmation step whenever it matches a catalog entry
+
 ### 2.7b `/marketplace post trade`
 
 **What it does:** Creates a trade listing for an item you want to trade away.
@@ -1191,6 +1254,8 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run with an item that IS an expansion — confirm the include-base-game prompt appears instead of an expansion-select step; choosing to include the base game shows a per-item price breakdown including the base game
 - [ ] Run with a custom/non-BGG item (type a name not in the catalog) — confirm "not in the BGG catalog" error
 - [ ] Confirm no listing is created and nothing is posted to the marketplace channel
+- [ ] Pick a real autocomplete suggestion — confirm the price embed shows no "best-guess" note
+- [ ] Type text and submit **without** picking a suggestion, where it happens to exactly match a different real BGG entry — confirm the price embed includes a "⚠️ Best-guess match" note naming the actual game the prices are for (unlike `post sell`/`post trade`, price check has no interactive confirmation step — it's read-only, so the note is shown instead)
 
 ### 2.7d `/marketplace conditions`
 
@@ -1459,7 +1524,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.9f Quick Actions Hub (button panel)
 
-**What it does:** A pinned "🎮 Quick Actions" message posted automatically the moment a room is created, alongside the existing plain-text welcome message — buttons for 🎲 Suggest a Game, ➕ Invite, 👢 Kick, 📌 Toggle Auto-Expire, and 🔒 Close Room. The Suggest a Game button is the exact same one used in event channels (same modal, same underlying flow) — it just resolves this room instead of an event when tapped here. Invite/Kick use Discord's native member-picker (a dropdown of server members) instead of typing mentions or a user option, and Close Room adds a Yes/Cancel confirmation step that the slash command itself doesn't have, since a misplaced tap is easier than a mistyped command for something this irreversible. Every button enforces the same "room creator or host/admin" permission check as its slash-command equivalent.
+**What it does:** A pinned "🎮 Quick Actions" message posted automatically the moment a room is created, alongside the existing plain-text welcome message — buttons for 🎲 Suggest a Game, ➕ Invite, 👢 Kick, 📌 Toggle Auto-Expire, and 🍿 Snacks. Close Room isn't on this panel — with the row already at Discord's 5-button cap, closing (the one destructive action here) is left as a deliberate typed `/room close` rather than a tap target. The Suggest a Game button is the exact same one used in event channels (same modal, same underlying flow) — it just resolves this room instead of an event when tapped here. Invite/Kick use Discord's native member-picker (a dropdown of server members) instead of typing mentions or a user option. Every button enforces the same "room creator or host/admin" permission check as its slash-command equivalent — except 🍿 Snacks, which (like `/snacks`) has no creator/host/admin restriction at all.
 
 - [ ] Create a room — confirm the "🎮 Quick Actions" message appears, pinned, alongside the separate plain-text welcome message
 - [ ] Tap "🎲 Suggest a Game" — confirm the same modal/flow as the event-channel hub, correctly suggesting into this room
@@ -1470,22 +1535,22 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Tap "👢 Kick" and select the room's creator — confirm "You can't remove the room's creator..." same as the command
 - [ ] Tap "📌 Toggle Auto-Expire" on a room with a set expiration date — confirm it immediately becomes persistent (no modal), same as `/room persist enabled:true`
 - [ ] Tap "📌 Toggle Auto-Expire" on a persistent room — confirm a modal asks for a new expiration date, and submitting it sets the date and turns persistence back off, same as `/room persist enabled:false date:...`
-- [ ] Tap "🔒 Close Room" — confirm a "this cannot be undone" Yes/Cancel prompt appears rather than closing immediately
-- [ ] Tap "Cancel" on that prompt — confirm the room stays open
-- [ ] Tap "Yes, close this room" — confirm the room is closed and its channel deleted, identical to `/room close`
+- [ ] Tap "🍿 Snacks" — confirm the same panel described in 1.11d, scoped to this room; unlike every other button here, a member with no elevated role who didn't create the room can use it too
+- [ ] Confirm there is no "Close Room" button on this panel — closing a room is still available, just only via `/room close`
 
 ## 2.10 General Chat — Quick Actions Hub
 
 ### 2.10a Quick Actions Hub (button panel)
 
-**What it does:** A pinned "🎮 Quick Actions" message in a designated, already-populated chat channel (e.g. #general) — set via `/admin general config` (3.9q). Unlike the event/room/marketplace hubs, this one isn't tied to any single command; it's a standalone panel of the most-used member actions that don't otherwise have a home: ✅ RSVP to Next Event, 📚 Browse Library, 📋 My Games, 🎲 Random Game, and 🙋 Request a Game to Bring. The Request button is the *exact same* `/library request` hub button used in event channels — since that flow already falls back to the soonest upcoming event when there's no specific event-channel context, it works correctly from any channel with no changes.
+**What it does:** A pinned "🎮 Quick Actions" message in a designated, already-populated chat channel (e.g. #general) — set via `/admin general config` (3.9q). Unlike the event/room/marketplace hubs, this one isn't tied to any single command; it's a standalone panel of the most-used member actions that don't otherwise have a home: 🔍 View a Game, 📚 Browse Library, 📋 My Games, 🎲 Random Game, and 🙋 Request a Game to Bring. All five are library-focused — there's no RSVP shortcut here; RSVP happens on the event's own announcement post. The Request button is the *exact same* `/library request` hub button used in event channels — since that flow already falls back to the soonest upcoming event when there's no specific event-channel context, it works correctly from any channel with no changes. View works the same way, delegating to `/library view` (2.4e) via a one-field modal (there's no autocomplete available in a modal, so it always goes through the same exact-match/partial-match resolution `/library view` itself uses).
 
 **Prerequisites:** a channel configured via `/admin general config` (3.9q).
 
 - [ ] Configure the general hub channel — confirm the "🎮 Quick Actions" message appears there, pinned
-- [ ] Tap "✅ RSVP to Next Event" with an upcoming event — confirm an ephemeral reply with a link button that jumps directly to that event's announcement post
-- [ ] Tap "✅ RSVP to Next Event" with no upcoming events — confirm "There's no upcoming event to RSVP to yet" instead of an error
-- [ ] With 2+ upcoming events, tap "✅ RSVP to Next Event" — confirm it jumps to the **soonest** one, not just the first one created
+- [ ] Tap "🔍 View a Game" — confirm a modal appears asking for a game name
+- [ ] Submit a name that's an exact match in the library — confirm the same embed `/library view` (2.4e) would show
+- [ ] Submit a partial/misspelled name — confirm a "did you mean" select menu appears, same as `/library view`
+- [ ] Submit a name with no match at all — confirm the same "wasn't found in the library" message as `/library view`
 - [ ] Tap "📚 Browse Library" — confirm the same output as `/library list` (2.4a)
 - [ ] Tap "📋 My Games" — confirm the same output as `/library mine` (2.4b), listing only your own (and shared-with-you) games
 - [ ] Tap "🎲 Random Game" — confirm the same output as running `/library random` with no options, including the personalization fallback to your `/myroles` (2.5) preferences if set
@@ -1920,6 +1985,14 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Click **Skip** — confirm the listing posts with no reference link and no BGG thumbnail
 - [ ] Click **Add Link** and submit a non-URL string (e.g. plain text) — confirm graceful validation rather than a broken link field
 
+#### Catalog match confirmation (regression: a search like "gloom" no longer silently attaches the wrong game, e.g. "Gloom" instead of the intended "Gloomhaven")
+- [ ] Type an item name and pick a real suggestion from the autocomplete dropdown — confirm it goes straight to the next step (price screen / expansion select / include-base-game prompt) with **no** "Found a possible match" confirmation in between
+- [ ] Type an item name and submit **without** picking a suggestion (e.g. type "gloom" and press Enter before the dropdown is used) where that text happens to exactly match a *different*, shorter real BGG entry — confirm a "Found a possible match" prompt appears showing the matched game's name/year (and thumbnail, if any), instead of silently attaching it
+- [ ] On that prompt, tap "✅ Yes, that's it" — confirm the wizard continues normally from there (expansion select / include-base-game / price screen) using the matched game's data
+- [ ] On that prompt, tap "🔍 Search again" — confirm a modal appears asking for a new item name; submit one — confirm it re-resolves and shows another confirmation prompt if it matches something (still unconfirmed, since typed text is never an explicit pick), or the no-BGG-match reference-link prompt if it matches nothing
+- [ ] On that prompt, tap "📝 Not on BGG" — confirm it clears the matched game and falls through to the same reference-link prompt (Add Link / Skip) as an item with no BGG match at all
+- [ ] The marketplace hub's "📦 Sell an Item" / "🔄 Propose a Trade" wizard (1.7m) always free-types the item name (a modal has no autocomplete) — already covered when repeating Part 1's checks
+
 ### 3.7b `/marketplace post trade`
 
 **What it does:** Creates a trade listing for an item you want to trade away.
@@ -1940,6 +2013,8 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run with an item that IS an expansion — confirm the include-base-game prompt appears instead of an expansion-select step; choosing to include the base game shows a per-item price breakdown including the base game
 - [ ] Run with a custom/non-BGG item (type a name not in the catalog) — confirm "not in the BGG catalog" error
 - [ ] Confirm no listing is created and nothing is posted to the marketplace channel
+- [ ] Pick a real autocomplete suggestion — confirm the price embed shows no "best-guess" note
+- [ ] Type text and submit **without** picking a suggestion, where it happens to exactly match a different real BGG entry — confirm the price embed includes a "⚠️ Best-guess match" note naming the actual game the prices are for (unlike `post sell`/`post trade`, price check has no interactive confirmation step — it's read-only, so the note is shown instead)
 
 ### 3.7d `/marketplace conditions`
 
@@ -2370,7 +2445,7 @@ Text channels have no forum tags and no thread is created for a listing — each
 
 ### 3.10f Quick Actions Hub (button panel)
 
-**What it does:** A pinned "🎮 Quick Actions" message posted automatically the moment a room is created, alongside the existing plain-text welcome message — buttons for 🎲 Suggest a Game, ➕ Invite, 👢 Kick, 📌 Toggle Auto-Expire, and 🔒 Close Room. The Suggest a Game button is the exact same one used in event channels (same modal, same underlying flow) — it just resolves this room instead of an event when tapped here. Invite/Kick use Discord's native member-picker (a dropdown of server members) instead of typing mentions or a user option, and Close Room adds a Yes/Cancel confirmation step that the slash command itself doesn't have, since a misplaced tap is easier than a mistyped command for something this irreversible. Every button enforces the same "room creator or host/admin" permission check as its slash-command equivalent.
+**What it does:** A pinned "🎮 Quick Actions" message posted automatically the moment a room is created, alongside the existing plain-text welcome message — buttons for 🎲 Suggest a Game, ➕ Invite, 👢 Kick, 📌 Toggle Auto-Expire, and 🍿 Snacks. Close Room isn't on this panel — with the row already at Discord's 5-button cap, closing (the one destructive action here) is left as a deliberate typed `/room close` rather than a tap target. The Suggest a Game button is the exact same one used in event channels (same modal, same underlying flow) — it just resolves this room instead of an event when tapped here. Invite/Kick use Discord's native member-picker (a dropdown of server members) instead of typing mentions or a user option. Every button enforces the same "room creator or host/admin" permission check as its slash-command equivalent — except 🍿 Snacks, which (like `/snacks`) has no creator/host/admin restriction at all.
 
 - [ ] Create a room — confirm the "🎮 Quick Actions" message appears, pinned, alongside the separate plain-text welcome message
 - [ ] Tap "🎲 Suggest a Game" — confirm the same modal/flow as the event-channel hub, correctly suggesting into this room
@@ -2379,7 +2454,8 @@ Text channels have no forum tags and no thread is created for a listing — each
 - [ ] Tap "👢 Kick" and select the room's creator — confirm "You can't remove the room's creator..." same as the command
 - [ ] Tap "📌 Toggle Auto-Expire" on a room with a set expiration date — confirm it immediately becomes persistent (no modal), same as `/room persist enabled:true`
 - [ ] Tap "📌 Toggle Auto-Expire" on a persistent room — confirm a modal asks for a new expiration date, and submitting it sets the date and turns persistence back off, same as `/room persist enabled:false date:...`
-- [ ] Tap "🔒 Close Room" — confirm a "this cannot be undone" Yes/Cancel prompt appears rather than closing immediately, and that both Cancel and Yes work as expected
+- [ ] Tap "🍿 Snacks" — confirm the same panel described in 1.11d, scoped to this room
+- [ ] Confirm there is no "Close Room" button on this panel — closing a room is still available, just only via `/room close`
 
 ---
 

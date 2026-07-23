@@ -14,9 +14,6 @@ import {
   handleHubRoomKickSelect,
   handleHubRoomPersistButton,
   handleHubRoomPersistModal,
-  handleHubRoomCloseButton,
-  handleHubRoomCloseConfirm,
-  handleHubRoomCloseCancel,
 } from '../src/commands/room';
 import { loadRooms, upsertRoom, PrivateRoom } from '../src/utils/roomStorage';
 
@@ -1330,58 +1327,6 @@ describe('room "Quick Actions" hub', () => {
       const room = (await loadRooms())[0];
       expect(room.persistent).toBe(false);
       expect(room.expiresAt).toBeDefined();
-    });
-  });
-
-  describe('handleHubRoomCloseButton / Confirm / Cancel', () => {
-    function makeButtonInteraction(userId: string, client: any) {
-      return {
-        channelId: 'room-channel-1',
-        user: { id: userId },
-        client,
-        memberPermissions: { has: () => false },
-        reply: vi.fn(async () => {}),
-        update: vi.fn(async () => {}),
-      } as any;
-    }
-
-    it('shows a confirm/cancel prompt rather than closing immediately', async () => {
-      await upsertRoom(makeHubRoom());
-      const client = makeChannelClient();
-      const interaction = makeButtonInteraction('creator-1', client);
-
-      await handleHubRoomCloseButton(interaction);
-
-      expect(interaction.reply).toHaveBeenCalledWith(
-        expect.objectContaining({ content: expect.stringContaining('cannot be undone') }),
-      );
-      const rooms = await loadRooms();
-      expect(rooms).toHaveLength(1); // not yet closed
-    });
-
-    it('closes and deletes the room channel on confirm', async () => {
-      await upsertRoom(makeHubRoom());
-      const deleteMock = vi.fn(async () => {});
-      const client = { channels: { fetch: vi.fn(async () => ({ delete: deleteMock })) } };
-      const interaction = makeButtonInteraction('creator-1', client);
-
-      await handleHubRoomCloseConfirm(interaction);
-
-      expect(deleteMock).toHaveBeenCalled();
-      expect(await loadRooms()).toHaveLength(0);
-    });
-
-    it('leaves the room open on cancel', async () => {
-      await upsertRoom(makeHubRoom());
-      const client = makeChannelClient();
-      const interaction = makeButtonInteraction('creator-1', client);
-
-      await handleHubRoomCloseCancel(interaction);
-
-      expect(interaction.update).toHaveBeenCalledWith(
-        expect.objectContaining({ content: expect.stringContaining('stays open') }),
-      );
-      expect(await loadRooms()).toHaveLength(1);
     });
   });
 });
