@@ -244,11 +244,14 @@ async function handleCreate(interaction: ChatInputCommandInteraction): Promise<v
     // which then fails the "you can't grant a permission you don't currently hold" check
     // on this very call. /host event create's channel setup follows this same order.
     // ManageChannels is deliberately left off: the bot's base role already has it
-    // guild-wide, and granting it here isn't otherwise necessary.
+    // guild-wide, and granting it here isn't otherwise necessary. PinMessages is its
+    // own permission split off from ManageMessages (see discord link.md) — both are
+    // required to actually pin the room's Quick Actions/Snacks List messages.
     await channel.permissionOverwrites.create(me, {
       ViewChannel: true,
       SendMessages: true,
       ManageMessages: true,
+      PinMessages: true,
     });
     await channel.permissionOverwrites.create(guild.roles.everyone, { ViewChannel: false });
     await channel.permissionOverwrites.create(interaction.user, {
