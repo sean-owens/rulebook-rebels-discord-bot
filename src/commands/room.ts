@@ -23,6 +23,7 @@ import { randomUUID } from 'crypto';
 import { getGuildConfig, updateGuildConfig } from '../utils/config';
 import { parseDateTime } from './gamenight';
 import { upsertRoom, findRoomByChannel, removeRoom, loadRooms, PrivateRoom } from '../utils/roomStorage';
+import { pinWithRetry } from '../utils/discordPin';
 
 // Rooms expire at the end of the given day rather than a specific clock time —
 // the /room create command only asks for a date, not a time.
@@ -647,11 +648,7 @@ export async function updateRoomHubPin(client: Client, roomId: string): Promise<
       const msg = await channel.messages.fetch(room.hubPinMessageId);
       await msg.edit(payload);
       if (!msg.pinned) {
-        try {
-          await msg.pin();
-        } catch (err) {
-          console.warn(`Could not re-pin hub message in room channel ${room.channelId}:`, err);
-        }
+        await pinWithRetry(msg, `re-pin hub message in room channel ${room.channelId}`);
       }
       return;
     } catch {
@@ -660,11 +657,7 @@ export async function updateRoomHubPin(client: Client, roomId: string): Promise<
   }
 
   const msg = await channel.send(payload);
-  try {
-    await msg.pin();
-  } catch (err) {
-    console.warn(`Could not pin hub message in room channel ${room.channelId}:`, err);
-  }
+  await pinWithRetry(msg, `hub message in room channel ${room.channelId}`);
 
   room.hubPinMessageId = msg.id;
   await upsertRoom(room);

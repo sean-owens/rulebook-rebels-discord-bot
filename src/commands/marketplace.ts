@@ -47,6 +47,7 @@ import {
   getOpenBid,
 } from '../utils/marketplaceStorage';
 import { appendMarketplaceLog } from '../utils/marketplaceLog';
+import { pinWithRetry } from '../utils/discordPin';
 import { getGuildConfig, updateGuildConfig } from '../utils/config';
 import { removeGame, getGamesByUser } from '../utils/libraryStorage';
 import { searchCatalog, getCatalogEntryById, BGGCatalogEntry } from '../utils/bggCatalog';
@@ -1953,11 +1954,7 @@ export async function updateMarketplaceHubThread(client: Client, guildId: string
         const starterMsg = await thread.fetchStarterMessage();
         if (starterMsg) await starterMsg.edit(payload);
         if (!thread.flags.has(ChannelFlags.Pinned)) {
-          try {
-            await thread.pin();
-          } catch (err) {
-            console.warn(`Could not re-pin marketplace hub thread in guild ${guildId}:`, err);
-          }
+          await pinWithRetry(thread, `re-pin marketplace hub thread in guild ${guildId}`);
         }
         return;
       }
@@ -1973,11 +1970,7 @@ export async function updateMarketplaceHubThread(client: Client, guildId: string
     console.warn(`Could not create marketplace hub thread in guild ${guildId}:`, err);
     return;
   }
-  try {
-    await thread.pin();
-  } catch (err) {
-    console.warn(`Could not pin marketplace hub thread in guild ${guildId}:`, err);
-  }
+  await pinWithRetry(thread, `marketplace hub thread in guild ${guildId}`);
 
   await updateGuildConfig(guildId, { marketplaceHubThreadId: thread.id });
 }
@@ -2006,11 +1999,7 @@ export async function updateMarketplaceHubMessage(client: Client, guildId: strin
       const msg = await textChannel.messages.fetch(config.marketplaceHubMessageId);
       await msg.edit(payload);
       if (!msg.pinned) {
-        try {
-          await msg.pin();
-        } catch (err) {
-          console.warn(`Could not re-pin marketplace hub message in guild ${guildId}:`, err);
-        }
+        await pinWithRetry(msg, `re-pin marketplace hub message in guild ${guildId}`);
       }
       return;
     } catch {
@@ -2019,11 +2008,7 @@ export async function updateMarketplaceHubMessage(client: Client, guildId: strin
   }
 
   const msg = await textChannel.send(payload);
-  try {
-    await msg.pin();
-  } catch (err) {
-    console.warn(`Could not pin marketplace hub message in guild ${guildId}:`, err);
-  }
+  await pinWithRetry(msg, `marketplace hub message in guild ${guildId}`);
 
   await updateGuildConfig(guildId, { marketplaceHubMessageId: msg.id });
 }
@@ -2084,11 +2069,7 @@ async function updateMarketplaceListingIndex(client: Client, guildId: string): P
       const msg = await textChannel.messages.fetch(config.marketplaceListingIndexMessageId);
       await msg.edit({ embeds: [embed] });
       if (!msg.pinned) {
-        try {
-          await msg.pin();
-        } catch (err) {
-          console.warn(`Could not re-pin marketplace listing index in guild ${guildId}:`, err);
-        }
+        await pinWithRetry(msg, `re-pin marketplace listing index in guild ${guildId}`);
       }
       return;
     } catch {
@@ -2097,11 +2078,7 @@ async function updateMarketplaceListingIndex(client: Client, guildId: string): P
   }
 
   const msg = await textChannel.send({ embeds: [embed] });
-  try {
-    await msg.pin();
-  } catch (err) {
-    console.warn(`Could not pin marketplace listing index in guild ${guildId}:`, err);
-  }
+  await pinWithRetry(msg, `marketplace listing index in guild ${guildId}`);
 
   await updateGuildConfig(guildId, { marketplaceListingIndexMessageId: msg.id });
 }

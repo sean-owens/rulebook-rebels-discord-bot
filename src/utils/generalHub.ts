@@ -15,6 +15,7 @@ import {
 } from 'discord.js';
 import { getGuildConfig, updateGuildConfig } from './config';
 import { handleList, handleMine, resolveRandomGames } from '../commands/library';
+import { pinWithRetry } from './discordPin';
 
 // ── "Quick Actions" button hub for general chat ─────────────────────────────
 // Unlike the per-event/per-room hubs, this is one pinned message per guild —
@@ -67,11 +68,7 @@ export async function updateGeneralHubPin(client: Client, guildId: string): Prom
       const msg = await channel.messages.fetch(config.generalHubPinMessageId);
       await msg.edit(payload);
       if (!msg.pinned) {
-        try {
-          await msg.pin();
-        } catch (err) {
-          console.warn(`Could not re-pin general hub message in guild ${guildId}:`, err);
-        }
+        await pinWithRetry(msg, `re-pin general hub message in guild ${guildId}`);
       }
       return;
     } catch {
@@ -80,11 +77,7 @@ export async function updateGeneralHubPin(client: Client, guildId: string): Prom
   }
 
   const msg = await channel.send(payload);
-  try {
-    await msg.pin();
-  } catch (err) {
-    console.warn(`Could not pin general hub message in guild ${guildId}:`, err);
-  }
+  await pinWithRetry(msg, `general hub message in guild ${guildId}`);
 
   await updateGuildConfig(guildId, { generalHubPinMessageId: msg.id });
 }

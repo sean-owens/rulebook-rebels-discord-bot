@@ -2,6 +2,7 @@ import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Client, EmbedBuilder, Tex
 import { loadGameNights, upsertGameNight } from './storage';
 import { getRequestsForEvent, loadLibraryForGuild, GameRequest } from './libraryStorage';
 import { findGamesByChannel, GameSuggestion } from './gameStorage';
+import { pinWithRetry } from './discordPin';
 
 export async function buildRequestEmbed(
   guildId: string,
@@ -108,11 +109,7 @@ export async function updateGameListPin(client: Client, eventId: string): Promis
       const msg = await channel.messages.fetch(gameNight.gameListPinMessageId);
       await msg.edit({ embeds: [embed] });
       if (!msg.pinned) {
-        try {
-          await msg.pin();
-        } catch (err) {
-          console.warn(`Could not re-pin game list message in channel ${gameNight.eventChannelId}:`, err);
-        }
+        await pinWithRetry(msg, `re-pin game list message in channel ${gameNight.eventChannelId}`);
       }
       return;
     } catch {
@@ -121,11 +118,7 @@ export async function updateGameListPin(client: Client, eventId: string): Promis
   }
 
   const msg = await channel.send({ embeds: [embed] });
-  try {
-    await msg.pin();
-  } catch (err) {
-    console.warn(`Could not pin game list message in channel ${gameNight.eventChannelId}:`, err);
-  }
+  await pinWithRetry(msg, `game list message in channel ${gameNight.eventChannelId}`);
 
   gameNight.gameListPinMessageId = msg.id;
   await upsertGameNight(gameNight);
@@ -179,11 +172,7 @@ export async function updateRequestPin(client: Client, eventId: string): Promise
       const msg = await channel.messages.fetch(gameNight.requestPinMessageId);
       await msg.edit({ embeds: [embed] });
       if (!msg.pinned) {
-        try {
-          await msg.pin();
-        } catch (err) {
-          console.warn(`Could not re-pin request message in channel ${gameNight.eventChannelId}:`, err);
-        }
+        await pinWithRetry(msg, `re-pin request message in channel ${gameNight.eventChannelId}`);
       }
       return;
     } catch {
@@ -192,11 +181,7 @@ export async function updateRequestPin(client: Client, eventId: string): Promise
   }
 
   const msg = await channel.send({ embeds: [embed] });
-  try {
-    await msg.pin();
-  } catch (err) {
-    console.warn(`Could not pin request message in channel ${gameNight.eventChannelId}:`, err);
-  }
+  await pinWithRetry(msg, `request message in channel ${gameNight.eventChannelId}`);
 
   gameNight.requestPinMessageId = msg.id;
   await upsertGameNight(gameNight);
@@ -249,11 +234,7 @@ export async function updateHubPin(client: Client, eventId: string): Promise<voi
       const msg = await channel.messages.fetch(gameNight.hubPinMessageId);
       await msg.edit(payload);
       if (!msg.pinned) {
-        try {
-          await msg.pin();
-        } catch (err) {
-          console.warn(`Could not re-pin hub message in channel ${gameNight.eventChannelId}:`, err);
-        }
+        await pinWithRetry(msg, `re-pin hub message in channel ${gameNight.eventChannelId}`);
       }
       return;
     } catch {
@@ -262,11 +243,7 @@ export async function updateHubPin(client: Client, eventId: string): Promise<voi
   }
 
   const msg = await channel.send(payload);
-  try {
-    await msg.pin();
-  } catch (err) {
-    console.warn(`Could not pin hub message in channel ${gameNight.eventChannelId}:`, err);
-  }
+  await pinWithRetry(msg, `hub message in channel ${gameNight.eventChannelId}`);
 
   gameNight.hubPinMessageId = msg.id;
   await upsertGameNight(gameNight);

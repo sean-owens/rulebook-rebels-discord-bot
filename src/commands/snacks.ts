@@ -27,6 +27,7 @@ import {
   removeSnackItem,
   upsertSnackList,
 } from '../utils/snackStorage';
+import { pinWithRetry } from '../utils/discordPin';
 
 // Same `room:` key convention games.json uses for a room's suggestions (see
 // ROOM_GAME_NIGHT_PREFIX in game.ts) — keeps a room's snack list keyed
@@ -102,11 +103,7 @@ export async function updateSnacksPin(client: Client, channelId: string): Promis
       const msg = await channel.messages.fetch(list.pinMessageId);
       await msg.edit({ embeds: [embed] });
       if (!msg.pinned) {
-        try {
-          await msg.pin();
-        } catch (err) {
-          console.warn(`Could not re-pin snacks list message in channel ${channelId}:`, err);
-        }
+        await pinWithRetry(msg, `re-pin snacks list message in channel ${channelId}`);
       }
       return;
     } catch {
@@ -115,11 +112,7 @@ export async function updateSnacksPin(client: Client, channelId: string): Promis
   }
 
   const msg = await channel.send({ embeds: [embed] });
-  try {
-    await msg.pin();
-  } catch (err) {
-    console.warn(`Could not pin snacks list message in channel ${channelId}:`, err);
-  }
+  await pinWithRetry(msg, `snacks list message in channel ${channelId}`);
 
   list.pinMessageId = msg.id;
   await upsertSnackList(list);
