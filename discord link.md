@@ -32,3 +32,7 @@ Note: updating the permissions integer here does NOT retroactively grant anythin
 already in a server — re-run the invite link (Discord allows re-authorizing without kicking
 the bot first) to actually apply a permissions change to an existing installation.
 
+Status: DEV re-authorized and confirmed (PinMessages verified granted 2026-07-23) — pinning
+works. PROD still needs the same re-invite via the PROD link above before pinning will work
+there.
+
