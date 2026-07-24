@@ -39,6 +39,7 @@ import {
 } from '../src/utils/marketplaceStorage';
 import { updateGuildConfig, getGuildConfig } from '../src/utils/config';
 import { _loadFromCsvText, _resetCatalog } from '../src/utils/bggCatalog';
+import { searchBGG } from '../src/utils/bgg';
 
 const EXPANSION_TEST_CSV = `id,name,yearpublished,rank,bayesaverage,average,usersrated,is_expansion,abstracts_rank
 266192,Wingspan,2019,5,8.01,8.10,80000,0,
@@ -49,6 +50,7 @@ vi.mock('../src/utils/bgg', async () => {
   return {
     ...actual,
     fetchBGGMarketplacePrices: vi.fn(async () => null),
+    searchBGG: vi.fn(async () => []),
     getBGGGame: vi.fn(async (id: string) => {
       if (id === '266192001') {
         return {
@@ -960,6 +962,26 @@ describe('/marketplace post sell — catalog match confirmation', () => {
 
   it('a __custom__: pick (the "not on BGG" autocomplete choice) skips confirmation — nothing to confirm', async () => {
     const interaction = makeSellInteraction('__custom__:My Homemade Prototype');
+    await execute(interaction);
+
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining("wasn't found on BoardGameGeek") }),
+    );
+  });
+
+  it('a free-typed name that misses the local catalog still resolves via a live BGG search fallback', async () => {
+    vi.mocked(searchBGG).mockResolvedValueOnce([{ id: '266192', name: 'Wingspan', yearPublished: 2019 }]);
+    const interaction = makeSellInteraction('Wngspn'); // garbled — local fuzzy match misses entirely
+    await execute(interaction);
+
+    const call = interaction.editReply.mock.calls[0][0];
+    expect(call.embeds[0].data.title).toBe('Found a possible match');
+    expect(call.embeds[0].data.description).toContain('Wingspan');
+  });
+
+  it('falls back to the "not found on BGG" prompt when both local and live search miss', async () => {
+    vi.mocked(searchBGG).mockResolvedValueOnce([]);
+    const interaction = makeSellInteraction('Totally Unmatched Xyzzy Game');
     await execute(interaction);
 
     expect(interaction.editReply).toHaveBeenCalledWith(
