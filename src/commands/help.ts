@@ -148,6 +148,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
                 '`/admin room config` — Set the Discord category used for /room private channels',
                 '`/admin general config` — Set the channel for the general chat "Quick Actions" button hub',
                 '`/admin usage` — Show which commands are used on this server, and how often',
+                '`/admin bgstats` — Show BG Stats link open counts for the most recently locked event',
               ].join('\n'),
             },
           ]

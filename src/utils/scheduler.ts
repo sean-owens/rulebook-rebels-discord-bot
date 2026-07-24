@@ -547,7 +547,11 @@ async function postBgStatsButtons(
       // otherwise it falls back to the same length-check as before. The QR
       // code has no length limit either way, so it's the reliable fallback —
       // but it still scans more easily off the short link when one exists.
-      const buttonUrl = await buildBgStatsButtonUrl(url);
+      const buttonUrl = await buildBgStatsButtonUrl(url, {
+        guildId: gn.guildId,
+        eventId: gn.id,
+        gameId: game.id,
+      });
       const qrFilename = `bgstats-${game.id}.png`;
       const qrAttachment = await buildBgStatsQrAttachment(buttonUrl ?? url, qrFilename);
 

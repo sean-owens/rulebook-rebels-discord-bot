@@ -7,6 +7,9 @@ import {
   SlashCommandBuilder,
 } from 'discord.js';
 import { loadCommandUsage } from '../utils/commandUsageStorage';
+import { loadGameNights } from '../utils/storage';
+import { findGamesByEvent } from '../utils/gameStorage';
+import { getShortLinkStatsForGame } from '../utils/shortLinkStorage';
 import { handleConfig as handleEventConfig } from './gamenight';
 import { previewSchedule as handleEventPreview } from '../utils/scheduler';
 import { handleAdminLibraryClear, handleSync as handleLibrarySync, handleSyncAll as handleLibrarySyncAll } from './library';
@@ -40,6 +43,11 @@ export const data = new SlashCommandBuilder()
     sub
       .setName('usage')
       .setDescription('Show which commands are used on this server, and how often'),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName('bgstats')
+      .setDescription('Show BG Stats link open counts for the most recently locked event'),
   )
   // ── event group ──────────────────────────────────────────────────────────────
   .addSubcommandGroup((group) =>
@@ -422,6 +430,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
   if (!group && sub === 'usage') {
     await handleUsage(interaction);
+  } else if (!group && sub === 'bgstats') {
+    await handleAdminBgStats(interaction);
   } else if (group === 'event') {
     if (sub === 'config') await handleEventConfig(interaction);
     else if (sub === 'preview') await handleEventPreview(interaction);
@@ -485,6 +495,58 @@ export async function handleUsage(interaction: ChatInputCommandInteraction): Pro
 
   await interaction.reply({
     content: `**Command usage (${sorted.length} command${sorted.length === 1 ? '' : 's'} tracked):**\n\`\`\`\n${body}${omittedNote}\n\`\`\``,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+export async function handleAdminBgStats(interaction: ChatInputCommandInteraction): Promise<void> {
+  const guildId = interaction.guildId!;
+  const lockedEvents = (await loadGameNights())
+    .filter((gn) => gn.guildId === guildId && gn.locked)
+    .sort((a, b) => Date.parse(b.startTimeISO) - Date.parse(a.startTimeISO));
+
+  if (lockedEvents.length === 0) {
+    await interaction.reply({
+      content: 'No locked events yet — BG Stats links are only generated once an event locks.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const event = lockedEvents[0];
+  const scheduledGames = (await findGamesByEvent(event.id)).filter(
+    (g) => g.scheduledRound !== undefined,
+  );
+
+  if (scheduledGames.length === 0) {
+    await interaction.reply({
+      content: `**${event.title ?? 'Game Night'}** (<t:${Math.floor(Date.parse(event.startTimeISO) / 1000)}:D>) locked with no scheduled games.`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  let openedCount = 0;
+  const lines: string[] = [];
+  for (const game of scheduledGames) {
+    const stats = await getShortLinkStatsForGame(guildId, event.id, game.id);
+    if (stats.openCount > 0) openedCount++;
+    const detail =
+      stats.openCount > 0
+        ? `${stats.openCount} open${stats.openCount === 1 ? '' : 's'}${
+            stats.lastOpenedAt
+              ? ` (last <t:${Math.floor(new Date(stats.lastOpenedAt).getTime() / 1000)}:R>)`
+              : ''
+          }`
+        : 'not opened yet';
+    lines.push(`**${game.title}** — ${detail}`);
+  }
+
+  await interaction.reply({
+    content:
+      `**BG Stats links — ${event.title ?? 'Game Night'}** (<t:${Math.floor(Date.parse(event.startTimeISO) / 1000)}:D>)\n` +
+      `${lines.join('\n')}\n\n` +
+      `${openedCount} of ${scheduledGames.length} scheduled games opened at least once.`,
     flags: MessageFlags.Ephemeral,
   });
 }

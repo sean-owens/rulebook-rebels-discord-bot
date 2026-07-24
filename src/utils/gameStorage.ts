@@ -72,3 +72,25 @@ export async function upsertGame(game: GameSuggestion): Promise<void> {
   else all.push(game);
   await saveGames(all);
 }
+
+// For each game title actually scheduled onto a lineup in this guild (not
+// just suggested — a suggestion that never got a table is no evidence a game
+// was played), returns the most recent suggestion's createdAt, keyed by
+// lowercased title. Used to weight /library random away from games that keep
+// coming up (see resolveRandomGames in src/commands/library.ts) — there's no
+// reliable "was this actually played" signal (BG Stats gives no callback), so
+// "last scheduled" is the closest available proxy.
+export async function getLastScheduledAt(guildId: string): Promise<Map<string, string>> {
+  const games = (await loadGames()).filter(
+    (g) => g.guildId === guildId && g.scheduledRound !== undefined,
+  );
+  const result = new Map<string, string>();
+  for (const game of games) {
+    const key = game.title.toLowerCase();
+    const existing = result.get(key);
+    if (!existing || game.createdAt > existing) {
+      result.set(key, game.createdAt);
+    }
+  }
+  return result;
+}

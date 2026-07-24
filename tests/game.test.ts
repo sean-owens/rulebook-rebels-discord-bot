@@ -1118,6 +1118,44 @@ describe('/game bgstats', () => {
     expect(data.game.name).toBe('Wingspan');
     expect(data.location).toBe('The Rec Room');
     expect(data.players).toEqual([{ name: 'Display-p1', sourcePlayerId: 'p1', winner: false, startPlayer: false }]);
+    expect(stored?.guildId).toBe('g1');
+    expect(stored?.eventId).toBe('gn1');
+    expect(stored?.gameId).toBe('game1');
+
+    const field = reply.embeds[0].toJSON().fields.find((f: any) => f.name === '🔗 BG Stats Link');
+    expect(field?.value).toBe('Not yet opened');
+  });
+
+  it('shows the open count once the short link has been opened', async () => {
+    vi.stubEnv('SHORT_LINK_BASE_URL', 'https://bot.example.com');
+    const { recordShortLinkOpen } = await import('../src/utils/shortLinkStorage');
+    await upsertGameNight(makeGameNight({ id: 'gn1', eventChannelId: 'event-channel-1', location: 'The Rec Room' }));
+    await seedSuggestion();
+
+    // Generate a link the first time (also exercises regeneration merging
+    // into the same aggregate stat via guild/event/game attribution).
+    await execute(makeBgStatsInteraction('Wingspan', null, 'event-channel-1'));
+
+    const first = (await import('../src/utils/shortLinkStorage')).loadShortLinks;
+    const links = await first();
+    await recordShortLinkOpen(links[0].code);
+
+    const interaction = makeBgStatsInteraction('Wingspan', null, 'event-channel-1');
+    await execute(interaction);
+    const reply = interaction.editReply.mock.calls[0][0];
+    const field = reply.embeds[0].toJSON().fields.find((f: any) => f.name === '🔗 BG Stats Link');
+    expect(field?.value).toContain('Opened 1 time');
+  });
+
+  it('omits the BG Stats Link field when short links are not configured', async () => {
+    await upsertGameNight(makeGameNight({ id: 'gn1', eventChannelId: 'event-channel-1', location: 'The Rec Room' }));
+    await seedSuggestion();
+
+    const interaction = makeBgStatsInteraction('Wingspan', null, 'event-channel-1');
+    await execute(interaction);
+    const reply = interaction.editReply.mock.calls[0][0];
+    const field = reply.embeds[0].toJSON().fields?.find((f: any) => f.name === '🔗 BG Stats Link');
+    expect(field).toBeUndefined();
   });
 
   // Regression: BG Stats' link grows with player count and Discord caps button

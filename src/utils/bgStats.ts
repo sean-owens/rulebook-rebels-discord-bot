@@ -1,6 +1,6 @@
 import { ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import QRCode from 'qrcode';
-import { createShortLink } from './shortLinkStorage';
+import { createShortLink, ShortLinkMeta } from './shortLinkStorage';
 
 const BG_STATS_CREATE_PLAY_URL = 'https://app.bgstatsapp.com/createPlay.html';
 
@@ -117,10 +117,13 @@ function normalizeBaseUrl(url: string): string {
  * original length-check behavior — a button only when the full URL already
  * fits Discord's limit.
  */
-export async function buildBgStatsButtonUrl(fullUrl: string): Promise<string | null> {
+export async function buildBgStatsButtonUrl(
+  fullUrl: string,
+  meta?: ShortLinkMeta,
+): Promise<string | null> {
   const baseUrl = process.env.SHORT_LINK_BASE_URL;
   if (baseUrl) {
-    const link = await createShortLink(fullUrl);
+    const link = await createShortLink(fullUrl, meta);
     return `${normalizeBaseUrl(baseUrl)}/s/${link.code}`;
   }
   return fitsDiscordButton(fullUrl) ? fullUrl : null;

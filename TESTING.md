@@ -215,6 +215,8 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run `/game bgstats title:Wingspan location:Sean's place` — confirm the supplied location overrides the event's default
 - [ ] Run the same command inside a `/room`-created private room with a suggested game — confirm it works identically, and that location is blank unless the `location` option is given (rooms have no location of their own)
 - [ ] Run with a title that doesn't match any suggested game — confirm a clear ephemeral "No game called... found" error listing current games
+- [ ] With `SHORT_LINK_BASE_URL` configured, run `/game bgstats` for a game whose link hasn't been opened yet — confirm a "🔗 BG Stats Link" field reads "Not yet opened"; open the link/QR, then run the command again for the same game — confirm the field now shows the open count and a relative "last opened" time
+- [ ] Without `SHORT_LINK_BASE_URL` configured, confirm the "🔗 BG Stats Link" field is omitted entirely (there's no short link to track opens on)
 
 ### 1.3h Quick Actions Hub (button panel)
 
@@ -436,7 +438,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.4m `/library random`
 
-**What it does:** Picks 3 random games from the library, optionally filtered by tags and complexity. If no `tag`/`tag2`/`tag3` or `complexity` option is given, it defaults to your own `/myroles` preferences (1.5) instead of picking from the whole library.
+**What it does:** Picks 3 random games from the library, optionally filtered by tags and complexity. If no `tag`/`tag2`/`tag3` or `complexity` option is given, it defaults to your own `/myroles` preferences (1.5) instead of picking from the whole library. Picks are weighted toward games that haven't been scheduled onto an event lineup recently (or ever) — never excluded, just less likely to come up again right away.
 
 - [ ] `/library random` with no filters and no `/myroles` preferences set — confirm 3 fully random games are shown, with a footer tip to set `/myroles`
 - [ ] `/library random tag:Co-op` — confirm all 3 results are Co-op tagged
@@ -447,6 +449,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] With `/myroles` preferences set, run `/library random complexity:Heavy` (different from your preference) — confirm the explicit complexity wins, with no "(from your /myroles)" note
 - [ ] Filter for a tag/complexity combination with no matching games — confirm it falls back to 3 unfiltered random picks with a "No `<filter>` games found — here are 3 random picks instead" title
 - [ ] Run multiple times — confirm different results each time
+- [ ] With a mix of library games where some were scheduled onto a recent locked event's lineup and others never have been — run `/library random` many times — confirm the never-(recently-)scheduled games come up noticeably more often, though a recently-scheduled game can still occasionally appear (it's biased, not excluded)
 
 ### 1.4n `/library link` / `/library unlink`
 
@@ -1151,7 +1154,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.4m `/library random`
 
-**What it does:** Picks 3 random games from the library, optionally filtered by tags and complexity. If no `tag`/`tag2`/`tag3` or `complexity` option is given, it defaults to your own `/myroles` preferences (2.5) instead of picking from the whole library.
+**What it does:** Picks 3 random games from the library, optionally filtered by tags and complexity. If no `tag`/`tag2`/`tag3` or `complexity` option is given, it defaults to your own `/myroles` preferences (2.5) instead of picking from the whole library. Picks are weighted toward games that haven't been scheduled onto an event lineup recently (or ever) — never excluded, just less likely to come up again right away.
 
 - [ ] `/library random` with no filters and no `/myroles` preferences set — confirm 3 fully random games are shown, with a footer tip to set `/myroles`
 - [ ] `/library random tag:Co-op` — confirm all 3 results are Co-op tagged
@@ -1162,6 +1165,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] With `/myroles` preferences set, run `/library random complexity:Heavy` (different from your preference) — confirm the explicit complexity wins, with no "(from your /myroles)" note
 - [ ] Filter for a tag/complexity combination with no matching games — confirm it falls back to 3 unfiltered random picks with a "No `<filter>` games found — here are 3 random picks instead" title
 - [ ] Run multiple times — confirm different results each time
+- [ ] With a mix of library games where some were scheduled onto a recent locked event's lineup and others never have been — run `/library random` many times — confirm the never-(recently-)scheduled games come up noticeably more often, though a recently-scheduled game can still occasionally appear (it's biased, not excluded)
 
 ### 2.4n `/library link` / `/library unlink`
 
@@ -1915,7 +1919,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.4m `/library random`
 
-**What it does:** Picks 3 random games from the library, optionally filtered by tags and complexity. If no `tag`/`tag2`/`tag3` or `complexity` option is given, it defaults to your own `/myroles` preferences (3.5) instead of picking from the whole library.
+**What it does:** Picks 3 random games from the library, optionally filtered by tags and complexity. If no `tag`/`tag2`/`tag3` or `complexity` option is given, it defaults to your own `/myroles` preferences (3.5) instead of picking from the whole library. Picks are weighted toward games that haven't been scheduled onto an event lineup recently (or ever) — never excluded, just less likely to come up again right away.
 
 - [ ] `/library random` with no filters and no `/myroles` preferences set — confirm 3 fully random games are shown, with a footer tip to set `/myroles`
 - [ ] `/library random tag:Co-op` — confirm all 3 results are Co-op tagged
@@ -1926,6 +1930,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] With `/myroles` preferences set, run `/library random complexity:Heavy` (different from your preference) — confirm the explicit complexity wins, with no "(from your /myroles)" note
 - [ ] Filter for a tag/complexity combination with no matching games — confirm it falls back to 3 unfiltered random picks with a "No `<filter>` games found — here are 3 random picks instead" title
 - [ ] Run multiple times — confirm different results each time
+- [ ] With a mix of library games where some were scheduled onto a recent locked event's lineup and others never have been — run `/library random` many times — confirm the never-(recently-)scheduled games come up noticeably more often, though a recently-scheduled game can still occasionally appear (it's biased, not excluded)
 
 ### 3.4n `/library link` / `/library unlink`
 
@@ -2388,6 +2393,18 @@ Text channels have no forum tags and no thread is created for a listing — each
 - [ ] Try setting a voice channel or other non-text channel — confirm "must be a regular text channel" error, and nothing is saved
 - [ ] Run `/admin general config channel:#general` again pointing at the same channel — confirm the existing hub message is refreshed in place rather than a second one being posted
 - [ ] 👑 Run as non-admin — confirm "requires Manage Server permission"
+
+### 3.9r `/admin bgstats`
+
+**What it does:** Shows, for this server's most recently locked event, which scheduled games' BG Stats links/QR codes have actually been opened at least once, and which haven't — plus a summary count. This is the closest available signal to "did anyone use this," since BG Stats gives the bot no callback once someone opens the link.
+
+- [ ] 👑 Run as non-admin — confirm "requires Manage Server permission"
+- [ ] On a server with no locked events, run `/admin bgstats` — confirm "No locked events yet"
+- [ ] Lock an event whose lineup ended up with zero scheduled games — confirm "locked with no scheduled games"
+- [ ] Lock an event with 2+ scheduled games, open one game's link/QR, leave the rest untouched, then run `/admin bgstats` — confirm the opened game shows its open count and a relative "last opened" time, the others show "not opened yet", and the summary line reads "N of M scheduled games opened at least once"
+- [ ] Run `/game bgstats` again for the same game to regenerate its link, then open the new link — confirm `/admin bgstats` shows the combined open count across both links for that game, not a reset count
+- [ ] With multiple locked events in this server's history, confirm `/admin bgstats` always reflects only the most recently locked one
+- [ ] Confirm this is per-server: a locked event in a different server the bot is in doesn't appear here
 
 ## 3.10 `/room` — Private Rooms
 

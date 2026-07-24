@@ -66,6 +66,7 @@ import {
   buildBgStatsQrAttachment,
 } from '../utils/bgStats';
 import { resolvePlayerNames } from '../utils/playerNames';
+import { getShortLinkStatsForGame } from '../utils/shortLinkStorage';
 
 const MANUAL_VALUE = '__manual__';
 const BGG_VALUE = '__bgg__';
@@ -844,7 +845,11 @@ async function handleGameBgStats(interaction: ChatInputCommandInteraction): Prom
   // otherwise it falls back to the same length-check as before. The QR code
   // has no length limit either way, so it's the reliable fallback — but it
   // still scans more easily off the short link when one exists.
-  const buttonUrl = await buildBgStatsButtonUrl(url);
+  const buttonUrl = await buildBgStatsButtonUrl(url, {
+    guildId: match.guildId,
+    eventId: match.eventId,
+    gameId: match.id,
+  });
   const qrFilename = `bgstats-${match.id}.png`;
   const qrAttachment = await buildBgStatsQrAttachment(buttonUrl ?? url, qrFilename);
 
@@ -861,6 +866,25 @@ async function handleGameBgStats(interaction: ChatInputCommandInteraction): Prom
     })
     .setColor(0xe8a838)
     .setImage(`attachment://${qrFilename}`);
+
+  // Only meaningful when short links (and therefore open tracking) are
+  // actually configured — see buildBgStatsButtonUrl/SHORT_LINK_BASE_URL.
+  // Embed footers don't render Discord's <t:...> timestamp markdown (unlike
+  // fields/description), so this goes in a field rather than setFooter.
+  if (buttonUrl) {
+    const stats = await getShortLinkStatsForGame(match.guildId, match.eventId, match.id);
+    embed.addFields({
+      name: '🔗 BG Stats Link',
+      value:
+        stats.openCount > 0
+          ? `Opened ${stats.openCount} time${stats.openCount === 1 ? '' : 's'}${
+              stats.lastOpenedAt
+                ? ` · last opened <t:${Math.floor(new Date(stats.lastOpenedAt).getTime() / 1000)}:R>`
+                : ''
+            }`
+          : 'Not yet opened',
+    });
+  }
 
   await interaction.editReply({
     embeds: [embed],

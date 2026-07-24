@@ -299,6 +299,21 @@ describe('buildBgStatsButtonUrl', () => {
     expect(stored?.url).toBe(longUrl);
   });
 
+  it('threads guild/event/game attribution through to the stored short link', async () => {
+    vi.stubEnv('SHORT_LINK_BASE_URL', 'https://bot.example.com');
+
+    const buttonUrl = await buildBgStatsButtonUrl(
+      'https://app.bgstatsapp.com/createPlay.html?data=abc',
+      { guildId: 'guild-1', eventId: 'event-1', gameId: 'game-1' },
+    );
+    const code = buttonUrl!.split('/s/')[1];
+    const stored = await findShortLink(code);
+    expect(stored?.guildId).toBe('guild-1');
+    expect(stored?.eventId).toBe('event-1');
+    expect(stored?.gameId).toBe('game-1');
+    expect(stored?.openCount).toBe(0);
+  });
+
   it('strips a trailing slash from SHORT_LINK_BASE_URL', async () => {
     vi.stubEnv('SHORT_LINK_BASE_URL', 'https://bot.example.com/');
 
