@@ -50,7 +50,7 @@ import { appendMarketplaceLog } from '../utils/marketplaceLog';
 import { pinWithRetry } from '../utils/discordPin';
 import { getGuildConfig, updateGuildConfig } from '../utils/config';
 import { removeGame, getGamesByUser } from '../utils/libraryStorage';
-import { searchCatalog, getCatalogEntryById, BGGCatalogEntry } from '../utils/bggCatalog';
+import { searchCatalog, searchCatalogWithFallback, getCatalogEntryById, BGGCatalogEntry } from '../utils/bggCatalog';
 import { fetchBGGMarketplacePrices, getBGGGame } from '../utils/bgg';
 import {
   SellDraft,
@@ -982,7 +982,7 @@ async function resolveMarketplaceItem(rawItem: string): Promise<ResolvedMarketpl
   // wizard's modal, which has no autocomplete at all. A match here is only
   // ever a guess (see the "Gloom" vs "Gloomhaven" example above).
   try {
-    const results = searchCatalog(rawItem);
+    const results = await searchCatalogWithFallback(rawItem);
     if (results.length > 0) {
       const entry = results[0];
       const details = await resolveCatalogDetails(entry);

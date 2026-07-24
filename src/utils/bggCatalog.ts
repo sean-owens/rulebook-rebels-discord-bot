@@ -1,6 +1,10 @@
 import AdmZip from 'adm-zip';
 import * as fs from 'fs';
 import * as path from 'path';
+import { readJson, writeJson } from './db';
+import { searchBGG } from './bgg';
+
+const DISCOVERED_ENTRIES_FILE = 'bgg_discovered_entries.json';
 
 export interface BGGCatalogEntry {
   id: string;
@@ -173,6 +177,16 @@ export async function loadBGGCatalog(): Promise<void> {
   } catch (err) {
     console.error('[BGGCatalog] Failed to load catalog:', err);
   }
+
+  // Union in games discovered via live-search fallback on a prior run (see
+  // searchCatalogWithFallback) — kept in its own try/catch so a transient S3
+  // hiccup here can't undo a catalog that already loaded fine from the zip.
+  try {
+    const discovered = await readJson<BGGCatalogEntry[]>(DISCOVERED_ENTRIES_FILE, []);
+    for (const entry of discovered) addCatalogEntry(entry);
+  } catch (err) {
+    console.error('[BGGCatalog] Failed to load discovered entries:', err);
+  }
 }
 
 function sortResults(arr: BGGCatalogEntry[]): BGGCatalogEntry[] {
@@ -218,6 +232,79 @@ export function searchCatalog(query: string, limit = 5): BGGCatalogEntry[] {
   }
 
   return sortResults([...candidates].map((idx) => entries[idx])).slice(0, limit);
+}
+
+// Incrementally adds one entry to every index without a full rebuild — used
+// to fold a live BGG search result into the catalog (see
+// searchCatalogWithFallback) so the next lookup for the same game is served
+// locally. Cheap: only called on an occasional live-search hit, not a hot loop.
+export function addCatalogEntry(entry: BGGCatalogEntry): void {
+  if (idIndex.has(entry.id)) return;
+
+  const idx = entries.length;
+  entries.push(entry);
+  idIndex.set(entry.id, entry);
+
+  const key = normalizeName(entry.name);
+  if (!exactIndex.has(key)) exactIndex.set(key, []);
+  exactIndex.get(key)!.push(entry);
+
+  for (const word of tokenize(entry.name)) {
+    if (!wordIndex.has(word)) {
+      wordIndex.set(word, [idx]);
+      const pos = lowerBound(sortedWords, word);
+      sortedWords.splice(pos, 0, word);
+    } else {
+      wordIndex.get(word)!.push(idx);
+    }
+  }
+
+  _loaded = true;
+}
+
+async function persistDiscoveredEntry(entry: BGGCatalogEntry): Promise<void> {
+  const discovered = await readJson<BGGCatalogEntry[]>(DISCOVERED_ENTRIES_FILE, []);
+  if (discovered.some((e) => e.id === entry.id)) return;
+  discovered.push(entry);
+  await writeJson(DISCOVERED_ENTRIES_FILE, discovered);
+}
+
+// Falls back to a live BGG search when the local catalog has no match —
+// covers new/obscure games added to BGG since the bundled zip was built, or
+// simply missed by the fuzzy matcher. A hit is folded into the in-memory
+// catalog (and persisted) so future lookups for the same game are served
+// locally without hitting BGG again. isExpansion/rank are placeholders here
+// (BGG's search endpoint doesn't return them) — callers that resolve full
+// game details afterward (e.g. resolveCatalogDetails) already correct these.
+export async function searchCatalogWithFallback(query: string, limit = 5): Promise<BGGCatalogEntry[]> {
+  const local = searchCatalog(query, limit);
+  if (local.length > 0) return local;
+
+  try {
+    const live = await searchBGG(query);
+    if (live.length === 0) return [];
+
+    const converted: BGGCatalogEntry[] = live.slice(0, limit).map((r) => ({
+      id: r.id,
+      name: r.name,
+      year: r.yearPublished,
+      isExpansion: false,
+      rank: null,
+    }));
+
+    for (const entry of converted) {
+      if (!getCatalogEntryById(entry.id)) {
+        addCatalogEntry(entry);
+        persistDiscoveredEntry(entry).catch((err) =>
+          console.warn('[BGGCatalog] Failed to persist discovered entry:', err),
+        );
+      }
+    }
+
+    return converted;
+  } catch {
+    return [];
+  }
 }
 
 // For tests only — load catalog from raw CSV text without needing a zip file

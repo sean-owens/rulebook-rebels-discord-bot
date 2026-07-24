@@ -60,6 +60,7 @@ import { getBGGGame, getBGGGamesBatch, BGGGame, weightTag, fetchBggOwnedCollecti
 import { getGuildConfig } from '../utils/config';
 import {
   searchCatalog,
+  searchCatalogWithFallback,
   isCatalogLoaded,
   normalizeName,
   BGGCatalogEntry,
@@ -1808,9 +1809,9 @@ async function handleAdd(interaction: ChatInputCommandInteraction): Promise<void
     return;
   }
 
-  // 3. BGG catalog search
+  // 3. BGG catalog search (falls back to a live BGG search on a local miss)
   if (isCatalogLoaded()) {
-    const catalogResults = searchCatalog(gameName, 5);
+    const catalogResults = await searchCatalogWithFallback(gameName, 5);
     if (catalogResults.length > 0) {
       const top = catalogResults[0];
       if (normalizeName(top.name) === normalizeName(gameName)) {
@@ -1877,7 +1878,7 @@ export async function handleLibraryAddPartialSelect(
 
   if (value === '__bgg__') {
     if (isCatalogLoaded()) {
-      const catalogResults = searchCatalog(originalInput, 5);
+      const catalogResults = await searchCatalogWithFallback(originalInput, 5);
       if (catalogResults.length > 0) {
         const top = catalogResults[0];
         if (normalizeName(top.name) === normalizeName(originalInput)) {

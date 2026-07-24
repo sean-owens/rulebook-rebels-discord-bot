@@ -266,8 +266,12 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Confirm **Yes** — confirm game is added with BGG details
 - [ ] Search a very generic term with many BGG matches — confirm the dropdown is capped at Discord's 25-option select menu limit rather than erroring
 
+#### Live BGG search fallback
+- [ ] Type a game name that's new/obscure enough to miss the local BGG catalog but findable on BGG directly (e.g. a recent release) — confirm it still resolves (BGG confirm prompt or select UI) instead of falling through to the custom-game path
+- [ ] Repeat the same search a second time — confirm it now resolves instantly from the local catalog (no delay from a live BGG lookup)
+
 #### No matches anywhere — custom game
-- [ ] `/library add game:My Custom Game` with nothing matching anywhere — confirm game is added immediately and the "add details" modal appears
+- [ ] `/library add game:My Custom Game` with nothing matching anywhere (including a live BGG search) — confirm game is added immediately and the "add details" modal appears
 
 ### 1.4b `/library remove`
 
@@ -527,6 +531,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] On that prompt, tap "✅ Yes, that's it" — confirm the wizard continues normally from there (expansion select / include-base-game / price screen) using the matched game's data
 - [ ] On that prompt, tap "🔍 Search again" — confirm a modal appears asking for a new item name; submit one — confirm it re-resolves and shows another confirmation prompt if it matches something (still unconfirmed, since typed text is never an explicit pick), or the no-BGG-match reference-link prompt if it matches nothing
 - [ ] On that prompt, tap "📝 Not on BGG" — confirm it clears the matched game and falls through to the same reference-link prompt (Add Link / Skip) as an item with no BGG match at all
+- [ ] Type text and submit **without** picking a suggestion, using a name obscure/new enough to miss the local BGG catalog but findable via a live BGG search — confirm it still shows a "Found a possible match" prompt instead of falling straight to the no-BGG-match reference-link flow
 - [ ] Use the marketplace hub's "📦 Sell an Item" / "🔄 Propose a Trade" wizard (1.7m) instead of the slash command — confirm every item name entered there (always free-typed, since a modal has no autocomplete) goes through this same confirmation step whenever it matches a catalog entry
 
 ### 1.7b `/marketplace post trade`
@@ -983,8 +988,12 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Confirm **Yes** — confirm game is added with BGG details
 - [ ] Search a very generic term with many BGG matches — confirm the dropdown is capped at Discord's 25-option select menu limit rather than erroring
 
+#### Live BGG search fallback
+- [ ] Type a game name that's new/obscure enough to miss the local BGG catalog but findable on BGG directly (e.g. a recent release) — confirm it still resolves (BGG confirm prompt or select UI) instead of falling through to the custom-game path
+- [ ] Repeat the same search a second time — confirm it now resolves instantly from the local catalog (no delay from a live BGG lookup)
+
 #### No matches anywhere — custom game
-- [ ] `/library add game:My Custom Game` with nothing matching anywhere — confirm game is added immediately and the "add details" modal appears
+- [ ] `/library add game:My Custom Game` with nothing matching anywhere (including a live BGG search) — confirm game is added immediately and the "add details" modal appears
 
 ### 2.4b `/library remove`
 
@@ -1232,6 +1241,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] On that prompt, tap "✅ Yes, that's it" — confirm the wizard continues normally from there (expansion select / include-base-game / price screen) using the matched game's data
 - [ ] On that prompt, tap "🔍 Search again" — confirm a modal appears asking for a new item name; submit one — confirm it re-resolves and shows another confirmation prompt if it matches something (still unconfirmed, since typed text is never an explicit pick), or the no-BGG-match reference-link prompt if it matches nothing
 - [ ] On that prompt, tap "📝 Not on BGG" — confirm it clears the matched game and falls through to the same reference-link prompt (Add Link / Skip) as an item with no BGG match at all
+- [ ] Type text and submit **without** picking a suggestion, using a name obscure/new enough to miss the local BGG catalog but findable via a live BGG search — confirm it still shows a "Found a possible match" prompt instead of falling straight to the no-BGG-match reference-link flow
 - [ ] Use the marketplace hub's "📦 Sell an Item" / "🔄 Propose a Trade" wizard (2.7m) instead of the slash command — confirm every item name entered there (always free-typed, since a modal has no autocomplete) goes through this same confirmation step whenever it matches a catalog entry
 
 ### 2.7b `/marketplace post trade`
@@ -1743,8 +1753,12 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Confirm **Yes** — confirm game is added with BGG details
 - [ ] Search a very generic term with many BGG matches — confirm the dropdown is capped at Discord's 25-option select menu limit rather than erroring
 
+#### Live BGG search fallback
+- [ ] Type a game name that's new/obscure enough to miss the local BGG catalog but findable on BGG directly (e.g. a recent release) — confirm it still resolves (BGG confirm prompt or select UI) instead of falling through to the custom-game path
+- [ ] Repeat the same search a second time — confirm it now resolves instantly from the local catalog (no delay from a live BGG lookup)
+
 #### No matches anywhere — custom game
-- [ ] `/library add game:My Custom Game` with nothing matching anywhere — confirm game is added immediately and the "add details" modal appears
+- [ ] `/library add game:My Custom Game` with nothing matching anywhere (including a live BGG search) — confirm game is added immediately and the "add details" modal appears
 
 ### 3.4b `/library remove`
 
@@ -1991,6 +2005,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] On that prompt, tap "✅ Yes, that's it" — confirm the wizard continues normally from there (expansion select / include-base-game / price screen) using the matched game's data
 - [ ] On that prompt, tap "🔍 Search again" — confirm a modal appears asking for a new item name; submit one — confirm it re-resolves and shows another confirmation prompt if it matches something (still unconfirmed, since typed text is never an explicit pick), or the no-BGG-match reference-link prompt if it matches nothing
 - [ ] On that prompt, tap "📝 Not on BGG" — confirm it clears the matched game and falls through to the same reference-link prompt (Add Link / Skip) as an item with no BGG match at all
+- [ ] Type text and submit **without** picking a suggestion, using a name obscure/new enough to miss the local BGG catalog but findable via a live BGG search — confirm it still shows a "Found a possible match" prompt instead of falling straight to the no-BGG-match reference-link flow
 - [ ] The marketplace hub's "📦 Sell an Item" / "🔄 Propose a Trade" wizard (1.7m) always free-types the item name (a modal has no autocomplete) — already covered when repeating Part 1's checks
 
 ### 3.7b `/marketplace post trade`
