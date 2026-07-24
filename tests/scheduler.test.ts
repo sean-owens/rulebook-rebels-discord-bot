@@ -1303,6 +1303,9 @@ describe('lockAndScheduleEvent', () => {
     expect(button.label).toBe('Log in BG Stats');
 
     const stored = await findShortLink(button.url.split('/s/')[1]);
+    expect(stored?.guildId).toBe('guild-1');
+    expect(stored?.eventId).toBe('gn1');
+    expect(stored?.gameId).toBe('game1');
     const data = JSON.parse(decodeURIComponent(stored!.url.split('?data=')[1]));
     expect(data.sourceName).toBe('Rulebook Rebels Discord Bot');
     expect(data.sourcePlayId).toBe('game1');

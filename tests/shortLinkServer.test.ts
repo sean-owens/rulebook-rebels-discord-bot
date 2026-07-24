@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import http from 'http';
 import { startShortLinkServer } from '../src/utils/shortLinkServer';
-import { createShortLink } from '../src/utils/shortLinkStorage';
+import { createShortLink, findShortLink } from '../src/utils/shortLinkStorage';
 
 function get(port: number, urlPath: string): Promise<{ status: number; contentType?: string; body: string }> {
   return new Promise((resolve, reject) => {
@@ -65,6 +65,25 @@ describe('shortLinkServer', () => {
     const res = await get(port, `/s/${link.code}`);
     expect(res.body).not.toContain('data=a&b="x"');
     expect(res.body).toContain('data=a&amp;b=&quot;x&quot;');
+  });
+
+  it('records an open (openCount + lastOpenedAt) each time a known code is hit', async () => {
+    const link = await createShortLink('https://app.bgstatsapp.com/createPlay.html?data=abc');
+    server = startShortLinkServer(0);
+    const port = getPort(server);
+
+    await get(port, `/s/${link.code}`);
+    await vi.waitFor(async () => {
+      const stored = await findShortLink(link.code);
+      expect(stored?.openCount).toBe(1);
+    });
+    expect((await findShortLink(link.code))?.lastOpenedAt).toBeDefined();
+
+    await get(port, `/s/${link.code}`);
+    await vi.waitFor(async () => {
+      const stored = await findShortLink(link.code);
+      expect(stored?.openCount).toBe(2);
+    });
   });
 
   it('returns a 404 landing page for an unknown code', async () => {

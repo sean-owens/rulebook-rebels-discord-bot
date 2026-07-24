@@ -57,6 +57,8 @@ import { invalidateBringDm, reconcileRequestCopies } from '../utils/libraryBring
 import { isLineupLocked } from '../utils/scheduler';
 import AdmZip from 'adm-zip';
 import { getBGGGame, getBGGGamesBatch, BGGGame, weightTag, fetchBggOwnedCollection } from '../utils/bgg';
+import { getLastScheduledAt } from '../utils/gameStorage';
+import { weightedSampleWithoutReplacement } from '../utils/weightedRandom';
 import { getGuildConfig } from '../utils/config';
 import {
   searchCatalog,
@@ -3104,15 +3106,22 @@ export async function resolveRandomGames(
     return;
   }
 
-  // Fisher-Yates shuffle and take up to 3
-  const shuffled = [...pool];
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    const tmp = shuffled[i];
-    shuffled[i] = shuffled[j];
-    shuffled[j] = tmp;
-  }
-  const picks = shuffled.slice(0, 3);
+  // Weighted pick, biased toward games that haven't been scheduled in a
+  // while (or ever) — there's no reliable "was this actually played" signal
+  // (BG Stats gives no callback), so "last scheduled onto a lineup" is the
+  // closest available proxy. Games are never excluded outright, just less
+  // likely to come up again right away.
+  const lastScheduled = await getLastScheduledAt(interaction.guildId!);
+  const RECENCY_CAP_DAYS = 365;
+  const picks = weightedSampleWithoutReplacement(
+    pool,
+    (game) => {
+      const lastAt = lastScheduled.get(game.displayName.toLowerCase());
+      const daysSince = lastAt ? (Date.now() - Date.parse(lastAt)) / (24 * 60 * 60 * 1000) : RECENCY_CAP_DAYS;
+      return Math.min(daysSince, RECENCY_CAP_DAYS) + 1;
+    },
+    3,
+  );
 
   const filterLabels = [tags.length > 0 ? tags.join(' or ') : '', complexity ?? '']
     .filter(Boolean)

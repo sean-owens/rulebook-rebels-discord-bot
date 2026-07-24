@@ -8,6 +8,8 @@ import {
   createShortLink,
   cleanupExpiredShortLinks,
   generateShortCode,
+  recordShortLinkOpen,
+  getShortLinkStatsForGame,
   ShortLink,
 } from '../src/utils/shortLinkStorage';
 
@@ -53,6 +55,7 @@ describe('shortLinkStorage', () => {
       url: 'https://app.bgstatsapp.com/createPlay.html?data=old',
       createdAt: new Date(Date.now() - 100 * 24 * 60 * 60 * 1000).toISOString(),
       expiresAt: new Date(Date.now() - 1000).toISOString(),
+      openCount: 0,
     };
     const fresh = await createShortLink('https://app.bgstatsapp.com/createPlay.html?data=new');
 
@@ -64,5 +67,74 @@ describe('shortLinkStorage', () => {
 
     const remaining = await loadShortLinks();
     expect(remaining.map((l) => l.code)).toEqual([fresh.code]);
+  });
+
+  describe('recordShortLinkOpen', () => {
+    it('increments openCount and sets lastOpenedAt on an existing link', async () => {
+      const link = await createShortLink('https://app.bgstatsapp.com/createPlay.html?data=abc');
+      expect(link.openCount).toBe(0);
+
+      await recordShortLinkOpen(link.code);
+      const once = await findShortLink(link.code);
+      expect(once?.openCount).toBe(1);
+      expect(once?.lastOpenedAt).toBeDefined();
+
+      await recordShortLinkOpen(link.code);
+      const twice = await findShortLink(link.code);
+      expect(twice?.openCount).toBe(2);
+    });
+
+    it('is a no-op for an unknown code', async () => {
+      await expect(recordShortLinkOpen('does-not-exist')).resolves.toBeUndefined();
+    });
+  });
+
+  describe('getShortLinkStatsForGame', () => {
+    it('sums opens across multiple short links created for the same game', async () => {
+      const first = await createShortLink('https://app.bgstatsapp.com/createPlay.html?data=1', {
+        guildId: 'g1',
+        eventId: 'e1',
+        gameId: 'game1',
+      });
+      const second = await createShortLink('https://app.bgstatsapp.com/createPlay.html?data=2', {
+        guildId: 'g1',
+        eventId: 'e1',
+        gameId: 'game1',
+      });
+      await recordShortLinkOpen(first.code);
+      await recordShortLinkOpen(second.code);
+      await recordShortLinkOpen(second.code);
+
+      const stats = await getShortLinkStatsForGame('g1', 'e1', 'game1');
+      expect(stats.openCount).toBe(3);
+      expect(stats.lastOpenedAt).toBeDefined();
+    });
+
+    it('ignores short links for other games/events/guilds', async () => {
+      const own = await createShortLink('https://app.bgstatsapp.com/createPlay.html?data=own', {
+        guildId: 'g1',
+        eventId: 'e1',
+        gameId: 'game1',
+      });
+      await createShortLink('https://app.bgstatsapp.com/createPlay.html?data=other-game', {
+        guildId: 'g1',
+        eventId: 'e1',
+        gameId: 'game2',
+      });
+      await createShortLink('https://app.bgstatsapp.com/createPlay.html?data=other-guild', {
+        guildId: 'g2',
+        eventId: 'e1',
+        gameId: 'game1',
+      });
+      await recordShortLinkOpen(own.code);
+
+      const stats = await getShortLinkStatsForGame('g1', 'e1', 'game1');
+      expect(stats.openCount).toBe(1);
+    });
+
+    it('returns zero opens and no lastOpenedAt when nothing matches', async () => {
+      const stats = await getShortLinkStatsForGame('g1', 'e1', 'game1');
+      expect(stats).toEqual({ openCount: 0, lastOpenedAt: undefined });
+    });
   });
 });

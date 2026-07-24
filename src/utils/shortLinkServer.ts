@@ -1,5 +1,5 @@
 import http from 'http';
-import { findShortLink } from './shortLinkStorage';
+import { findShortLink, recordShortLinkOpen } from './shortLinkStorage';
 
 const CODE_PATTERN = /^\/s\/([A-Za-z0-9_-]+)$/;
 
@@ -90,6 +90,9 @@ export function startShortLinkServer(port: number): http.Server {
         return;
       }
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(renderLandingPage(link.url));
+      recordShortLinkOpen(link.code).catch((err) =>
+        console.warn('[ShortLinkServer] Failed to record open:', err),
+      );
     } catch (err) {
       console.warn('[ShortLinkServer] Error resolving short link:', err);
       res.writeHead(500).end();
