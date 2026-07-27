@@ -7,6 +7,21 @@ export interface GameExpansion {
   name: string;
 }
 
+// One real scheduled table session for a game. A game with more interested
+// players than fit at one table gets split into groups (see
+// expandGamesIntoGroups in src/utils/scheduler.ts) — each group is its own
+// session here, groupIndex 1 being the primary. A game that wasn't split
+// always has exactly one session in this array.
+export interface ScheduledSession {
+  groupIndex: number;
+  table: number;
+  startMinutes: number;
+  endMinutes: number;
+  playCount: number;
+  mayNotFinish: boolean;
+  attendingPlayerIds: string[];
+}
+
 export interface GameSuggestion {
   id: string;
   eventId: string;
@@ -31,14 +46,31 @@ export interface GameSuggestion {
   waitlist: string[];
   createdAt: string;
   createdBy: string;
-  // Set once the scheduler (see src/utils/scheduler.ts) assigns this game a slot.
-  scheduledRound?: number;
+  // Set once the scheduler (see src/utils/scheduler.ts) assigns this game a
+  // slot on its own independent per-table timeline. scheduledTable is the
+  // "was this game scheduled at all" presence marker used elsewhere (e.g.
+  // getLastScheduledAt below) — deliberately NOT set for a walk-up game (see
+  // scheduledWalkUp), since a walk-up was never confidently placed on a real
+  // table and should still be eligible to come up again via /library random.
   scheduledTable?: number;
-  // How many times this game was scheduled to be played within its round's
-  // time slot (opportunistic repeat-fill for short games). 1 = played once.
+  scheduledStartMinutes?: number;
+  scheduledEndMinutes?: number;
+  // How many times this game was scheduled to be played back-to-back at its
+  // table (opportunistic repeat-fill for short games). 1 = played once.
   scheduledPlayCount?: number;
-  // True if this game's round is projected to run past the event's end time.
+  // True if this game's start or end is projected to run past the event's end time.
   scheduledMayNotFinish?: boolean;
+  // Every real table session this game was scheduled into — more than one
+  // when the scheduler split it into groups (see ScheduledSession). Session
+  // 1 is always mirrored into the singular scheduledTable/scheduledStartMinutes/
+  // scheduledEndMinutes/scheduledPlayCount/scheduledMayNotFinish fields above,
+  // so existing single-session consumers of those fields need no changes.
+  scheduledSessions?: ScheduledSession[];
+  // Only 1 signed-up player at lock time — never gets a scheduledTable (see
+  // WalkUpGame in scheduler.ts), but a BG Stats link IS still posted for it
+  // (open recruiting opportunity), so handleAdminBgStats in
+  // src/commands/admin.ts tracks it via this flag instead.
+  scheduledWalkUp?: boolean;
 }
 
 export async function loadGames(): Promise<GameSuggestion[]> {
@@ -82,7 +114,7 @@ export async function upsertGame(game: GameSuggestion): Promise<void> {
 // "last scheduled" is the closest available proxy.
 export async function getLastScheduledAt(guildId: string): Promise<Map<string, string>> {
   const games = (await loadGames()).filter(
-    (g) => g.guildId === guildId && g.scheduledRound !== undefined,
+    (g) => g.guildId === guildId && g.scheduledTable !== undefined,
   );
   const result = new Map<string, string>();
   for (const game of games) {

@@ -147,7 +147,7 @@ Each game card in the event channel has interactive buttons:
 | **Waitlist** | Joins the waitlist when the game is full. |
 | **Leave Waitlist** | Removes you from the waitlist. |
 
-If you join the waitlist and enough people accumulate to form a second copy of the game, the game owner is automatically notified that a second copy is needed.
+If you join the waitlist and enough people accumulate to form a second copy of the game, the game owner is automatically notified that a second copy is needed. Even without a confirmed second copy, when the event locks the scheduler will still split a full waitlist into its own real group and give it a table session — you're not just stuck waiting to see if a seat opens up.
 
 ---
 

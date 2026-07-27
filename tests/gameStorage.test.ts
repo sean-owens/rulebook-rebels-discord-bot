@@ -157,17 +157,17 @@ describe('gameStorage', () => {
 
   describe('getLastScheduledAt', () => {
     it('ignores suggestions that never got scheduled onto a lineup', async () => {
-      await upsertGame(makeGame({ id: 'game-1', title: 'Wingspan', scheduledRound: undefined }));
+      await upsertGame(makeGame({ id: 'game-1', title: 'Wingspan', scheduledTable: undefined }));
       const result = await getLastScheduledAt('guild-1');
       expect(result.has('wingspan')).toBe(false);
     });
 
     it('keys by lowercased title and scopes to the given guild', async () => {
       await upsertGame(
-        makeGame({ id: 'game-1', title: 'Wingspan', guildId: 'guild-1', scheduledRound: 1 }),
+        makeGame({ id: 'game-1', title: 'Wingspan', guildId: 'guild-1', scheduledTable: 1 }),
       );
       await upsertGame(
-        makeGame({ id: 'game-2', title: 'Wingspan', guildId: 'guild-2', scheduledRound: 1 }),
+        makeGame({ id: 'game-2', title: 'Wingspan', guildId: 'guild-2', scheduledTable: 1 }),
       );
       const result = await getLastScheduledAt('guild-1');
       expect(result.has('wingspan')).toBe(true);
@@ -178,10 +178,10 @@ describe('gameStorage', () => {
       const older = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
       const newer = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString();
       await upsertGame(
-        makeGame({ id: 'game-1', title: 'Catan', scheduledRound: 1, createdAt: older }),
+        makeGame({ id: 'game-1', title: 'Catan', scheduledTable: 1, createdAt: older }),
       );
       await upsertGame(
-        makeGame({ id: 'game-2', title: 'Catan', scheduledRound: 1, createdAt: newer }),
+        makeGame({ id: 'game-2', title: 'Catan', scheduledTable: 1, createdAt: newer }),
       );
       const result = await getLastScheduledAt('guild-1');
       expect(result.get('catan')).toBe(newer);

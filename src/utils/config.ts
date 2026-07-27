@@ -47,6 +47,28 @@ export interface GuildConfig {
   // Defaults to 48h before the event; set to 0 via /host event config to opt out.
   lockHoursBeforeEvent: number;
   scheduleTableCount: number;
+  // Hard ceiling on concurrent tables (e.g. a venue's physical table count) —
+  // distinct from scheduleTableCount, which is only ever a floor/default.
+  // 0 = uncapped (today's behavior).
+  maxTableCount: number;
+  // Reserves the LAST N table indices exclusively for Light-complexity games
+  // (see isFlexEligible in src/utils/scheduler.ts) — Medium/Heavy and unrated
+  // games never use them, even if idle, guaranteeing players who only want
+  // quick/light games always have a table available. 0 = disabled.
+  flexTableCount: number;
+  // Minutes a person needs after one game ends before their next game can
+  // start (see src/utils/scheduler.ts's per-person availability tracking),
+  // ON TOP OF that game's own complexity buffer (lightBufferMinutes/
+  // mediumBufferMinutes/heavyBufferMinutes below, already baked into how
+  // long the table itself stays occupied). 0 = no separate break — the
+  // complexity buffer alone is the gap between a person's games. Recap
+  // validation (see tests/schedulerRecapValidation.test.ts) showed a flat
+  // extra 30min on top of the buffer compounds badly for anyone in several
+  // games, without changing whether the day fits — the complexity buffer
+  // already scales the "padding" to the game itself (a hard rules explanation
+  // needs more recovery time than a 10-minute party game), which is a better
+  // fit than a flat number applied identically regardless of what was played.
+  breakMinutesBetweenGames: number;
   lightBufferMinutes: number;
   mediumBufferMinutes: number;
   heavyBufferMinutes: number;
@@ -93,6 +115,9 @@ const DEFAULT_CONFIG: GuildConfig = {
   gameNightTagIds: {},
   lockHoursBeforeEvent: 48,
   scheduleTableCount: 1,
+  maxTableCount: 0,
+  flexTableCount: 0,
+  breakMinutesBetweenGames: 0,
   lightBufferMinutes: 15,
   mediumBufferMinutes: 30,
   heavyBufferMinutes: 45,
