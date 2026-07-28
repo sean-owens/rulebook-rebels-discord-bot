@@ -2682,7 +2682,7 @@ The effective table count used at lock time is `max(headcount floor, preference-
 **`/admin event preview` (dry run):**
 - [ ] Before the lock threshold is reached, run `/admin event preview` inside an event channel — confirm it shows an ephemeral embed shaped the same as a real lock's schedule embed (per-table itinerary with clock times, repeats, "May not get to play everything", "Not scheduled")
 - [ ] After running the preview, confirm suggestions are still unlocked — `/game suggest` still works, and Join/Leave on game cards still works normally
-- [ ] Confirm nothing is posted to the event channel itself, and no games have `scheduledTable`/`scheduledStartMinutes`/`scheduledEndMinutes`/`scheduledPlayCount` set in storage after a preview
+- [ ] Confirm nothing is posted to the event channel itself, and no games have `scheduledTable`/`scheduledStartMinutes`/`scheduledEndMinutes`/`scheduledPlayCount`/`scheduledSessions` set in storage after a preview (including a game that would split into groups — its `scheduledSessions` array must stay unset too)
 - [ ] Run `/admin event preview` again after changing `table_count`, `max_tables`, `flex_tables`, `heavy_game_break_minutes`, `break_minutes`, or `max_game_repeats` (3.9a) — confirm the preview reflects the new config immediately
 - [ ] Run `/admin event preview` in a channel that isn't an event channel — confirm a clear "isn't an event channel" ephemeral error instead of a crash
 
