@@ -805,6 +805,9 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
   const postBgStatsLinks = interaction.options.getBoolean('post_bgstats_links');
   const heavyGameBreakMinutes = interaction.options.getInteger('heavy_game_break_minutes');
   const maxGameRepeats = interaction.options.getInteger('max_game_repeats');
+  const maxTableCount = interaction.options.getInteger('max_tables');
+  const breakMinutesBetweenGames = interaction.options.getInteger('break_minutes');
+  const flexTableCount = interaction.options.getInteger('flex_tables');
   const timezone = interaction.options.getString('timezone');
 
   if (timezone !== null && !isValidTimeZone(timezone)) {
@@ -835,6 +838,9 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
   if (postBgStatsLinks !== null) patch.postBgStatsLinks = postBgStatsLinks;
   if (heavyGameBreakMinutes !== null) patch.heavyGameBreakMinutes = heavyGameBreakMinutes;
   if (maxGameRepeats !== null) patch.maxGameRepeats = maxGameRepeats;
+  if (maxTableCount !== null) patch.maxTableCount = maxTableCount;
+  if (breakMinutesBetweenGames !== null) patch.breakMinutesBetweenGames = breakMinutesBetweenGames;
+  if (flexTableCount !== null) patch.flexTableCount = flexTableCount;
   if (timezone !== null) patch.timezone = timezone;
 
   function formatConfig(c: GuildConfig): string {
@@ -852,9 +858,10 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
       `> Archive category: ${c.archiveCategoryName}`,
       `> Archived channel retention: ${retentionDays === 0 ? 'Never auto-delete' : `${retentionDays} days`}`,
       `> Lineup lock: ${c.lockHoursBeforeEvent === 0 ? 'Disabled' : `${c.lockHoursBeforeEvent}h before event`}`,
-      `> Scheduler tables: ${c.scheduleTableCount}`,
+      `> Scheduler tables: ${c.scheduleTableCount}${c.maxTableCount > 0 ? ` (capped at ${c.maxTableCount})` : ''}${c.flexTableCount > 0 ? ` (${c.flexTableCount} reserved for Light games)` : ''}`,
       `> Scheduling buffers: Light +${c.lightBufferMinutes}m, Medium +${c.mediumBufferMinutes}m, Heavy +${c.heavyBufferMinutes}m`,
       `> Heavy-game break: ${c.heavyGameBreakMinutes === 0 ? 'Disabled' : `${c.heavyGameBreakMinutes}m before back-to-back Heavy games at a table`}`,
+      `> Break between games: ${c.breakMinutesBetweenGames === 0 ? 'Disabled' : `${c.breakMinutesBetweenGames}m before a person's next game can start`}`,
       `> Short-game repeat cap: ${c.maxGameRepeats}x`,
       `> BG Stats buttons on lock: ${c.postBgStatsLinks ? 'Enabled' : 'Disabled'}`,
     ].join('\n');

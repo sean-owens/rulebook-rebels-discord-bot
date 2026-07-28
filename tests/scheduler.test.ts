@@ -6,7 +6,7 @@ import {
   scheduleGames,
   complexityBufferMinutes,
   toSchedulableGame,
-  computeRoundClocks,
+  minutesToUnix,
   buildScheduleEmbed,
   lockAndScheduleEvent,
   checkPendingSchedules,
@@ -16,22 +16,32 @@ import {
   computeHeadcountTableFloor,
   computePreferenceSplitTableFloor,
   computeEffectiveTableCount,
+  computeSharedPlayerConflictDegree,
   resolveRsvpComplexityPreferences,
+  computeSplitGroupSizes,
+  baseGameId,
+  makeGroupGameId,
 } from '../src/utils/scheduler';
 import { GameSuggestion } from '../src/utils/gameStorage';
 
 const BUFFER_CONFIG = { lightBufferMinutes: 20, mediumBufferMinutes: 30, heavyBufferMinutes: 40 };
 
-// Refinements config for tests that aren't exercising breaks/repeats — keeps
-// their assertions identical to pre-refinement behavior.
-const NO_REFINEMENTS = { heavyGameBreakMinutes: 0, maxGameRepeats: 1 };
+// Refinements config for tests that aren't exercising breaks/repeats/person-breaks —
+// keeps their assertions focused on the behavior actually under test.
+const NO_REFINEMENTS = { heavyGameBreakMinutes: 0, maxGameRepeats: 1, breakMinutesBetweenGames: 0, flexTableCount: 0 };
 
 function makeGame(overrides: Partial<SchedulableGame> = {}): SchedulableGame {
   return {
     id: overrides.id ?? 'g1',
     title: overrides.title ?? 'Game',
     minPlayers: overrides.minPlayers ?? 2,
+    // High enough that no existing fixture accidentally triggers group-
+    // splitting (see computeSplitGroupSizes) unless a test opts in via an
+    // explicit override.
+    maxPlayers: overrides.maxPlayers ?? 8,
+    suggestedPlayers: overrides.suggestedPlayers,
     seatedPlayers: overrides.seatedPlayers ?? ['p1', 'p2'],
+    waitlistedPlayers: overrides.waitlistedPlayers,
     effectiveDurationMinutes: overrides.effectiveDurationMinutes ?? 60,
     rawMaxPlaytime: overrides.rawMaxPlaytime ?? 60,
     complexity: overrides.complexity,
@@ -53,23 +63,45 @@ describe('complexityBufferMinutes', () => {
 
 describe('toSchedulableGame', () => {
   it('adds the complexity buffer to maxPlaytime and carries raw playtime/complexity through', () => {
-    const game = { id: 'g1', title: 'Wingspan', minPlayers: 2, maxPlaytime: 70, complexity: 'Medium', seats: ['p1'] } as GameSuggestion;
+    const game = {
+      id: 'g1', title: 'Wingspan', minPlayers: 2, maxPlayers: 4, suggestedPlayers: null,
+      maxPlaytime: 70, complexity: 'Medium', seats: ['p1'],
+    } as GameSuggestion;
     const result = toSchedulableGame(game, BUFFER_CONFIG);
     expect(result.effectiveDurationMinutes).toBe(100); // 70 + 30
     expect(result.seatedPlayers).toEqual(['p1']);
     expect(result.rawMaxPlaytime).toBe(70);
     expect(result.complexity).toBe('Medium');
   });
+
+  it('does not scale the estimate for a bigger table — the complexity buffer alone accounts for that', () => {
+    const baseline = {
+      id: 'g1', title: 'Wingspan', minPlayers: 2, maxPlayers: 10, suggestedPlayers: 3,
+      maxPlaytime: 70, complexity: 'Medium', seats: ['p1', 'p2', 'p3'],
+    } as GameSuggestion;
+    const moreSeated = { ...baseline, seats: ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7'] } as GameSuggestion; // 4 over suggestedPlayers
+
+    const baseResult = toSchedulableGame(baseline, BUFFER_CONFIG);
+    const biggerResult = toSchedulableGame(moreSeated, BUFFER_CONFIG);
+    expect(baseResult.effectiveDurationMinutes).toBe(100); // 70 + 30
+    expect(biggerResult.effectiveDurationMinutes).toBe(100); // unaffected by seat count
+  });
+
+  it('carries suggestedPlayers through unchanged, including when unset', () => {
+    const withRecommendation = { id: 'g1', title: 'Wingspan', minPlayers: 1, maxPlayers: 5, suggestedPlayers: 2, maxPlaytime: 70, seats: ['p1'] } as GameSuggestion;
+    const withoutRecommendation = { ...withRecommendation, suggestedPlayers: null } as GameSuggestion;
+    expect(toSchedulableGame(withRecommendation, BUFFER_CONFIG).suggestedPlayers).toBe(2);
+    expect(toSchedulableGame(withoutRecommendation, BUFFER_CONFIG).suggestedPlayers).toBeNull();
+  });
 });
 
 describe('scheduleGames', () => {
-  it('schedules a single game onto round 1, table 1', () => {
+  it('schedules a single game onto table 1 starting at minute 0', () => {
     const result = scheduleGames([makeGame({ id: 'g1' })], 2, 120, NO_REFINEMENTS);
     expect(result.assignments).toEqual([
-      { gameId: 'g1', round: 1, table: 1, playCount: 1, mayNotFinish: false, slotIndex: 0, startOffsetMinutes: 0 },
+      { gameId: 'g1', table: 1, startMinutes: 0, endMinutes: 60, playCount: 1, mayNotFinish: false, attendingPlayerIds: ['p1', 'p2'] },
     ]);
     expect(result.unscheduled).toEqual([]);
-    expect(result.lowInterest).toEqual([]);
     expect(result.totalDurationMinutes).toBe(60);
     expect(result.fitsInWindow).toBe(true);
   });
@@ -87,7 +119,26 @@ describe('scheduleGames', () => {
     ]);
   });
 
-  it('places two non-conflicting games in the same round when tables allow it', () => {
+  it('excludes a 0-seated game, with a distinct reason from the minimum-players case', () => {
+    const result = scheduleGames(
+      [makeGame({ id: 'g1', minPlayers: 2, seatedPlayers: [] })],
+      2,
+      120,
+      NO_REFINEMENTS,
+    );
+    expect(result.assignments).toEqual([]);
+    expect(result.unscheduled).toEqual([{ gameId: 'g1', reason: 'only 0/2 minimum players seated' }]);
+  });
+
+  it('handles an empty game list', () => {
+    const result = scheduleGames([], 2, 120, NO_REFINEMENTS);
+    expect(result.assignments).toEqual([]);
+    expect(result.unscheduled).toEqual([]);
+    expect(result.totalDurationMinutes).toBe(0);
+    expect(result.fitsInWindow).toBe(true);
+  });
+
+  it('places two non-conflicting games concurrently on separate tables', () => {
     const result = scheduleGames(
       [
         makeGame({ id: 'g1', seatedPlayers: ['p1', 'p2'] }),
@@ -97,79 +148,85 @@ describe('scheduleGames', () => {
       120,
       NO_REFINEMENTS,
     );
-    const rounds = new Set(result.assignments.map((a) => a.round));
-    expect(rounds.size).toBe(1);
-    const tables = result.assignments.map((a) => a.table).sort();
-    expect(tables).toEqual([1, 2]);
+    expect(result.assignments.every((a) => a.startMinutes === 0)).toBe(true);
+    expect(result.assignments.map((a) => a.table).sort()).toEqual([1, 2]);
   });
 
-  it('pushes a player-conflicting game to a later round even with a free table', () => {
+  it('spreads a returning group onto a never-yet-used table instead of always reusing a lower-numbered one', () => {
+    // g1/g2 fill tables 1 and 2 for the first 30 minutes; g3 reuses g1's
+    // players once they're free again. A 3rd table has sat idle the whole
+    // time — it should pick up g3, not table 1 again, otherwise a table can
+    // sit empty all day purely because it's never the first one checked.
+    const result = scheduleGames(
+      [
+        makeGame({ id: 'g1', seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 30 }),
+        makeGame({ id: 'g2', seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 30 }),
+        makeGame({ id: 'g3', seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 30 }),
+      ],
+      3,
+      120,
+      NO_REFINEMENTS,
+    );
+    const g1 = result.assignments.find((a) => a.gameId === 'g1')!;
+    const g3 = result.assignments.find((a) => a.gameId === 'g3')!;
+    expect(g3.startMinutes).toBe(g1.endMinutes); // starts the moment p1/p2 free up
+    expect(g3.table).not.toBe(g1.table); // picks up the idle 3rd table instead of reusing table 1
+  });
+
+  it('queues games sequentially on a single table when only one table is available', () => {
+    const result = scheduleGames(
+      [
+        makeGame({ id: 'g1', seatedPlayers: ['p1', 'p2'] }),
+        makeGame({ id: 'g2', seatedPlayers: ['p3', 'p4'] }),
+      ],
+      1,
+      240,
+      NO_REFINEMENTS,
+    );
+    const g1 = result.assignments.find((a) => a.gameId === 'g1')!;
+    const g2 = result.assignments.find((a) => a.gameId === 'g2')!;
+    expect(g1.table).toBe(1);
+    expect(g2.table).toBe(1);
+    expect(g2.startMinutes).toBe(g1.endMinutes);
+    // The table itself was the limiting factor here, not any specific player.
+    expect(g2.delayedByPlayerId).toBeUndefined();
+  });
+
+  it('delays a player-conflicting game until the shared player is available again, even with a free table', () => {
     const result = scheduleGames(
       [
         makeGame({ id: 'g1', seatedPlayers: ['p1', 'p2'] }),
         makeGame({ id: 'g2', seatedPlayers: ['p1', 'p3'] }), // shares p1 with g1
       ],
-      2, // two tables available — conflict is about the player, not table capacity
+      2, // two tables available — the delay is about the shared player, not table capacity
       240,
       NO_REFINEMENTS,
     );
-    const g1Round = result.assignments.find((a) => a.gameId === 'g1')!.round;
-    const g2Round = result.assignments.find((a) => a.gameId === 'g2')!.round;
-    expect(g1Round).not.toBe(g2Round);
-  });
-
-  it('queues a third game to round 2 when only one table is available', () => {
-    const result = scheduleGames(
-      [
-        makeGame({ id: 'g1', minPlayers: 1, seatedPlayers: ['p1', 'p2'] }),
-        makeGame({ id: 'g2', minPlayers: 1, seatedPlayers: ['p3', 'p4'] }),
-      ],
-      1, // single table
-      240,
-      NO_REFINEMENTS,
-    );
-    const rounds = result.assignments.map((a) => a.round).sort();
-    expect(rounds).toEqual([1, 2]);
-  });
-
-  it('computes each round duration as the max effective duration among its games', () => {
-    const result = scheduleGames(
-      [
-        makeGame({ id: 'g1', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 90, rawMaxPlaytime: 90 }),
-        makeGame({ id: 'g2', minPlayers: 1, seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 45, rawMaxPlaytime: 45 }),
-      ],
-      2,
-      120,
-      NO_REFINEMENTS,
-    );
-    expect(result.roundDurationsMinutes).toEqual([90]);
-    expect(result.totalDurationMinutes).toBe(90);
+    const g1 = result.assignments.find((a) => a.gameId === 'g1')!;
+    const g2 = result.assignments.find((a) => a.gameId === 'g2')!;
+    expect(g1.startMinutes).toBe(0);
+    expect(g2.startMinutes).toBe(g1.endMinutes); // not 0, even though a second table is free the whole time
+    // The whole game waits on p1 here, not table capacity — surfaced so it's
+    // clear the delay is a shared-player thing, not framed as a private
+    // "p1 is running late" note.
+    expect(g2.delayedByPlayerId).toBe('p1');
   });
 
   it('flags fitsInWindow as false when the schedule exceeds the event window', () => {
     const result = scheduleGames(
       [
-        makeGame({ id: 'g1', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 90, rawMaxPlaytime: 90 }),
-        makeGame({ id: 'g2', minPlayers: 1, seatedPlayers: ['p1', 'p3'], effectiveDurationMinutes: 90, rawMaxPlaytime: 90 }), // conflicts with g1 -> forced to round 2
+        makeGame({ id: 'g1', seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 90 }),
+        makeGame({ id: 'g2', seatedPlayers: ['p1', 'p3'], effectiveDurationMinutes: 90 }), // conflicts with g1
       ],
-      1,
-      120, // only enough time for one 90-minute round
+      2,
+      120, // only enough time for one 90-minute game before the shared player's second game overruns
       NO_REFINEMENTS,
     );
     expect(result.totalDurationMinutes).toBe(180);
     expect(result.fitsInWindow).toBe(false);
   });
 
-  it('handles an empty game list', () => {
-    const result = scheduleGames([], 2, 120, NO_REFINEMENTS);
-    expect(result.assignments).toEqual([]);
-    expect(result.unscheduled).toEqual([]);
-    expect(result.lowInterest).toEqual([]);
-    expect(result.totalDurationMinutes).toBe(0);
-    expect(result.fitsInWindow).toBe(true);
-  });
-
-  it('never double-books a player across tables in the same round, even under load', () => {
+  it('never lets a shared player have two overlapping game intervals, even under load', () => {
     // 6 games, alternating between two overlapping player pools, 3 tables available.
     const games = Array.from({ length: 6 }, (_, i) =>
       makeGame({
@@ -180,218 +237,654 @@ describe('scheduleGames', () => {
     );
     const result = scheduleGames(games, 3, 600, NO_REFINEMENTS);
 
-    const byRound = new Map<number, string[]>();
+    const byPlayer = new Map<string, Array<{ start: number; end: number }>>();
     for (const a of result.assignments) {
       const game = games.find((g) => g.id === a.gameId)!;
-      const existing = byRound.get(a.round) ?? [];
       for (const p of game.seatedPlayers) {
-        expect(existing.includes(p)).toBe(false);
+        const intervals = byPlayer.get(p) ?? [];
+        for (const iv of intervals) {
+          const overlaps = a.startMinutes < iv.end && iv.start < a.endMinutes;
+          expect(overlaps).toBe(false);
+        }
+        intervals.push({ start: a.startMinutes, end: a.endMinutes });
+        byPlayer.set(p, intervals);
       }
-      byRound.set(a.round, [...existing, ...game.seatedPlayers]);
     }
   });
 
-  describe('low-interest bucket', () => {
-    it('routes a game with exactly 1 seated player to lowInterest instead of unscheduled', () => {
+  describe('flex table reservation', () => {
+    it('never lets a Medium/Heavy game use a reserved flex table, even when it sits idle', () => {
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'busy', seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 60 }),
+          makeGame({ id: 'med', seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 30, complexity: 'Medium' }),
+        ],
+        2,
+        200,
+        { ...NO_REFINEMENTS, flexTableCount: 1 }, // table 2 reserved for Light games only
+      );
+      const med = result.assignments.find((a) => a.gameId === 'med')!;
+      // Queues behind the busy regular table instead of taking the idle flex one.
+      expect(med.table).toBe(1);
+      expect(med.startMinutes).toBe(60);
+    });
+
+    it('lets a Light game use a reserved flex table when that gives the earliest start', () => {
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'busy', seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 60 }),
+          makeGame({ id: 'light', seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 30, complexity: 'Light' }),
+        ],
+        2,
+        200,
+        { ...NO_REFINEMENTS, flexTableCount: 1 },
+      );
+      const light = result.assignments.find((a) => a.gameId === 'light')!;
+      expect(light.table).toBe(2);
+      expect(light.startMinutes).toBe(0);
+    });
+
+    it('lets a Light game use a regular table when that is genuinely earlier, instead of forcing it onto the flex table', () => {
+      const result = scheduleGames(
+        [makeGame({ id: 'light', seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 30, complexity: 'Light' })],
+        2,
+        200,
+        { ...NO_REFINEMENTS, flexTableCount: 1 },
+      );
+      const light = result.assignments.find((a) => a.gameId === 'light')!;
+      expect(light.table).toBe(1); // both tables tied at minute 0 -> regular table wins via load-balance tie-break
+    });
+
+    it('treats a game with no complexity set as not flex-eligible, same as Medium/Heavy', () => {
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'busy', seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 60 }),
+          makeGame({ id: 'unrated', seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 30 }),
+        ],
+        2,
+        200,
+        { ...NO_REFINEMENTS, flexTableCount: 1 },
+      );
+      const unrated = result.assignments.find((a) => a.gameId === 'unrated')!;
+      expect(unrated.table).toBe(1);
+      expect(unrated.startMinutes).toBe(60);
+    });
+
+    it('clamps to at least 1 regular table when flexTableCount is set at or above the table count', () => {
+      const result = scheduleGames(
+        [makeGame({ id: 'med', seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 30, complexity: 'Medium' })],
+        3,
+        200,
+        { ...NO_REFINEMENTS, flexTableCount: 5 },
+      );
+      // Never fully locked out of every table, even though flexTableCount exceeds the table count.
+      expect(result.assignments.find((a) => a.gameId === 'med')).toBeDefined();
+    });
+
+    it('behaves identically to today when flexTableCount is 0 (the default) — any game, any table', () => {
+      const result = scheduleGames(
+        [makeGame({ id: 'med', seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 30, complexity: 'Medium' })],
+        2,
+        200,
+        NO_REFINEMENTS,
+      );
+      expect(result.assignments.find((a) => a.gameId === 'med')?.startMinutes).toBe(0);
+    });
+  });
+
+  describe('computeSharedPlayerConflictDegree', () => {
+    it('counts distinct other games sharing at least one seated player, deduped by game not by shared-player count', () => {
+      const games = [
+        makeGame({ id: 'a', seatedPlayers: ['p1', 'p2'] }),
+        // Shares BOTH p1 and p2 with 'a' — still only one conflict, not two.
+        makeGame({ id: 'b', seatedPlayers: ['p1', 'p2'] }),
+        makeGame({ id: 'c', seatedPlayers: ['p2', 'p3'] }),
+      ];
+      const degree = computeSharedPlayerConflictDegree(games);
+      expect(degree.get('a')).toBe(2); // conflicts with b (p1,p2) and c (p2)
+      expect(degree.get('b')).toBe(2); // conflicts with a (p1,p2) and c (p2)
+      expect(degree.get('c')).toBe(2); // conflicts with a and b (both via p2)
+    });
+
+    it('scores 0 for a game with no shared players', () => {
+      const games = [
+        makeGame({ id: 'solo', seatedPlayers: ['p1', 'p2'] }),
+        makeGame({ id: 'other', seatedPlayers: ['p3', 'p4'] }),
+      ];
+      const degree = computeSharedPlayerConflictDegree(games);
+      expect(degree.get('solo')).toBe(0);
+      expect(degree.get('other')).toBe(0);
+    });
+  });
+
+  describe('computeSplitGroupSizes', () => {
+    it('rebalances evenly instead of leaving an uneven leftover group', () => {
+      // Naive chunking would give 4/4/1 — the last group can't meet even a
+      // typical minPlayers of 2. Rebalanced, 3 groups of 3 each works.
+      expect(computeSplitGroupSizes(9, 2, 4)).toEqual([3, 3, 3]);
+    });
+
+    it('distributes the remainder across the first groups when it does not divide evenly', () => {
+      expect(computeSplitGroupSizes(13, 2, 4)).toEqual([4, 3, 3, 3]);
+    });
+
+    it('returns a single group (no split) when everyone already fits within maxPlayers', () => {
+      expect(computeSplitGroupSizes(4, 2, 4)).toEqual([4]);
+      expect(computeSplitGroupSizes(8, 2, 6)).toEqual([4, 4]);
+    });
+
+    it('falls back to a single group when no valid multi-group split exists', () => {
+      // ceil(7/6) = 2 groups, but floor(7/2) = 3 < minPlayers(4) — no group
+      // count can satisfy both maxPlayers and minPlayers here.
+      expect(computeSplitGroupSizes(7, 4, 6)).toEqual([7]);
+    });
+  });
+
+  describe('group-splitting (oversized seats + waitlist)', () => {
+    it('splits into evenly-rebalanced groups, all chained onto the same table', () => {
+      const result = scheduleGames(
+        [
+          makeGame({
+            id: 'g1',
+            seatedPlayers: ['p1', 'p2', 'p3', 'p4'],
+            waitlistedPlayers: ['p5', 'p6', 'p7', 'p8', 'p9'],
+            minPlayers: 2,
+            maxPlayers: 4,
+            effectiveDurationMinutes: 60,
+          }),
+        ],
+        1,
+        1000,
+        NO_REFINEMENTS,
+      );
+      expect(result.assignments).toHaveLength(3);
+      expect(new Set(result.assignments.map((a) => a.table))).toEqual(new Set([1]));
+      const byId = new Map(result.assignments.map((a) => [a.gameId, a]));
+      expect(byId.get('g1')).toMatchObject({ startMinutes: 0, endMinutes: 60, attendingPlayerIds: ['p1', 'p2', 'p3'] });
+      expect(byId.get('g1::g2')).toMatchObject({ startMinutes: 60, endMinutes: 120, attendingPlayerIds: ['p4', 'p5', 'p6'] });
+      expect(byId.get('g1::g3')).toMatchObject({ startMinutes: 120, endMinutes: 180, attendingPlayerIds: ['p7', 'p8', 'p9'] });
+      expect(baseGameId('g1::g3')).toBe('g1');
+      expect(makeGroupGameId('g1', 3)).toBe('g1::g3');
+    });
+
+    it('does not split when seats + waitlist already fit within maxPlayers', () => {
+      const result = scheduleGames(
+        [makeGame({ id: 'g1', seatedPlayers: ['p1', 'p2', 'p3'], waitlistedPlayers: ['p4'], maxPlayers: 4, effectiveDurationMinutes: 60 })],
+        1,
+        1000,
+        NO_REFINEMENTS,
+      );
+      expect(result.assignments).toHaveLength(1);
+      expect(result.assignments[0].attendingPlayerIds.sort()).toEqual(['p1', 'p2', 'p3', 'p4']);
+    });
+
+    it('leaves the excess waitlisted (today\'s behavior) when no valid split exists', () => {
+      const result = scheduleGames(
+        [
+          makeGame({
+            id: 'g1',
+            seatedPlayers: ['p1', 'p2', 'p3', 'p4', 'p5', 'p6'],
+            waitlistedPlayers: ['p7'],
+            minPlayers: 4,
+            maxPlayers: 6,
+            effectiveDurationMinutes: 60,
+          }),
+        ],
+        1,
+        1000,
+        NO_REFINEMENTS,
+      );
+      expect(result.assignments).toHaveLength(1);
+      expect(result.assignments[0].attendingPlayerIds.sort()).toEqual(['p1', 'p2', 'p3', 'p4', 'p5', 'p6']);
+      expect(result.unscheduled).toEqual([]);
+    });
+
+    it('gates a later group\'s start on its own players\' other commitments, not just the previous group finishing', () => {
+      // p4 is also seated in "other" (0-200) — group 2 (p4,p5,p6) can't start
+      // until p4 is actually free, even though group 1 finishes much earlier.
+      const result = scheduleGames(
+        [
+          makeGame({
+            id: 'g1',
+            seatedPlayers: ['p1', 'p2', 'p3'],
+            waitlistedPlayers: ['p4', 'p5', 'p6'],
+            minPlayers: 2,
+            maxPlayers: 3,
+            effectiveDurationMinutes: 60,
+          }),
+          makeGame({ id: 'other', seatedPlayers: ['p4', 'p9'], effectiveDurationMinutes: 200 }),
+        ],
+        2,
+        1000,
+        NO_REFINEMENTS,
+      );
+      const group2 = result.assignments.find((a) => a.gameId === 'g1::g2')!;
+      expect(group2.startMinutes).toBe(200);
+      expect(group2.delayedByPlayerId).toBe('p4');
+    });
+
+    it('reserves the whole chain\'s table time so an unrelated game cannot land in the gap between groups', () => {
+      const result = scheduleGames(
+        [
+          makeGame({
+            id: 'g1',
+            seatedPlayers: ['p1', 'p2', 'p3'],
+            waitlistedPlayers: ['p4', 'p5', 'p6'],
+            minPlayers: 2,
+            maxPlayers: 3,
+            effectiveDurationMinutes: 60,
+          }),
+          makeGame({ id: 'filler', seatedPlayers: ['p7', 'p8'], effectiveDurationMinutes: 30 }),
+        ],
+        2,
+        1000,
+        NO_REFINEMENTS,
+      );
+      const g1Table = result.assignments.find((a) => a.gameId === 'g1')!.table;
+      const filler = result.assignments.find((a) => a.gameId === 'filler')!;
+      // filler must land on the OTHER table, not squeezed into g1's table
+      // between group 1 (0-60) and group 2 (60-120).
+      expect(filler.table).not.toBe(g1Table);
+    });
+
+    it("requires a group's full roster before starting, even when suggestedPlayers is lower than the group's own size", () => {
+      // suggestedPlayers:2 would normally let quorum trim to just 2 — but
+      // group 1's own assigned roster is 5 (10 people, maxPlayers 6 -> two
+      // groups of 5), and nobody assigned to a group should be excludable
+      // from it, so it must wait for all 5.
+      const result = scheduleGames(
+        [
+          makeGame({
+            id: 'g1',
+            seatedPlayers: ['p1', 'p2', 'p3', 'p4', 'p5'],
+            waitlistedPlayers: ['p6', 'p7', 'p8', 'p9', 'p10'],
+            minPlayers: 2,
+            maxPlayers: 6,
+            suggestedPlayers: 2,
+            effectiveDurationMinutes: 60,
+          }),
+        ],
+        1,
+        1000,
+        NO_REFINEMENTS,
+      );
+      const group1 = result.assignments.find((a) => a.gameId === 'g1')!;
+      expect(group1.attendingPlayerIds.sort()).toEqual(['p1', 'p2', 'p3', 'p4', 'p5']);
+    });
+
+    it('drops a chained group (and reports why) when it would start past the event horizon, without disturbing earlier groups', () => {
+      const result = scheduleGames(
+        [
+          makeGame({
+            id: 'g1',
+            seatedPlayers: ['p1', 'p2', 'p3'],
+            waitlistedPlayers: ['p4', 'p5', 'p6', 'p7', 'p8', 'p9'],
+            minPlayers: 2,
+            maxPlayers: 3,
+            effectiveDurationMinutes: 60,
+          }),
+        ],
+        1,
+        50, // horizon = 100; group 3 would start at minute 120
+        NO_REFINEMENTS,
+      );
+      expect(result.assignments.map((a) => a.gameId).sort()).toEqual(['g1', 'g1::g2']);
+      expect(result.unscheduled).toEqual([
+        { gameId: 'g1::g3', reason: 'not enough time left in the event window' },
+      ]);
+    });
+  });
+
+  describe('multi-pass scheduling (tries several placement strategies, keeps the best)', () => {
+    it('picks whichever pass leaves the fewest games unscheduled, not just the dynamic default', () => {
+      // "gate" ties up r; L needs p1+r; three 60-min fillers chain onto p1.
+      // Verified via script: earliest-ready drops only L (1 unscheduled);
+      // sorting by duration or by conflict-degree first protects L but
+      // starves the fillers instead, dropping 2-3 games — objectively worse.
+      // The winner must be earliest-ready specifically because it drops the
+      // fewest games overall, not because it's first in the list.
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'gate', seatedPlayers: ['r', 'r2'], effectiveDurationMinutes: 150 }),
+          makeGame({ id: 'L', seatedPlayers: ['p1', 'r'], effectiveDurationMinutes: 120 }),
+          makeGame({ id: 'F1', seatedPlayers: ['p1', 'a'], effectiveDurationMinutes: 60 }),
+          makeGame({ id: 'F2', seatedPlayers: ['p1', 'b'], effectiveDurationMinutes: 60 }),
+          makeGame({ id: 'F3', seatedPlayers: ['p1', 'c'], effectiveDurationMinutes: 60 }),
+        ],
+        5,
+        80, // horizon = 160: tight enough that protecting L instead starves the fillers
+        NO_REFINEMENTS,
+      );
+      expect(result.unscheduled).toEqual([{ gameId: 'L', reason: 'not enough time left in the event window' }]);
+      expect(result.assignments.map((a) => a.gameId).sort()).toEqual(['F1', 'F2', 'F3', 'gate']);
+    });
+
+    it('rejects a worse candidate even when nothing is unscheduled — picks the lower total span', () => {
+      // Same shape as above but with room for everything to fit eventually.
+      // Verified via script: earliest-ready and most-shared-players both
+      // finish at 300min; longest-duration-first alone finishes at 450min
+      // (protecting L pushes all three fillers behind it). Multi-pass must
+      // not return the 450min outcome.
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'gate', seatedPlayers: ['r', 'r2'], effectiveDurationMinutes: 150 }),
+          makeGame({ id: 'L', seatedPlayers: ['p1', 'r'], effectiveDurationMinutes: 120 }),
+          makeGame({ id: 'F1', seatedPlayers: ['p1', 'a'], effectiveDurationMinutes: 60 }),
+          makeGame({ id: 'F2', seatedPlayers: ['p1', 'b'], effectiveDurationMinutes: 60 }),
+          makeGame({ id: 'F3', seatedPlayers: ['p1', 'c'], effectiveDurationMinutes: 60 }),
+        ],
+        5,
+        1000,
+        NO_REFINEMENTS,
+      );
+      expect(result.unscheduled).toEqual([]);
+      expect(result.totalDurationMinutes).toBe(300);
+    });
+
+    it('converges to exactly today\'s output for fully independent games (tie goes to the dynamic pass)', () => {
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'g1', seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 60 }),
+          makeGame({ id: 'g2', seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 60 }),
+        ],
+        2,
+        200,
+        NO_REFINEMENTS,
+      );
+      expect(result.assignments).toEqual([
+        { gameId: 'g1', table: 1, startMinutes: 0, endMinutes: 60, playCount: 1, mayNotFinish: false, delayedByPlayerId: undefined, attendingPlayerIds: ['p1', 'p2'] },
+        { gameId: 'g2', table: 2, startMinutes: 0, endMinutes: 60, playCount: 1, mayNotFinish: false, delayedByPlayerId: undefined, attendingPlayerIds: ['p3', 'p4'] },
+      ]);
+    });
+  });
+
+  describe('walk-up (1-signup) games', () => {
+    it('routes a game with exactly 1 seated player to walkUps instead of the table-placement loop', () => {
       const result = scheduleGames(
         [makeGame({ id: 'g1', minPlayers: 2, seatedPlayers: ['p1'] })],
         2,
         120,
         NO_REFINEMENTS,
       );
-      expect(result.lowInterest).toEqual([
-        { gameId: 'g1', reason: 'only 1 player interested — may not get played' },
-      ]);
       expect(result.unscheduled).toEqual([]);
       expect(result.assignments).toEqual([]);
+      expect(result.walkUps).toEqual([{ gameId: 'g1' }]);
     });
 
-    it('routes a 1-seated game to lowInterest even when its own minPlayers is 1 (would otherwise be schedulable)', () => {
-      const result = scheduleGames(
-        [makeGame({ id: 'g1', minPlayers: 1, seatedPlayers: ['p1'] })],
-        2,
-        120,
-        NO_REFINEMENTS,
-      );
-      expect(result.lowInterest).toEqual([
-        { gameId: 'g1', reason: 'only 1 player interested — may not get played' },
-      ]);
-      expect(result.assignments).toEqual([]);
-    });
-
-    it('leaves a 0-seated game in the unscheduled bucket, not lowInterest', () => {
-      const result = scheduleGames(
-        [makeGame({ id: 'g1', minPlayers: 2, seatedPlayers: [] })],
-        2,
-        120,
-        NO_REFINEMENTS,
-      );
-      expect(result.unscheduled).toEqual([
-        { gameId: 'g1', reason: 'only 0/2 minimum players seated' },
-      ]);
-      expect(result.lowInterest).toEqual([]);
-    });
-
-    it('only pulls out the 1-seated game when games are mixed', () => {
+    it('never lets a walk-up game consume a table, even when a table is otherwise free', () => {
       const result = scheduleGames(
         [
-          makeGame({ id: 'g1', minPlayers: 1, seatedPlayers: ['p1'] }),
-          makeGame({ id: 'g2', minPlayers: 2, seatedPlayers: ['p2', 'p3'] }),
+          makeGame({ id: 'walkup', minPlayers: 1, seatedPlayers: ['p1'] }),
+          makeGame({ id: 'real', minPlayers: 2, seatedPlayers: ['p2', 'p3'] }),
         ],
         2,
         120,
         NO_REFINEMENTS,
       );
-      expect(result.lowInterest.map((u) => u.gameId)).toEqual(['g1']);
-      expect(result.assignments.map((a) => a.gameId)).toEqual(['g2']);
+      // The walk-up game never enters the table loop at all — only the real
+      // signup shows up as a table assignment.
+      expect(result.assignments).toHaveLength(1);
+      expect(result.assignments[0].gameId).toBe('real');
+      expect(result.walkUps).toEqual([{ gameId: 'walkup' }]);
+      expect(result.unscheduled).toEqual([]);
     });
   });
 
-  describe('Heavy-adjacency break', () => {
-    it('inserts a break before the second round when one table plays Heavy games in consecutive rounds', () => {
-      // 1 table, disjoint players -> g1 forced to round 1, g2 forced to round 2, both Heavy.
+  describe('Heavy-adjacency break (per table)', () => {
+    it('inserts a break before a Heavy game following another Heavy game at the same table', () => {
       const result = scheduleGames(
         [
-          makeGame({ id: 'g1', minPlayers: 1, seatedPlayers: ['p1', 'p2'], complexity: 'Heavy' }),
-          makeGame({ id: 'g2', minPlayers: 1, seatedPlayers: ['p3', 'p4'], complexity: 'Heavy' }),
+          makeGame({ id: 'g1', seatedPlayers: ['p1', 'p2'], complexity: 'Heavy', effectiveDurationMinutes: 60 }),
+          makeGame({ id: 'g2', seatedPlayers: ['p3', 'p4'], complexity: 'Heavy', effectiveDurationMinutes: 60 }),
         ],
-        1,
+        1, // forces both onto the same table
         600,
-        { heavyGameBreakMinutes: 20, maxGameRepeats: 1 },
+        { heavyGameBreakMinutes: 20, maxGameRepeats: 1, breakMinutesBetweenGames: 0, flexTableCount: 0 },
       );
-      expect(result.roundDurationsMinutes).toHaveLength(2);
-      expect(result.roundBreakMinutesBefore).toEqual([0, 20]);
-      expect(result.totalDurationMinutes).toBe(60 + 60 + 20);
+      const g1 = result.assignments.find((a) => a.gameId === 'g1')!;
+      const g2 = result.assignments.find((a) => a.gameId === 'g2')!;
+      expect(g2.table).toBe(g1.table);
+      expect(g2.startMinutes - g1.endMinutes).toBe(20);
     });
 
     it('inserts no break when heavyGameBreakMinutes is 0 (disabled)', () => {
       const result = scheduleGames(
         [
-          makeGame({ id: 'g1', minPlayers: 1, seatedPlayers: ['p1', 'p2'], complexity: 'Heavy' }),
-          makeGame({ id: 'g2', minPlayers: 1, seatedPlayers: ['p3', 'p4'], complexity: 'Heavy' }),
+          makeGame({ id: 'g1', seatedPlayers: ['p1', 'p2'], complexity: 'Heavy', effectiveDurationMinutes: 60 }),
+          makeGame({ id: 'g2', seatedPlayers: ['p3', 'p4'], complexity: 'Heavy', effectiveDurationMinutes: 60 }),
         ],
         1,
         600,
         NO_REFINEMENTS,
       );
-      expect(result.roundBreakMinutesBefore).toEqual([0, 0]);
-    });
-
-    it('inserts a global break even when only one of several tables has the Heavy-heavy adjacency', () => {
-      // 2 tables: table 1 gets Heavy->Heavy, table 2 gets Light->Light — the
-      // break is global, so table 2's round 2 also shifts even though it
-      // didn't strictly need a break itself.
-      const result = scheduleGames(
-        [
-          makeGame({ id: 'g1', minPlayers: 1, seatedPlayers: ['a1', 'a2'], complexity: 'Heavy', effectiveDurationMinutes: 60, rawMaxPlaytime: 60 }),
-          makeGame({ id: 'g2', minPlayers: 1, seatedPlayers: ['b1', 'b2'], complexity: 'Light', effectiveDurationMinutes: 60, rawMaxPlaytime: 60 }),
-          makeGame({ id: 'g3', minPlayers: 1, seatedPlayers: ['c1', 'c2'], complexity: 'Heavy', effectiveDurationMinutes: 60, rawMaxPlaytime: 60 }),
-          makeGame({ id: 'g4', minPlayers: 1, seatedPlayers: ['d1', 'd2'], complexity: 'Light', effectiveDurationMinutes: 60, rawMaxPlaytime: 60 }),
-        ],
-        2,
-        600,
-        { heavyGameBreakMinutes: 20, maxGameRepeats: 1 },
-      );
-      expect(result.roundDurationsMinutes).toHaveLength(2);
-      expect(result.roundBreakMinutesBefore).toEqual([0, 20]);
+      const g1 = result.assignments.find((a) => a.gameId === 'g1')!;
+      const g2 = result.assignments.find((a) => a.gameId === 'g2')!;
+      expect(g2.startMinutes).toBe(g1.endMinutes);
     });
 
     it('does not trigger a break for Heavy followed by a non-Heavy game at the same table', () => {
       const result = scheduleGames(
         [
-          makeGame({ id: 'g1', minPlayers: 1, seatedPlayers: ['p1', 'p2'], complexity: 'Heavy' }),
-          makeGame({ id: 'g2', minPlayers: 1, seatedPlayers: ['p3', 'p4'], complexity: 'Light' }),
+          makeGame({ id: 'g1', seatedPlayers: ['p1', 'p2'], complexity: 'Heavy', effectiveDurationMinutes: 60 }),
+          makeGame({ id: 'g2', seatedPlayers: ['p3', 'p4'], complexity: 'Light', effectiveDurationMinutes: 60 }),
         ],
         1,
         600,
-        { heavyGameBreakMinutes: 20, maxGameRepeats: 1 },
+        { heavyGameBreakMinutes: 20, maxGameRepeats: 1, breakMinutesBetweenGames: 0, flexTableCount: 0 },
       );
-      expect(result.roundBreakMinutesBefore).toEqual([0, 0]);
+      const g1 = result.assignments.find((a) => a.gameId === 'g1')!;
+      const g2 = result.assignments.find((a) => a.gameId === 'g2')!;
+      expect(g2.startMinutes).toBe(g1.endMinutes);
     });
 
-    it('does not detect Heavy games separated by a non-Heavy filler round at the same table (v1 limitation)', () => {
-      // Force 3 rounds at 1 table: Heavy (round1), non-Heavy (round2), Heavy (round3) —
-      // all players distinct so each is forced to its own new round in order.
+    it('applies independently per table — one table with Heavy-Heavy adjacency does not delay an unrelated table', () => {
       const result = scheduleGames(
         [
-          makeGame({ id: 'g1', minPlayers: 1, seatedPlayers: ['p1', 'p2'], complexity: 'Heavy' }),
-          makeGame({ id: 'g2', minPlayers: 1, seatedPlayers: ['p3', 'p4'], complexity: 'Light' }),
-          makeGame({ id: 'g3', minPlayers: 1, seatedPlayers: ['p5', 'p6'], complexity: 'Heavy' }),
+          makeGame({ id: 'h1', seatedPlayers: ['a1', 'a2'], complexity: 'Heavy', effectiveDurationMinutes: 60 }),
+          makeGame({ id: 'h2', seatedPlayers: ['a1', 'a2'], complexity: 'Heavy', effectiveDurationMinutes: 60 }), // same players as h1 -> same table, sequential
+          makeGame({ id: 'light1', seatedPlayers: ['b1', 'b2'], complexity: 'Light', effectiveDurationMinutes: 60 }),
+          makeGame({ id: 'light2', seatedPlayers: ['b1', 'b2'], complexity: 'Light', effectiveDurationMinutes: 60 }),
         ],
-        1,
+        2,
         600,
-        { heavyGameBreakMinutes: 20, maxGameRepeats: 1 },
+        { heavyGameBreakMinutes: 20, maxGameRepeats: 1, breakMinutesBetweenGames: 0, flexTableCount: 0 },
       );
-      expect(result.roundDurationsMinutes).toHaveLength(3);
-      expect(result.roundBreakMinutesBefore).toEqual([0, 0, 0]);
+      const light2 = result.assignments.find((a) => a.gameId === 'light2')!;
+      const light1 = result.assignments.find((a) => a.gameId === 'light1')!;
+      // The b1/b2 table's own back-to-back Light games are unaffected by the
+      // unrelated a1/a2 table's Heavy-Heavy break — this is the key benefit
+      // of the per-table check over the old model's global round-shift.
+      expect(light2.startMinutes).toBe(light1.endMinutes);
+    });
+  });
+
+  describe('per-person break between games', () => {
+    it('delays a shared player\'s next game by the configured break, beyond just avoiding overlap', () => {
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'g1', seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 60 }),
+          makeGame({ id: 'g2', seatedPlayers: ['p1', 'p3'], effectiveDurationMinutes: 60 }),
+        ],
+        2,
+        300,
+        { heavyGameBreakMinutes: 0, maxGameRepeats: 1, breakMinutesBetweenGames: 15, flexTableCount: 0 },
+      );
+      const g1 = result.assignments.find((a) => a.gameId === 'g1')!;
+      const g2 = result.assignments.find((a) => a.gameId === 'g2')!;
+      expect(g2.startMinutes).toBe(g1.endMinutes + 15);
     });
 
-    it('can flip fitsInWindow from true to false once break minutes are counted', () => {
-      const withoutBreak = scheduleGames(
+    it('does not delay two games that share no players, even with a break configured', () => {
+      const result = scheduleGames(
         [
-          makeGame({ id: 'g1', minPlayers: 1, seatedPlayers: ['p1', 'p2'], complexity: 'Heavy' }),
-          makeGame({ id: 'g2', minPlayers: 1, seatedPlayers: ['p3', 'p4'], complexity: 'Heavy' }),
+          makeGame({ id: 'g1', seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 60 }),
+          makeGame({ id: 'g2', seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 60 }),
         ],
-        1,
-        130,
+        2,
+        300,
+        { heavyGameBreakMinutes: 0, maxGameRepeats: 1, breakMinutesBetweenGames: 15, flexTableCount: 0 },
+      );
+      expect(result.assignments.every((a) => a.startMinutes === 0)).toBe(true);
+    });
+  });
+
+  describe('quorum-based partial-group starts (recommended player count)', () => {
+    it('starts once the recommended headcount is ready, without waiting for stragglers, when the excluded remainder is big enough to be redeemable', () => {
+      // p3/p4 are tied up elsewhere until minute 60; p1/p2 have nothing else
+      // queued and are free from minute 0. suggestedPlayers:2 means the group
+      // of 4 shouldn't have to wait for p3/p4 — excluding them leaves a
+      // remainder of 2, which meets minPlayers, so it's not stranding anyone
+      // below a viable group size (see quorumThreshold).
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'busy', seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 60 }),
+          makeGame({
+            id: 'quad', seatedPlayers: ['p1', 'p2', 'p3', 'p4'], minPlayers: 2, suggestedPlayers: 2,
+            effectiveDurationMinutes: 30,
+          }),
+        ],
+        2,
+        300,
         NO_REFINEMENTS,
       );
-      expect(withoutBreak.totalDurationMinutes).toBe(120);
-      expect(withoutBreak.fitsInWindow).toBe(true);
+      const quad = result.assignments.find((a) => a.gameId === 'quad')!;
+      expect(quad.startMinutes).toBe(0);
+      expect(quad.attendingPlayerIds.sort()).toEqual(['p1', 'p2']);
+    });
 
-      const withBreak = scheduleGames(
+    it('leaves a redeemable excluded remainder completely free for another suggestion', () => {
+      const result = scheduleGames(
         [
-          makeGame({ id: 'g1', minPlayers: 1, seatedPlayers: ['p1', 'p2'], complexity: 'Heavy' }),
-          makeGame({ id: 'g2', minPlayers: 1, seatedPlayers: ['p3', 'p4'], complexity: 'Heavy' }),
+          makeGame({ id: 'busy', seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 60 }),
+          makeGame({
+            id: 'quad', seatedPlayers: ['p1', 'p2', 'p3', 'p4'], minPlayers: 2, suggestedPlayers: 2,
+            effectiveDurationMinutes: 30,
+          }),
+          // p3/p4's other suggestion — should still be free to start at minute
+          // 0 via the 'busy' game above, unaffected by 'quad' having formed
+          // without them.
         ],
-        1,
-        130,
-        { heavyGameBreakMinutes: 20, maxGameRepeats: 1 },
+        2,
+        300,
+        NO_REFINEMENTS,
       );
-      expect(withBreak.totalDurationMinutes).toBe(140);
-      expect(withBreak.fitsInWindow).toBe(false);
+      const busy = result.assignments.find((a) => a.gameId === 'busy')!;
+      expect(busy.startMinutes).toBe(0); // p3/p4 were never marked occupied by 'quad'
+    });
+
+    it('falls back to waiting for everyone when the excluded remainder would be too small to be its own valid group', () => {
+      // Only p3 would be excluded here (3 seated, quorum target 2) — a lone
+      // straggler can never meet minPlayers(2) on their own, so they'd be
+      // permanently stranded (signed up, but this game never runs again to
+      // include them). Rather than strand them, the game waits for everyone.
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'busy', seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 60 }),
+          makeGame({
+            id: 'trio', seatedPlayers: ['p1', 'p2', 'p3'], minPlayers: 2, suggestedPlayers: 2,
+            effectiveDurationMinutes: 30,
+          }),
+        ],
+        2,
+        300,
+        NO_REFINEMENTS,
+      );
+      const trio = result.assignments.find((a) => a.gameId === 'trio')!;
+      expect(trio.startMinutes).toBe(60); // waited for p3, not just p1/p2
+      expect(trio.attendingPlayerIds.sort()).toEqual(['p1', 'p2', 'p3']);
+      expect(trio.delayedByPlayerId).toBe('p3');
+    });
+
+    it('falls back to waiting for every signed-up player when suggestedPlayers is unset', () => {
+      const result = scheduleGames(
+        [makeGame({ id: 'trio', seatedPlayers: ['p1', 'p2', 'p3'], minPlayers: 2, effectiveDurationMinutes: 30 })],
+        1,
+        300,
+        NO_REFINEMENTS,
+      );
+      const trio = result.assignments.find((a) => a.gameId === 'trio')!;
+      expect(trio.attendingPlayerIds.sort()).toEqual(['p1', 'p2', 'p3']);
+    });
+
+    it('never targets fewer than minPlayers even if suggestedPlayers is oddly lower', () => {
+      const result = scheduleGames(
+        [makeGame({ id: 'trio', seatedPlayers: ['p1', 'p2', 'p3'], minPlayers: 3, suggestedPlayers: 1, effectiveDurationMinutes: 30 })],
+        1,
+        300,
+        NO_REFINEMENTS,
+      );
+      const trio = result.assignments.find((a) => a.gameId === 'trio')!;
+      expect(trio.attendingPlayerIds).toHaveLength(3);
+    });
+
+    it('caps the quorum target at the total signed-up count when suggestedPlayers exceeds it', () => {
+      const result = scheduleGames(
+        [makeGame({ id: 'duo', seatedPlayers: ['p1', 'p2'], minPlayers: 2, suggestedPlayers: 4, effectiveDurationMinutes: 30 })],
+        1,
+        300,
+        NO_REFINEMENTS,
+      );
+      const duo = result.assignments.find((a) => a.gameId === 'duo')!;
+      expect(duo.attendingPlayerIds.sort()).toEqual(['p1', 'p2']);
+    });
+
+    it('computes delayedByPlayerId against the attending subset only, never naming an excluded straggler', () => {
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'busy', seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 60 }),
+          makeGame({
+            id: 'quad', seatedPlayers: ['p1', 'p2', 'p3', 'p4'], minPlayers: 2, suggestedPlayers: 2,
+            effectiveDurationMinutes: 30,
+          }),
+        ],
+        2,
+        300,
+        NO_REFINEMENTS,
+      );
+      const quad = result.assignments.find((a) => a.gameId === 'quad')!;
+      // p1 and p2 are both fresh (tied at minute 0) -> no unique gating player.
+      expect(quad.delayedByPlayerId).toBeUndefined();
     });
   });
 
   describe('opportunistic repeat-fill', () => {
-    it('repeats a short game to fill leftover time in a longer round, capped by maxGameRepeats', () => {
+    it('repeats a short game back-to-back at its own table, capped by maxGameRepeats', () => {
       const result = scheduleGames(
         [
-          makeGame({ id: 'long', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 90, rawMaxPlaytime: 90 }),
-          makeGame({ id: 'short', minPlayers: 1, seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 40, rawMaxPlaytime: 20 }),
+          makeGame({ id: 'long', seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 90, rawMaxPlaytime: 90 }),
+          makeGame({ id: 'short', seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 40, rawMaxPlaytime: 20 }),
         ],
         2,
         600,
-        { heavyGameBreakMinutes: 0, maxGameRepeats: 3 },
+        { heavyGameBreakMinutes: 0, maxGameRepeats: 3, breakMinutesBetweenGames: 0, flexTableCount: 0 },
       );
-      expect(result.roundDurationsMinutes).toEqual([90]);
       const shortAssignment = result.assignments.find((a) => a.gameId === 'short')!;
-      // leftover = 90 - 40 = 50; floor(50/20) = 2 extra plays -> playCount 3
+      // starts at 0, ends 40; +20 = 60, +20 = 80 -> 2 extra plays, playCount 3
       expect(shortAssignment.playCount).toBe(3);
+      expect(shortAssignment.endMinutes).toBe(80);
       const longAssignment = result.assignments.find((a) => a.gameId === 'long')!;
       expect(longAssignment.playCount).toBe(1);
     });
 
-    it('caps repeats at maxGameRepeats even when leftover time allows more', () => {
+    it('is bounded by the event window, not just maxGameRepeats', () => {
       const result = scheduleGames(
-        [
-          makeGame({ id: 'long', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 90, rawMaxPlaytime: 90 }),
-          makeGame({ id: 'short', minPlayers: 1, seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 40, rawMaxPlaytime: 20 }),
-        ],
-        2,
-        600,
-        { heavyGameBreakMinutes: 0, maxGameRepeats: 2 },
+        [makeGame({ id: 'short', seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 40, rawMaxPlaytime: 20 })],
+        1,
+        100, // window too small for maxGameRepeats(100) worth of 20-min repeats
+        { heavyGameBreakMinutes: 0, maxGameRepeats: 100, breakMinutesBetweenGames: 0, flexTableCount: 0 },
       );
-      const shortAssignment = result.assignments.find((a) => a.gameId === 'short')!;
-      expect(shortAssignment.playCount).toBe(2);
+      const assignment = result.assignments.find((a) => a.gameId === 'short')!;
+      // 40 -> 60 -> 80 -> 100 (fits), 120 would overrun -> playCount 4
+      expect(assignment.playCount).toBe(4);
+      expect(assignment.endMinutes).toBe(100);
     });
 
-    it('does not repeat a short game that itself sets the round duration (no leftover)', () => {
+    it('does not repeat at all when the event window is infinite (nothing to fill up against)', () => {
       const result = scheduleGames(
-        [makeGame({ id: 'short', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 40, rawMaxPlaytime: 20 })],
+        [makeGame({ id: 'short', seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 40, rawMaxPlaytime: 20 })],
         1,
-        600,
-        { heavyGameBreakMinutes: 0, maxGameRepeats: 3 },
+        Number.POSITIVE_INFINITY,
+        { heavyGameBreakMinutes: 0, maxGameRepeats: 5, breakMinutesBetweenGames: 0, flexTableCount: 0 },
       );
       const assignment = result.assignments.find((a) => a.gameId === 'short')!;
       expect(assignment.playCount).toBe(1);
@@ -399,204 +892,63 @@ describe('scheduleGames', () => {
 
     it('excludes a game at the 30-minute boundary (not eligible — must be strictly under 30)', () => {
       const result = scheduleGames(
-        [
-          makeGame({ id: 'long', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 90, rawMaxPlaytime: 90 }),
-          makeGame({ id: 'boundary', minPlayers: 1, seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 60, rawMaxPlaytime: 30 }),
-        ],
-        2,
+        [makeGame({ id: 'boundary', seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 60, rawMaxPlaytime: 30 })],
+        1,
         600,
-        { heavyGameBreakMinutes: 0, maxGameRepeats: 3 },
+        { heavyGameBreakMinutes: 0, maxGameRepeats: 3, breakMinutesBetweenGames: 0, flexTableCount: 0 },
       );
       const assignment = result.assignments.find((a) => a.gameId === 'boundary')!;
       expect(assignment.playCount).toBe(1);
     });
 
-    it('does not repeat when leftover time is not enough for even one more play', () => {
+    it('does not repeat when the window has no room for even one more play', () => {
       const result = scheduleGames(
-        [
-          makeGame({ id: 'long', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 90, rawMaxPlaytime: 90 }),
-          makeGame({ id: 'short', minPlayers: 1, seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 62, rawMaxPlaytime: 29 }),
-        ],
-        2,
-        600,
-        { heavyGameBreakMinutes: 0, maxGameRepeats: 3 },
+        [makeGame({ id: 'short', seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 40, rawMaxPlaytime: 29 })],
+        1,
+        65, // ends at 40; 40+29=69 > 65 -> no repeat fits
+        { heavyGameBreakMinutes: 0, maxGameRepeats: 3, breakMinutesBetweenGames: 0, flexTableCount: 0 },
       );
-      // leftover = 90 - 62 = 28, less than rawMaxPlaytime (29) -> no repeat
       const assignment = result.assignments.find((a) => a.gameId === 'short')!;
       expect(assignment.playCount).toBe(1);
     });
 
-    it('never changes roundDurationsMinutes regardless of playCount', () => {
+    it('does not extend past a shared player already committed to another table\'s game', () => {
+      // "short" (p1,p2) is the only game on its table, so it's normally
+      // eligible to repeat-fill the rest of the event. But p1 is also seated
+      // in "other" on a second table, placed to start right as "short"
+      // finishes — extending "short" would double-book p1 into both games
+      // at once, which is exactly the bug this test guards against.
       const result = scheduleGames(
         [
-          makeGame({ id: 'long', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 90, rawMaxPlaytime: 90 }),
-          makeGame({ id: 'short', minPlayers: 1, seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 40, rawMaxPlaytime: 20 }),
+          makeGame({ id: 'short', seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 40, rawMaxPlaytime: 20 }),
+          makeGame({ id: 'other', seatedPlayers: ['p1', 'p3'], effectiveDurationMinutes: 30, rawMaxPlaytime: 30 }),
         ],
         2,
         600,
-        { heavyGameBreakMinutes: 0, maxGameRepeats: 3 },
+        { heavyGameBreakMinutes: 0, maxGameRepeats: 3, breakMinutesBetweenGames: 0, flexTableCount: 0 },
       );
-      expect(result.roundDurationsMinutes).toEqual([90]);
-    });
-  });
-
-  describe('multi-game chaining (fills leftover table time with other games, not just repeats)', () => {
-    it('chains two different shorter games onto a table to fill the anchor table\'s time window', () => {
-      const result = scheduleGames(
-        [
-          makeGame({ id: 'anchor', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 120, rawMaxPlaytime: 120, complexity: 'Heavy' }),
-          makeGame({ id: 'first', minPlayers: 1, seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 70, rawMaxPlaytime: 70 }),
-          makeGame({ id: 'second', minPlayers: 1, seatedPlayers: ['p5', 'p6'], effectiveDurationMinutes: 50, rawMaxPlaytime: 50 }),
-        ],
-        2,
-        600,
-        NO_REFINEMENTS,
-      );
-
-      expect(result.roundDurationsMinutes).toEqual([120]);
-      const anchor = result.assignments.find((a) => a.gameId === 'anchor')!;
-      const first = result.assignments.find((a) => a.gameId === 'first')!;
-      const second = result.assignments.find((a) => a.gameId === 'second')!;
-
-      expect(anchor.table).toBe(1);
-      // Both fillers land on the same (non-anchor) table, chained sequentially.
-      expect(first.table).toBe(2);
-      expect(second.table).toBe(2);
-      expect(first.slotIndex).toBe(0);
-      expect(first.startOffsetMinutes).toBe(0);
-      expect(second.slotIndex).toBe(1);
-      expect(second.startOffsetMinutes).toBe(70);
-    });
-
-    it('does not chain a game that would overflow the round\'s target duration', () => {
-      const result = scheduleGames(
-        [
-          makeGame({ id: 'anchor', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 90, rawMaxPlaytime: 90 }),
-          // Fills table 2 (the round's only other table), leaving 30 min leftover there.
-          makeGame({ id: 'filler', minPlayers: 1, seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 60, rawMaxPlaytime: 60 }),
-          // Doesn't fit in the 30 min left on table 2, and table 1 (the anchor's
-          // own table) has zero leftover — no table in round 1 can hold it.
-          makeGame({ id: 'toobig', minPlayers: 1, seatedPlayers: ['p5', 'p6'], effectiveDurationMinutes: 40, rawMaxPlaytime: 40 }),
-        ],
-        2,
-        600,
-        NO_REFINEMENTS,
-      );
-
-      const filler = result.assignments.find((a) => a.gameId === 'filler')!;
-      const toobig = result.assignments.find((a) => a.gameId === 'toobig')!;
-      expect(filler.round).toBe(1);
-      // 'toobig' can't fit in round 1's remaining 30 minutes on table 2 (and
-      // table 1 is already full with the anchor), so it opens round 2.
-      expect(toobig.round).toBe(2);
-    });
-
-    it('inserts a Heavy break between two Heavy games chained back-to-back at the same table', () => {
-      const result = scheduleGames(
-        [
-          makeGame({ id: 'anchor', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 150, rawMaxPlaytime: 150, complexity: 'Heavy' }),
-          makeGame({ id: 'heavyA', minPlayers: 1, seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 60, rawMaxPlaytime: 60, complexity: 'Heavy' }),
-          makeGame({ id: 'heavyB', minPlayers: 1, seatedPlayers: ['p5', 'p6'], effectiveDurationMinutes: 60, rawMaxPlaytime: 60, complexity: 'Heavy' }),
-        ],
-        2,
-        600,
-        { heavyGameBreakMinutes: 15, maxGameRepeats: 1 },
-      );
-
-      const heavyA = result.assignments.find((a) => a.gameId === 'heavyA')!;
-      const heavyB = result.assignments.find((a) => a.gameId === 'heavyB')!;
-      expect(heavyA.table).toBe(heavyB.table);
-      expect(heavyA.slotIndex).toBe(0);
-      expect(heavyB.slotIndex).toBe(1);
-      // heavyB starts after heavyA's 60 minutes PLUS the 15-min intra-chain break.
-      expect(heavyB.startOffsetMinutes).toBe(75);
-      // The chain's total (60 + 15 + 60 = 135) fits within the 150-min anchor,
-      // so this is purely an intra-chain break — no round-level break is
-      // needed since there's only one round.
-      expect(result.roundBreakMinutesBefore).toEqual([0]);
-    });
-
-    it('does not insert a break for a Heavy game chained after a non-Heavy game', () => {
-      const result = scheduleGames(
-        [
-          makeGame({ id: 'anchor', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 150, rawMaxPlaytime: 150, complexity: 'Heavy' }),
-          makeGame({ id: 'light', minPlayers: 1, seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 60, rawMaxPlaytime: 60, complexity: 'Light' }),
-          makeGame({ id: 'heavy', minPlayers: 1, seatedPlayers: ['p5', 'p6'], effectiveDurationMinutes: 60, rawMaxPlaytime: 60, complexity: 'Heavy' }),
-        ],
-        2,
-        600,
-        { heavyGameBreakMinutes: 15, maxGameRepeats: 1 },
-      );
-
-      const heavy = result.assignments.find((a) => a.gameId === 'heavy')!;
-      // No break inserted before it (light -> heavy isn't a Heavy-Heavy pair),
-      // so it starts immediately after 'light' at minute 60.
-      expect(heavy.startOffsetMinutes).toBe(60);
-    });
-
-    it('best-fits a filler onto the table with the tightest leftover rather than an empty table', () => {
-      const result = scheduleGames(
-        [
-          makeGame({ id: 'anchor', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 100, rawMaxPlaytime: 100 }),
-          // Opens table 2 with 70 min used, leaving 30 min leftover there.
-          makeGame({ id: 'partial', minPlayers: 1, seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 70, rawMaxPlaytime: 70 }),
-          // A 25-min game fits table 2's 30-min leftover (tighter fit) just as
-          // well as the fully-empty table 3's 100-min leftover — best-fit
-          // should prefer table 2, not spread out to the empty table 3.
-          makeGame({ id: 'filler', minPlayers: 1, seatedPlayers: ['p5', 'p6'], effectiveDurationMinutes: 25, rawMaxPlaytime: 25 }),
-        ],
-        3,
-        600,
-        NO_REFINEMENTS,
-      );
-
-      const partial = result.assignments.find((a) => a.gameId === 'partial')!;
-      const filler = result.assignments.find((a) => a.gameId === 'filler')!;
-      expect(filler.table).toBe(partial.table);
-      expect(filler.slotIndex).toBe(1);
-    });
-
-    it('only applies opportunistic repeat-fill to the last slot in a chain', () => {
-      const result = scheduleGames(
-        [
-          makeGame({ id: 'anchor', minPlayers: 1, seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 100, rawMaxPlaytime: 100 }),
-          makeGame({ id: 'filler', minPlayers: 1, seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 60, rawMaxPlaytime: 60 }),
-          // Short game chained after 'filler' — leftover after it is 100 - 60 - 15 = 25,
-          // enough for one repeat (rawMaxPlaytime 10) but not more with maxGameRepeats capping it anyway.
-          makeGame({ id: 'short', minPlayers: 1, seatedPlayers: ['p5', 'p6'], effectiveDurationMinutes: 15, rawMaxPlaytime: 10 }),
-        ],
-        2,
-        600,
-        { heavyGameBreakMinutes: 0, maxGameRepeats: 5 },
-      );
-
-      const filler = result.assignments.find((a) => a.gameId === 'filler')!;
-      const short = result.assignments.find((a) => a.gameId === 'short')!;
-      expect(filler.playCount).toBe(1); // not the last slot in its chain — no repeat-fill
-      // leftover = 100 - (60 + 15) = 25; floor(25/10) = 2 extra plays -> playCount 3
-      expect(short.playCount).toBe(3);
+      const shortAssignment = result.assignments.find((a) => a.gameId === 'short')!;
+      const otherAssignment = result.assignments.find((a) => a.gameId === 'other')!;
+      expect(shortAssignment.playCount).toBe(1);
+      expect(shortAssignment.endMinutes).toBe(40);
+      expect(otherAssignment.startMinutes).toBeGreaterThanOrEqual(shortAssignment.endMinutes);
     });
   });
 
   describe('mayNotFinish flag (window overrun)', () => {
-    it('flags every game in a round whose cumulative end runs past the window', () => {
-      // Two rounds of 90 min each (no shared players -> two separate rounds
-      // needed since table_count is 1), window is only 120 min: round 1 ends
-      // at minute 90 (fits), round 2 ends at minute 180 (overruns).
+    it('flags a game whose end runs past the window, and not one that fits', () => {
       const result = scheduleGames(
         [
           makeGame({ id: 'g1', seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 90 }),
-          makeGame({ id: 'g2', seatedPlayers: ['p3', 'p4'], effectiveDurationMinutes: 90 }),
+          makeGame({ id: 'g2', seatedPlayers: ['p1', 'p3'], effectiveDurationMinutes: 90 }), // conflicts with g1 -> sequential
         ],
-        1,
+        2,
         120,
         NO_REFINEMENTS,
       );
       const g1 = result.assignments.find((a) => a.gameId === 'g1')!;
       const g2 = result.assignments.find((a) => a.gameId === 'g2')!;
-      expect(g1.round).toBe(1);
       expect(g1.mayNotFinish).toBe(false);
-      expect(g2.round).toBe(2);
       expect(g2.mayNotFinish).toBe(true);
     });
 
@@ -614,48 +966,71 @@ describe('scheduleGames', () => {
       );
       expect(result.assignments.every((a) => !a.mayNotFinish)).toBe(true);
     });
+  });
 
-    it('accounts for inserted break minutes when deciding if a round overruns', () => {
-      // Round 1: 60 min (ends at 60). Round 2: same table plays two Heavy
-      // games back-to-back so a 30-min break is inserted before round 2,
-      // pushing its end to 60 + 30 + 60 = 150 -- over a 140-min window even
-      // though the raw game durations alone (120) would have fit.
+  describe('playerWarnings (multi-game players)', () => {
+    it('warns for a player with 2+ games when one of them is at risk of not finishing', () => {
       const result = scheduleGames(
         [
-          makeGame({ id: 'g1', seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 60, complexity: 'Heavy' }),
-          makeGame({ id: 'g2', seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 60, complexity: 'Heavy' }),
+          makeGame({ id: 'g1', seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 90 }),
+          makeGame({ id: 'g2', seatedPlayers: ['p1', 'p3'], effectiveDurationMinutes: 90 }), // p1 in both, forced sequential
         ],
-        1,
-        140,
-        { heavyGameBreakMinutes: 30, maxGameRepeats: 1 },
+        2,
+        100, // g2 will overrun
+        NO_REFINEMENTS,
       );
-      const g2 = result.assignments.find((a) => a.gameId === 'g2')!;
-      expect(g2.round).toBe(2);
-      expect(g2.mayNotFinish).toBe(true);
+      expect(result.playerWarnings).toEqual([
+        { userId: 'p1', reason: expect.stringContaining('seated in 2 games') },
+      ]);
+      // Names the specific at-risk game rather than a bare count, so the
+      // severity (which game, how many of the total) is visible at a glance.
+      expect(result.playerWarnings[0].reason).toContain('may not happen as scheduled');
+    });
+
+    it('does not warn for a player with only 1 game, even if it is at risk', () => {
+      const result = scheduleGames(
+        [makeGame({ id: 'g1', seatedPlayers: ['p2', 'p3'], effectiveDurationMinutes: 200 })],
+        1,
+        100, // this game itself overruns, but p2/p3 only have 1 game each
+        NO_REFINEMENTS,
+      );
+      expect(result.playerWarnings).toEqual([]);
+    });
+
+    it('does not warn when a multi-game player\'s games all comfortably fit', () => {
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'g1', seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 30 }),
+          makeGame({ id: 'g2', seatedPlayers: ['p1', 'p3'], effectiveDurationMinutes: 30 }),
+        ],
+        2,
+        600,
+        NO_REFINEMENTS,
+      );
+      expect(result.playerWarnings).toEqual([]);
+    });
+
+    it('warns for a player whose signed-up game never got scheduled at all', () => {
+      const result = scheduleGames(
+        [
+          makeGame({ id: 'g1', seatedPlayers: ['p1', 'p2'], effectiveDurationMinutes: 30 }),
+          makeGame({ id: 'g2', seatedPlayers: ['p1', 'p3'], minPlayers: 5, effectiveDurationMinutes: 30 }), // never meets minPlayers
+        ],
+        2,
+        600,
+        NO_REFINEMENTS,
+      );
+      expect(result.playerWarnings.map((w) => w.userId)).toEqual(['p1']);
     });
   });
 });
 
-describe('computeRoundClocks', () => {
-  it('cumulatively sums round durations and inserted breaks from the event start', () => {
+describe('minutesToUnix', () => {
+  it('converts minutes-from-start into a Unix timestamp relative to the event start', () => {
     const start = new Date('2026-01-01T18:00:00.000Z');
-    const clocks = computeRoundClocks(
-      { roundDurationsMinutes: [60, 90], roundBreakMinutesBefore: [0, 20] },
-      start.toISOString(),
-    );
     const startUnix = Math.floor(start.getTime() / 1000);
-    expect(clocks).toEqual([
-      { round: 1, startUnix, endUnix: startUnix + 3600 },
-      { round: 2, startUnix: startUnix + 3600 + 1200, endUnix: startUnix + 3600 + 1200 + 5400 },
-    ]);
-  });
-
-  it('returns an empty array for an empty schedule', () => {
-    const clocks = computeRoundClocks(
-      { roundDurationsMinutes: [], roundBreakMinutesBefore: [] },
-      new Date().toISOString(),
-    );
-    expect(clocks).toEqual([]);
+    expect(minutesToUnix(start.toISOString(), 0)).toBe(startUnix);
+    expect(minutesToUnix(start.toISOString(), 90)).toBe(startUnix + 90 * 60);
   });
 });
 
@@ -694,6 +1069,11 @@ describe('computeHeadcountTableFloor', () => {
   it('never returns fewer than 1 table for any positive headcount', () => {
     expect(computeHeadcountTableFloor(1)).toBe(1);
     expect(computeHeadcountTableFloor(2)).toBe(1);
+  });
+
+  // 28 attendees, no cap — matches the real event recap this feature was validated against.
+  it('computes 7 tables for 28 attendees (divides evenly by 4)', () => {
+    expect(computeHeadcountTableFloor(28)).toBe(7);
   });
 });
 
@@ -736,6 +1116,16 @@ describe('computeEffectiveTableCount', () => {
 
   it('never goes below 1 even with a 0 config default and no RSVPs', () => {
     expect(computeEffectiveTableCount(0, [], 0)).toBe(1);
+  });
+
+  it('caps the computed table count at maxTableCount when set — e.g. a venue with a real 6-table limit', () => {
+    // 28 attendees would otherwise compute a 7-table need (see computeHeadcountTableFloor above).
+    expect(computeEffectiveTableCount(28, [], 1, 6)).toBe(6);
+  });
+
+  it('does not cap when maxTableCount is 0 (uncapped, the default)', () => {
+    expect(computeEffectiveTableCount(28, [], 1, 0)).toBe(7);
+    expect(computeEffectiveTableCount(28, [], 1)).toBe(7); // omitted entirely
   });
 });
 
@@ -808,45 +1198,90 @@ describe('resolveRsvpComplexityPreferences', () => {
 
 describe('buildScheduleEmbed', () => {
   const games = [
-    { id: 'g1', title: 'Wingspan', seats: ['p1', 'p2'] },
-    { id: 'g2', title: 'Catan', seats: ['p3', 'p4'] },
+    { id: 'g1', title: 'Wingspan', seatedPlayers: ['p1', 'p2'] },
+    { id: 'g2', title: 'Catan', seatedPlayers: ['p3', 'p4'] },
   ];
   const gn = { title: 'Game Night', startTimeISO: new Date('2026-01-01T18:00:00.000Z').toISOString() };
+  const startUnix = Math.floor(new Date('2026-01-01T18:00:00.000Z').getTime() / 1000);
 
-  it('lists each round with real clock times and its table assignments', () => {
-    const result = {
-      assignments: [
-        { gameId: 'g1', round: 1, table: 1, playCount: 1, mayNotFinish: false, slotIndex: 0, startOffsetMinutes: 0 },
-        { gameId: 'g2', round: 1, table: 2, playCount: 1, mayNotFinish: false, slotIndex: 0, startOffsetMinutes: 0 },
-      ],
-      unscheduled: [],
-      lowInterest: [],
-      roundDurationsMinutes: [90],
-      roundBreakMinutesBefore: [0],
-      totalDurationMinutes: 90,
-      fitsInWindow: true,
-    };
-    const embed = buildScheduleEmbed(gn, games, result);
-    const data = embed.toJSON();
-    expect(data.fields).toHaveLength(1);
-    expect(data.fields![0].name).toContain('Round 1');
-    expect(data.fields![0].name).toMatch(/<t:\d+:t>.*<t:\d+:t>/);
-    expect(data.fields![0].value).toContain('Wingspan');
-    expect(data.fields![0].value).toContain('Catan');
-  });
-
-  it('lists the greeters in their own field, ahead of the round fields, when the event has any', () => {
-    const gnWithGreeters = { ...gn, greeters: ['u1', 'u2'] };
-    const result = {
+  function baseResult(overrides: Partial<Parameters<typeof buildScheduleEmbed>[2]> = {}) {
+    return {
       assignments: [],
       unscheduled: [],
-      lowInterest: [],
-      roundDurationsMinutes: [],
-      roundBreakMinutesBefore: [],
+      walkUps: [],
       totalDurationMinutes: 0,
       fitsInWindow: true,
+      playerWarnings: [],
+      ...overrides,
     };
-    const embed = buildScheduleEmbed(gnWithGreeters, games, result);
+  }
+
+  it('lists each table in its own field, with real clock times per game', () => {
+    const result = baseResult({
+      assignments: [
+        { gameId: 'g1', table: 1, startMinutes: 0, endMinutes: 60, playCount: 1, mayNotFinish: false, attendingPlayerIds: ['p1', 'p2'] },
+        { gameId: 'g2', table: 2, startMinutes: 0, endMinutes: 30, playCount: 1, mayNotFinish: false, attendingPlayerIds: ['p3', 'p4'] },
+      ],
+      totalDurationMinutes: 60,
+    });
+    const embed = buildScheduleEmbed(gn, games, result);
+    const data = embed.toJSON();
+    expect(data.fields).toHaveLength(2);
+    expect(data.fields![0].name).toBe('Table 1');
+    expect(data.fields![0].value).toBe(`**Wingspan** (<t:${startUnix}:t>–<t:${startUnix + 3600}:t>) — <@p1>, <@p2>`);
+    expect(data.fields![1].name).toBe('Table 2');
+    expect(data.fields![1].value).toContain('Catan');
+  });
+
+  it('rounds displayed start/end times up to the next quarter-hour, without changing the underlying schedule', () => {
+    const result = baseResult({
+      assignments: [
+        { gameId: 'g1', table: 1, startMinutes: 19, endMinutes: 76, playCount: 1, mayNotFinish: false, attendingPlayerIds: ['p1', 'p2'] },
+      ],
+      totalDurationMinutes: 76,
+    });
+    const embed = buildScheduleEmbed(gn, games, result);
+    const value = embed.toJSON().fields![0].value;
+    // 19 -> 30 (next quarter-hour), 76 -> 90 — always rounded UP, never down
+    // or to nearest, so a game is never shown as available before it is.
+    expect(value).toBe(`**Wingspan** (<t:${startUnix + 30 * 60}:t>–<t:${startUnix + 90 * 60}:t>) — <@p1>, <@p2>`);
+    // The rounding is purely a display concern — the assignment object
+    // itself (what actually drives no-double-booking/chaining) is untouched.
+    expect(result.assignments[0].startMinutes).toBe(19);
+    expect(result.assignments[0].endMinutes).toBe(76);
+  });
+
+  it('does not re-round a start/end time that already lands on a quarter-hour', () => {
+    const result = baseResult({
+      assignments: [
+        { gameId: 'g1', table: 1, startMinutes: 30, endMinutes: 90, playCount: 1, mayNotFinish: false, attendingPlayerIds: ['p1', 'p2'] },
+      ],
+      totalDurationMinutes: 90,
+    });
+    const embed = buildScheduleEmbed(gn, games, result);
+    const value = embed.toJSON().fields![0].value;
+    expect(value).toBe(`**Wingspan** (<t:${startUnix + 30 * 60}:t>–<t:${startUnix + 90 * 60}:t>) — <@p1>, <@p2>`);
+  });
+
+  it('sorts a table\'s own games chronologically and gives each its own start/end time', () => {
+    const result = baseResult({
+      assignments: [
+        { gameId: 'g1', table: 1, startMinutes: 0, endMinutes: 60, playCount: 1, mayNotFinish: false, attendingPlayerIds: ['p1', 'p2'] },
+        { gameId: 'g2', table: 1, startMinutes: 60, endMinutes: 90, playCount: 1, mayNotFinish: false, attendingPlayerIds: ['p3', 'p4'] },
+      ],
+      totalDurationMinutes: 90,
+    });
+    const embed = buildScheduleEmbed(gn, games, result);
+    const value = embed.toJSON().fields![0].value;
+    expect(value).toBe(
+      `**Wingspan** (<t:${startUnix}:t>–<t:${startUnix + 3600}:t>) — <@p1>, <@p2>\n` +
+        `**Catan** (<t:${startUnix + 3600}:t>–<t:${startUnix + 5400}:t>) — <@p3>, <@p4>`,
+    );
+  });
+
+  it('lists the greeters in their own field, ahead of the table fields, when the event has any', () => {
+    const gnWithGreeters = { ...gn, greeters: ['u1', 'u2'] };
+    const embed = buildScheduleEmbed(gnWithGreeters, games, baseResult());
     const data = embed.toJSON();
     expect(data.fields![0].name).toBe('👋 Greeters');
     expect(data.fields![0].value).toBe('<@u1> and <@u2>');
@@ -854,236 +1289,139 @@ describe('buildScheduleEmbed', () => {
 
   it('shows a single greeter without "and"', () => {
     const gnWithGreeter = { ...gn, greeters: ['u1'] };
-    const result = {
-      assignments: [],
-      unscheduled: [],
-      lowInterest: [],
-      roundDurationsMinutes: [],
-      roundBreakMinutesBefore: [],
-      totalDurationMinutes: 0,
-      fitsInWindow: true,
-    };
-    const embed = buildScheduleEmbed(gnWithGreeter, games, result);
-    const data = embed.toJSON();
-    expect(data.fields![0].value).toBe('<@u1>');
+    const embed = buildScheduleEmbed(gnWithGreeter, games, baseResult());
+    expect(embed.toJSON().fields![0].value).toBe('<@u1>');
   });
 
   it('omits the greeters field entirely when the event has none set', () => {
-    const result = {
-      assignments: [
-        { gameId: 'g1', round: 1, table: 1, playCount: 1, mayNotFinish: false, slotIndex: 0, startOffsetMinutes: 0 },
-      ],
-      unscheduled: [],
-      lowInterest: [],
-      roundDurationsMinutes: [60],
-      roundBreakMinutesBefore: [0],
-      totalDurationMinutes: 60,
-      fitsInWindow: true,
-    };
-    const embedNoField = buildScheduleEmbed(gn, games, result);
-    expect(embedNoField.toJSON().fields!.some((f) => f.name === '🙋 Greeters')).toBe(false);
+    const embedNoField = buildScheduleEmbed(gn, games, baseResult());
+    expect(embedNoField.toJSON().fields!.some((f) => f.name === '👋 Greeters')).toBe(false);
 
-    const embedEmptyArray = buildScheduleEmbed({ ...gn, greeters: [] }, games, result);
-    expect(embedEmptyArray.toJSON().fields!.some((f) => f.name === '🙋 Greeters')).toBe(false);
+    const embedEmptyArray = buildScheduleEmbed({ ...gn, greeters: [] }, games, baseResult());
+    expect(embedEmptyArray.toJSON().fields!.some((f) => f.name === '👋 Greeters')).toBe(false);
   });
 
-  it('notes the play count on the table line when a game repeats', () => {
-    const result = {
-      assignments: [{ gameId: 'g1', round: 1, table: 1, playCount: 3, mayNotFinish: false, slotIndex: 0, startOffsetMinutes: 0 }],
-      unscheduled: [],
-      lowInterest: [],
-      roundDurationsMinutes: [90],
-      roundBreakMinutesBefore: [0],
-      totalDurationMinutes: 90,
-      fitsInWindow: true,
-    };
-    const embed = buildScheduleEmbed(gn, games, result);
-    const data = embed.toJSON();
-    expect(data.fields![0].value).toContain('Wingspan** (3x)');
+  it('notes the play count when a game repeats, omits it when played once', () => {
+    const repeated = buildScheduleEmbed(gn, games, baseResult({
+      assignments: [{ gameId: 'g1', table: 1, startMinutes: 0, endMinutes: 90, playCount: 3, mayNotFinish: false, attendingPlayerIds: ['p1', 'p2'] }],
+    }));
+    expect(repeated.toJSON().fields![0].value).toContain('Wingspan** (3x)');
+
+    const once = buildScheduleEmbed(gn, games, baseResult({
+      assignments: [{ gameId: 'g1', table: 1, startMinutes: 0, endMinutes: 60, playCount: 1, mayNotFinish: false, attendingPlayerIds: ['p1', 'p2'] }],
+    }));
+    expect(once.toJSON().fields![0].value).not.toContain('x)');
   });
 
-  it('omits the play-count suffix entirely when a game is only played once', () => {
-    const result = {
-      assignments: [{ gameId: 'g1', round: 1, table: 1, playCount: 1, mayNotFinish: false, slotIndex: 0, startOffsetMinutes: 0 }],
-      unscheduled: [],
-      lowInterest: [],
-      roundDurationsMinutes: [60],
-      roundBreakMinutesBefore: [0],
-      totalDurationMinutes: 60,
-      fitsInWindow: true,
-    };
-    const embed = buildScheduleEmbed(gn, games, result);
-    const data = embed.toJSON();
-    expect(data.fields![0].value).toBe('Table 1: **Wingspan** — <@p1>, <@p2>');
-  });
-
-  it('omits the player-mention dash entirely for a game with no seated players', () => {
-    const gamesWithEmptySeats = [{ id: 'g1', title: 'Wingspan', seats: [] }];
-    const result = {
-      assignments: [
-        { gameId: 'g1', round: 1, table: 1, playCount: 1, mayNotFinish: false, slotIndex: 0, startOffsetMinutes: 0 },
-      ],
-      unscheduled: [],
-      lowInterest: [],
-      roundDurationsMinutes: [60],
-      roundBreakMinutesBefore: [0],
-      totalDurationMinutes: 60,
-      fitsInWindow: true,
-    };
+  it('omits the player-mention suffix for a game with no seated players', () => {
+    const gamesWithEmptySeats = [{ id: 'g1', title: 'Wingspan', seatedPlayers: [] as string[] }];
+    const result = baseResult({
+      assignments: [{ gameId: 'g1', table: 1, startMinutes: 0, endMinutes: 60, playCount: 1, mayNotFinish: false, attendingPlayerIds: [] }],
+    });
     const embed = buildScheduleEmbed(gn, gamesWithEmptySeats, result);
-    const data = embed.toJSON();
-    expect(data.fields![0].value).toBe('Table 1: **Wingspan**');
+    expect(embed.toJSON().fields![0].value).toBe(`**Wingspan** (<t:${startUnix}:t>–<t:${startUnix + 3600}:t>)`);
   });
 
-  it('lists each slot of a chained table with its own start/end time, computed from the next slot', () => {
-    const result = {
+  it('flags a mayNotFinish slot inline without affecting other slots', () => {
+    const result = baseResult({
       assignments: [
-        { gameId: 'g1', round: 1, table: 1, playCount: 1, mayNotFinish: false, slotIndex: 0, startOffsetMinutes: 0 },
-        { gameId: 'g2', round: 1, table: 1, playCount: 1, mayNotFinish: false, slotIndex: 1, startOffsetMinutes: 60 },
+        { gameId: 'g1', table: 1, startMinutes: 0, endMinutes: 60, playCount: 1, mayNotFinish: false, attendingPlayerIds: ['p1', 'p2'] },
+        { gameId: 'g2', table: 2, startMinutes: 0, endMinutes: 300, playCount: 1, mayNotFinish: true, attendingPlayerIds: ['p3', 'p4'] },
       ],
-      unscheduled: [],
-      lowInterest: [],
-      roundDurationsMinutes: [90],
-      roundBreakMinutesBefore: [0],
-      totalDurationMinutes: 90,
-      fitsInWindow: true,
-    };
-    const embed = buildScheduleEmbed(gn, games, result);
-    const value = embed.toJSON().fields![0].value;
-    const startUnix = Math.floor(new Date('2026-01-01T18:00:00.000Z').getTime() / 1000);
-    expect(value).toBe(
-      `Table 1: **Wingspan** (<t:${startUnix}:t>–<t:${startUnix + 3600}:t>) — <@p1>, <@p2>\n` +
-        `Table 1: **Catan** (<t:${startUnix + 3600}:t>–<t:${startUnix + 5400}:t>) — <@p3>, <@p4>`,
-    );
-  });
-
-  it('keeps the plain single-line form for a table with only one slot, even alongside a chained table', () => {
-    const result = {
-      assignments: [
-        { gameId: 'g1', round: 1, table: 1, playCount: 1, mayNotFinish: false, slotIndex: 0, startOffsetMinutes: 0 },
-        { gameId: 'g2', round: 1, table: 2, playCount: 1, mayNotFinish: false, slotIndex: 0, startOffsetMinutes: 0 },
-      ],
-      unscheduled: [],
-      lowInterest: [],
-      roundDurationsMinutes: [90],
-      roundBreakMinutesBefore: [0],
-      totalDurationMinutes: 90,
-      fitsInWindow: true,
-    };
-    const embed = buildScheduleEmbed(gn, games, result);
-    const value = embed.toJSON().fields![0].value;
-    expect(value).toBe('Table 1: **Wingspan** — <@p1>, <@p2>\nTable 2: **Catan** — <@p3>, <@p4>');
-  });
-
-  it('shows a break note before a round that has an inserted break', () => {
-    const result = {
-      assignments: [{ gameId: 'g1', round: 2, table: 1, playCount: 1, mayNotFinish: false, slotIndex: 0, startOffsetMinutes: 0 }],
-      unscheduled: [],
-      lowInterest: [],
-      roundDurationsMinutes: [60, 60],
-      roundBreakMinutesBefore: [0, 20],
-      totalDurationMinutes: 140,
-      fitsInWindow: true,
-    };
-    const embed = buildScheduleEmbed(gn, games, result);
-    const data = embed.toJSON();
-    const round2 = data.fields!.find((f) => f.name.startsWith('Round 2'))!;
-    expect(round2.value).toContain('20-minute break beforehand');
-  });
-
-  it('shows a warning note on a round flagged as mayNotFinish, and omits it on others', () => {
-    const result = {
-      assignments: [
-        { gameId: 'g1', round: 1, table: 1, playCount: 1, mayNotFinish: false, slotIndex: 0, startOffsetMinutes: 0 },
-        { gameId: 'g2', round: 2, table: 1, playCount: 1, mayNotFinish: true, slotIndex: 0, startOffsetMinutes: 0 },
-      ],
-      unscheduled: [],
-      lowInterest: [],
-      roundDurationsMinutes: [60, 60],
-      roundBreakMinutesBefore: [0, 0],
-      totalDurationMinutes: 120,
+      totalDurationMinutes: 300,
       fitsInWindow: false,
-    };
+    });
     const embed = buildScheduleEmbed(gn, games, result);
     const data = embed.toJSON();
-    const round1 = data.fields!.find((f) => f.name.startsWith('Round 1'))!;
-    const round2 = data.fields!.find((f) => f.name.startsWith('Round 2'))!;
-    expect(round1.value).not.toContain('⚠️');
-    expect(round2.value).toContain("⚠️ This round is projected to start and/or run past the event's end time");
+    expect(data.fields![0].value).not.toContain('⚠️');
+    expect(data.fields![1].value).toContain('⚠️');
   });
 
-  it('lists low-interest games in their own section, distinct from Not scheduled', () => {
-    const result = {
-      assignments: [],
-      unscheduled: [{ gameId: 'g2', reason: 'only 0/2 minimum players seated' }],
-      lowInterest: [{ gameId: 'g1', reason: 'only 1 player interested — may not get played' }],
-      roundDurationsMinutes: [],
-      roundBreakMinutesBefore: [],
-      totalDurationMinutes: 0,
-      fitsInWindow: true,
-    };
+  it('notes on the game\'s own line when its start was delayed by a specific seated player, not table availability', () => {
+    const result = baseResult({
+      assignments: [
+        { gameId: 'g1', table: 1, startMinutes: 0, endMinutes: 60, playCount: 1, mayNotFinish: false, attendingPlayerIds: ['p1', 'p2'] },
+        { gameId: 'g2', table: 2, startMinutes: 60, endMinutes: 120, playCount: 1, mayNotFinish: false, delayedByPlayerId: 'p1', attendingPlayerIds: ['p3', 'p4'] },
+      ],
+      totalDurationMinutes: 120,
+    });
     const embed = buildScheduleEmbed(gn, games, result);
     const data = embed.toJSON();
-    const lowInterestField = data.fields!.find((f) => f.name === 'Needs more players');
-    expect(lowInterestField?.value).toContain('Wingspan');
-    expect(lowInterestField?.value).toContain('only 1 player interested');
-    const unscheduledField = data.fields!.find((f) => f.name === 'Not scheduled');
-    expect(unscheduledField?.value).toContain('Catan');
+    expect(data.fields![0].value).not.toContain('waiting on');
+    expect(data.fields![1].value).toContain('⏳ waiting on <@p1> to finish an earlier game');
+  });
+
+  it('notes a signed-up player as able to join once free when they were left out of the quorum', () => {
+    const result = baseResult({
+      assignments: [{ gameId: 'g1', table: 1, startMinutes: 0, endMinutes: 60, playCount: 1, mayNotFinish: false, attendingPlayerIds: ['p1'] }],
+    });
+    const embed = buildScheduleEmbed(gn, games, result);
+    expect(embed.toJSON().fields![0].value).toContain('(+ <@p2> can join once free)');
+  });
+
+  it('omits the "can join once free" note when everyone signed up is attending', () => {
+    const result = baseResult({
+      assignments: [{ gameId: 'g1', table: 1, startMinutes: 0, endMinutes: 60, playCount: 1, mayNotFinish: false, attendingPlayerIds: ['p1', 'p2'] }],
+    });
+    const embed = buildScheduleEmbed(gn, games, result);
+    expect(embed.toJSON().fields![0].value).not.toContain('can join once free');
+  });
+
+  it('lists walk-up (1-signup) games in their own section, with no table or time estimate', () => {
+    const result = baseResult({ walkUps: [{ gameId: 'g1' }] });
+    const embed = buildScheduleEmbed(gn, games, result);
+    const data = embed.toJSON();
+    const field = data.fields!.find((f) => f.name === '🌱 Open to walk-ups')!;
+    expect(field).toBeDefined();
+    expect(field.value).toContain('**Wingspan** — <@p1>, <@p2>');
+    expect(field.value).not.toContain(`<t:${startUnix}`); // no confident timestamp shown
+    // A walk-up game never gets a table field of its own.
+    expect(data.fields!.some((f) => f.name === 'Table 1')).toBe(false);
+  });
+
+  it('omits the "Schedule: no games scheduled" placeholder when only walk-up games exist', () => {
+    const result = baseResult({ walkUps: [{ gameId: 'g1' }] });
+    const embed = buildScheduleEmbed(gn, games, result);
+    expect(embed.toJSON().fields!.some((f) => f.name === 'Schedule')).toBe(false);
+  });
+
+  it('shows a player-warning field when playerWarnings is non-empty', () => {
+    const result = baseResult({
+      playerWarnings: [{ userId: 'p1', reason: 'signed up for 3 games — may not get to all of them before the event ends' }],
+    });
+    const embed = buildScheduleEmbed(gn, games, result);
+    const field = embed.toJSON().fields!.find((f) => f.name === '⚠️ May not get to play everything');
+    expect(field?.value).toContain('<@p1>');
+    expect(field?.value).toContain('signed up for 3 games');
   });
 
   it('lists unscheduled games with their reason', () => {
-    const result = {
-      assignments: [],
+    const result = baseResult({
       unscheduled: [{ gameId: 'g1', reason: 'only 1/3 minimum players seated' }],
-      lowInterest: [],
-      roundDurationsMinutes: [],
-      roundBreakMinutesBefore: [],
-      totalDurationMinutes: 0,
-      fitsInWindow: true,
-    };
+    });
     const embed = buildScheduleEmbed(gn, games, result);
-    const data = embed.toJSON();
-    const unscheduledField = data.fields!.find((f) => f.name === 'Not scheduled');
-    expect(unscheduledField?.value).toContain('Wingspan');
-    expect(unscheduledField?.value).toContain('only 1/3 minimum players seated');
+    const field = embed.toJSON().fields!.find((f) => f.name === 'Not scheduled');
+    expect(field?.value).toContain('Wingspan');
+    expect(field?.value).toContain('only 1/3 minimum players seated');
+  });
+
+  it('shows a "no games scheduled" placeholder field when nothing was assigned', () => {
+    const embed = buildScheduleEmbed(gn, games, baseResult());
+    const field = embed.toJSON().fields!.find((f) => f.name === 'Schedule');
+    expect(field?.value).toContain('no games scheduled');
   });
 
   it('flags in the footer when the schedule does not fit the window', () => {
-    const result = {
-      assignments: [],
-      unscheduled: [],
-      lowInterest: [],
-      roundDurationsMinutes: [],
-      roundBreakMinutesBefore: [],
-      totalDurationMinutes: 300,
-      fitsInWindow: false,
-    };
+    const result = baseResult({ totalDurationMinutes: 300, fitsInWindow: false });
     const embed = buildScheduleEmbed(gn, [], result);
     expect(embed.toJSON().footer?.text).toContain('may run past');
+    expect(embed.toJSON().footer?.text).toContain('300 min');
   });
 
-  it('notes total break minutes in the footer only when a break was inserted', () => {
-    const withBreak = buildScheduleEmbed(gn, [], {
-      assignments: [],
-      unscheduled: [],
-      lowInterest: [],
-      roundDurationsMinutes: [60, 60],
-      roundBreakMinutesBefore: [0, 20],
-      totalDurationMinutes: 140,
-      fitsInWindow: true,
-    });
-    expect(withBreak.toJSON().footer?.text).toContain('includes 20 min of breaks');
-
-    const withoutBreak = buildScheduleEmbed(gn, [], {
-      assignments: [],
-      unscheduled: [],
-      lowInterest: [],
-      roundDurationsMinutes: [60],
-      roundBreakMinutesBefore: [0],
-      totalDurationMinutes: 60,
-      fitsInWindow: true,
-    });
-    expect(withoutBreak.toJSON().footer?.text).not.toContain('includes');
+  it('confirms in the footer when the schedule fits the window', () => {
+    const result = baseResult({ totalDurationMinutes: 60, fitsInWindow: true });
+    const embed = buildScheduleEmbed(gn, [], result);
+    expect(embed.toJSON().footer?.text).toContain('fits within the event window');
   });
 });
 
@@ -1143,12 +1481,15 @@ describe('lockAndScheduleEvent', () => {
 
   const BUFFER_CONFIG = {
     scheduleTableCount: 2,
+    maxTableCount: 0,
     lightBufferMinutes: 20,
     mediumBufferMinutes: 30,
     heavyBufferMinutes: 40,
     postBgStatsLinks: false,
     heavyGameBreakMinutes: 0,
     maxGameRepeats: 1,
+    breakMinutesBetweenGames: 0,
+    flexTableCount: 0,
   };
 
   it('marks the event locked and posts a schedule embed', async () => {
@@ -1172,11 +1513,10 @@ describe('lockAndScheduleEvent', () => {
     expect(client._channel.send).toHaveBeenCalled();
   });
 
-  it('sizes the table count from RSVPs instead of a too-low config default, so non-conflicting games all fit in round 1', async () => {
+  it('sizes the table count from RSVPs instead of a too-low config default, so non-conflicting games all run concurrently', async () => {
     const { upsertGameNight } = await import('../src/utils/storage');
     const { upsertGame, findGame } = await import('../src/utils/gameStorage');
-    // 13 RSVPs -> computeHeadcountTableFloor(13) = 3 (see the dedicated describe
-    // block above), well above the configured default of 1.
+    // 13 RSVPs -> computeHeadcountTableFloor(13) = 3, well above the configured default of 1.
     const rsvpIds = Array.from({ length: 13 }, (_, i) => `rsvp-${i}`);
     const gn = makeGameNight({ rsvps: { yes: rsvpIds, maybe: [], no: [] } });
     await upsertGameNight(gn as any);
@@ -1193,14 +1533,13 @@ describe('lockAndScheduleEvent', () => {
     await lockAndScheduleEvent(client as any, gn as any, { ...BUFFER_CONFIG, scheduleTableCount: 1 });
 
     const games = await Promise.all(['game1', 'game2', 'game3'].map((id) => findGame(id)));
-    // All three non-conflicting games should land in round 1 across 3 tables —
-    // with the flat config default of 1 table, two of them would have been
-    // pushed to later rounds instead.
-    expect(games.every((g) => g?.scheduledRound === 1)).toBe(true);
+    // All three non-conflicting games start at minute 0 across 3 distinct tables —
+    // with the flat config default of 1 table, two of them would have queued sequentially instead.
+    expect(games.every((g) => g?.scheduledStartMinutes === 0)).toBe(true);
     expect(new Set(games.map((g) => g?.scheduledTable)).size).toBe(3);
   });
 
-  it('persists scheduledRound/scheduledTable/scheduledPlayCount on each scheduled game', async () => {
+  it('persists scheduledTable/scheduledStartMinutes/scheduledEndMinutes/scheduledPlayCount on each scheduled game', async () => {
     const { upsertGameNight } = await import('../src/utils/storage');
     const { upsertGame, findGame } = await import('../src/utils/gameStorage');
     const gn = makeGameNight();
@@ -1216,13 +1555,14 @@ describe('lockAndScheduleEvent', () => {
     await lockAndScheduleEvent(client as any, gn as any, BUFFER_CONFIG);
 
     const game = await findGame('game1');
-    expect(game?.scheduledRound).toBe(1);
     expect(game?.scheduledTable).toBe(1);
+    expect(game?.scheduledStartMinutes).toBe(0);
+    expect(game?.scheduledEndMinutes).toBeGreaterThan(0);
     expect(game?.scheduledPlayCount).toBe(1);
     expect(game?.scheduledMayNotFinish).toBe(false);
   });
 
-  it('persists a higher scheduledPlayCount for a short game repeated into leftover round time', async () => {
+  it('persists a higher scheduledPlayCount for a short game repeated back-to-back at its table', async () => {
     const { upsertGameNight } = await import('../src/utils/storage');
     const { upsertGame, findGame } = await import('../src/utils/gameStorage');
     const gn = makeGameNight();
@@ -1247,9 +1587,9 @@ describe('lockAndScheduleEvent', () => {
     expect(short?.scheduledPlayCount).toBeGreaterThan(1);
   });
 
-  it('inserts a break and shifts round 2 for both tables when one table has back-to-back Heavy games', async () => {
+  it('inserts a Heavy-adjacency break at the shared table when RSVP sizing forces two Heavy games onto it', async () => {
     const { upsertGameNight } = await import('../src/utils/storage');
-    const { upsertGame } = await import('../src/utils/gameStorage');
+    const { upsertGame, findGame } = await import('../src/utils/gameStorage');
     const gn = makeGameNight();
     await upsertGameNight(gn as any);
     await upsertGame({
@@ -1268,11 +1608,13 @@ describe('lockAndScheduleEvent', () => {
 
     await lockAndScheduleEvent(client as any, gn as any, { ...BUFFER_CONFIG, scheduleTableCount: 1, heavyGameBreakMinutes: 15 });
 
+    const h1 = await findGame('heavy1');
+    const h2 = await findGame('heavy2');
+    expect(h1?.scheduledTable).toBe(h2?.scheduledTable);
+    expect(h2!.scheduledStartMinutes! - h1!.scheduledEndMinutes!).toBe(15);
+
     const embedCall = (client._channel.send as any).mock.calls[0][0];
-    const embed = embedCall.embeds[0].toJSON();
-    expect(embed.fields[1].name).toContain('Round 2');
-    expect(embed.fields[1].value).toContain('15-minute break beforehand');
-    expect(embed.footer.text).toContain('includes 15 min of breaks');
+    expect(embedCall.embeds[0].toJSON().footer.text).toContain(`${h2!.scheduledEndMinutes} min`);
   });
 
   it('posts a BG Stats button per scheduled game when postBgStatsLinks is enabled', async () => {
@@ -1385,6 +1727,36 @@ describe('lockAndScheduleEvent', () => {
     await lockAndScheduleEvent(client as any, gn as any, BUFFER_CONFIG);
 
     expect(client._channel.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('posts a walk-up (1-signup) game\'s BG Stats link with a walk-up note instead of a time range', async () => {
+    vi.stubEnv('SHORT_LINK_BASE_URL', 'https://bot.example.com');
+    const { upsertGameNight } = await import('../src/utils/storage');
+    const { upsertGame } = await import('../src/utils/gameStorage');
+    const gn = makeGameNight();
+    await upsertGameNight(gn as any);
+    await upsertGame({
+      id: 'game1', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm1', guildId: 'guild-1',
+      bggId: '1', title: 'Firefly', bggLink: '', minPlayers: 3, maxPlayers: 4, suggestedPlayers: null,
+      minPlaytime: 120, maxPlaytime: 240, suggestedStartTime: null, expansions: [], seats: ['p1'], waitlist: [],
+      createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Medium',
+    } as any);
+    const client = makeClient();
+
+    await lockAndScheduleEvent(client as any, gn as any, { ...BUFFER_CONFIG, postBgStatsLinks: true });
+
+    const bgStatsCall = (client._channel.send as any).mock.calls[1][0];
+    expect(bgStatsCall.embeds[0].toJSON().description).toContain('Open to walk-ups');
+
+    // No real table slot was reserved, but it's still marked as having a BG
+    // Stats link posted (see handleAdminBgStats in src/commands/admin.ts),
+    // and NOT marked scheduledTable (see getLastScheduledAt) — a walk-up was
+    // never confidently placed, so it should still be eligible to come up
+    // again via /library random.
+    const { findGame } = await import('../src/utils/gameStorage');
+    const stored = await findGame('game1');
+    expect(stored?.scheduledTable).toBeUndefined();
+    expect(stored?.scheduledWalkUp).toBe(true);
   });
 
   it('logs a clear reason instead of silently skipping when no game meets the scheduling threshold', async () => {
@@ -1904,7 +2276,7 @@ describe('previewSchedule', () => {
     const updatedNight = await findGameNight('gn1');
     expect(updatedNight?.suggestionsLocked).toBeFalsy();
     const updatedGame = await findGame('game1');
-    expect(updatedGame?.scheduledRound).toBeUndefined();
+    expect(updatedGame?.scheduledTable).toBeUndefined();
   });
 
   it('replies with a clear error when run outside any event channel', async () => {

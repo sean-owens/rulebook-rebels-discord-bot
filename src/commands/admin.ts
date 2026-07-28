@@ -11,7 +11,7 @@ import { loadGameNights } from '../utils/storage';
 import { findGamesByEvent } from '../utils/gameStorage';
 import { getShortLinkStatsForGame } from '../utils/shortLinkStorage';
 import { handleConfig as handleEventConfig } from './gamenight';
-import { previewSchedule as handleEventPreview } from '../utils/scheduler';
+import { previewSchedule as handleEventPreview, makeGroupGameId } from '../utils/scheduler';
 import { handleAdminLibraryClear, handleSync as handleLibrarySync, handleSyncAll as handleLibrarySyncAll } from './library';
 import { findGameNamesByPartial, loadLibraryForGuild } from '../utils/libraryStorage';
 import {
@@ -179,10 +179,37 @@ export const data = new SlashCommandBuilder()
             opt
               .setName('max_game_repeats')
               .setDescription(
-                'Cap on total plays for a short game (<30 min) repeating into leftover round time (default: 3)',
+                'Cap on total plays for a short game (<30 min) repeating back-to-back at its table (default: 3)',
               )
               .setRequired(false)
               .setMinValue(1),
+          )
+          .addIntegerOption((opt) =>
+            opt
+              .setName('max_tables')
+              .setDescription(
+                'Hard cap on concurrent tables, e.g. a venue\'s physical table count (0 = uncapped, default: 0)',
+              )
+              .setRequired(false)
+              .setMinValue(0),
+          )
+          .addIntegerOption((opt) =>
+            opt
+              .setName('break_minutes')
+              .setDescription(
+                "Minutes before a person's next game can start, on top of the complexity buffer (default: 0)",
+              )
+              .setRequired(false)
+              .setMinValue(0),
+          )
+          .addIntegerOption((opt) =>
+            opt
+              .setName('flex_tables')
+              .setDescription(
+                'Reserve this many tables for Light-complexity games only (0 = disabled, default: 0)',
+              )
+              .setRequired(false)
+              .setMinValue(0),
           ),
       )
       .addSubcommand((sub) =>
@@ -515,7 +542,7 @@ export async function handleAdminBgStats(interaction: ChatInputCommandInteractio
 
   const event = lockedEvents[0];
   const scheduledGames = (await findGamesByEvent(event.id)).filter(
-    (g) => g.scheduledRound !== undefined,
+    (g) => g.scheduledTable !== undefined || g.scheduledWalkUp === true,
   );
 
   if (scheduledGames.length === 0) {
@@ -526,27 +553,45 @@ export async function handleAdminBgStats(interaction: ChatInputCommandInteractio
     return;
   }
 
+  const describeStats = (stats: { openCount: number; lastOpenedAt?: string }): string =>
+    stats.openCount > 0
+      ? `${stats.openCount} open${stats.openCount === 1 ? '' : 's'}${
+          stats.lastOpenedAt
+            ? ` (last <t:${Math.floor(new Date(stats.lastOpenedAt).getTime() / 1000)}:R>)`
+            : ''
+        }`
+      : 'not opened yet';
+
   let openedCount = 0;
+  let sessionCount = 0;
   const lines: string[] = [];
   for (const game of scheduledGames) {
-    const stats = await getShortLinkStatsForGame(guildId, event.id, game.id);
-    if (stats.openCount > 0) openedCount++;
-    const detail =
-      stats.openCount > 0
-        ? `${stats.openCount} open${stats.openCount === 1 ? '' : 's'}${
-            stats.lastOpenedAt
-              ? ` (last <t:${Math.floor(new Date(stats.lastOpenedAt).getTime() / 1000)}:R>)`
-              : ''
-          }`
-        : 'not opened yet';
-    lines.push(`**${game.title}** — ${detail}`);
+    // A game split into groups (see expandGamesIntoGroups in scheduler.ts)
+    // was posted as one BG Stats message per group, each with its own play
+    // id (game.id for group 1, makeGroupGameId(game.id, N) for group N) —
+    // report opens per group so a busy game's real per-table activity isn't
+    // collapsed into a single, misleadingly low-looking count.
+    if (game.scheduledSessions && game.scheduledSessions.length > 1) {
+      for (const session of game.scheduledSessions) {
+        sessionCount++;
+        const sessionId = makeGroupGameId(game.id, session.groupIndex);
+        const stats = await getShortLinkStatsForGame(guildId, event.id, sessionId);
+        if (stats.openCount > 0) openedCount++;
+        lines.push(`**${game.title} (Group ${session.groupIndex})** — ${describeStats(stats)}`);
+      }
+    } else {
+      sessionCount++;
+      const stats = await getShortLinkStatsForGame(guildId, event.id, game.id);
+      if (stats.openCount > 0) openedCount++;
+      lines.push(`**${game.title}** — ${describeStats(stats)}`);
+    }
   }
 
   await interaction.reply({
     content:
       `**BG Stats links — ${event.title ?? 'Game Night'}** (<t:${Math.floor(Date.parse(event.startTimeISO) / 1000)}:D>)\n` +
       `${lines.join('\n')}\n\n` +
-      `${openedCount} of ${scheduledGames.length} scheduled games opened at least once.`,
+      `${openedCount} of ${sessionCount} scheduled sessions opened at least once.`,
     flags: MessageFlags.Ephemeral,
   });
 }

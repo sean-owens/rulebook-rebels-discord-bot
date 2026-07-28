@@ -63,7 +63,6 @@ function makeGame(overrides: Partial<Record<string, unknown>> = {}) {
     waitlist: [],
     createdAt: new Date().toISOString(),
     createdBy: 'p1',
-    scheduledRound: 1,
     scheduledTable: 1,
     ...overrides,
   };
@@ -107,7 +106,7 @@ describe('/admin bgstats', () => {
     await upsertGame(makeGame({ id: 'game1', title: 'Wingspan' }) as any);
     await upsertGame(makeGame({ id: 'game2', title: 'Catan' }) as any);
     // A suggestion that never made the lineup should be excluded entirely.
-    await upsertGame(makeGame({ id: 'game3', title: 'Unscheduled Game', scheduledRound: undefined }) as any);
+    await upsertGame(makeGame({ id: 'game3', title: 'Unscheduled Game', scheduledTable: undefined }) as any);
 
     const link = await createShortLink('https://app.bgstatsapp.com/createPlay.html?data=abc', {
       guildId: 'guild-1',
@@ -124,7 +123,22 @@ describe('/admin bgstats', () => {
     expect(reply.content).toContain('**Wingspan** — 1 open');
     expect(reply.content).toContain('**Catan** — not opened yet');
     expect(reply.content).not.toContain('Unscheduled Game');
-    expect(reply.content).toContain('1 of 2 scheduled games opened at least once.');
+    expect(reply.content).toContain('1 of 2 scheduled sessions opened at least once.');
+  });
+
+  it('includes a walk-up (1-signup) game, which has no scheduledTable, alongside table-scheduled games', async () => {
+    await upsertGameNight(makeGameNight() as any);
+    await upsertGame(makeGame({ id: 'game1', title: 'Wingspan' }) as any);
+    await upsertGame(
+      makeGame({ id: 'game2', title: 'Firefly', scheduledTable: undefined, scheduledWalkUp: true }) as any,
+    );
+
+    const interaction = makeInteraction();
+    await handleAdminBgStats(interaction);
+
+    const reply = interaction.reply.mock.calls[0][0];
+    expect(reply.content).toContain('**Firefly** — not opened yet');
+    expect(reply.content).toContain('2 scheduled sessions');
   });
 
   it('picks the most recently locked event when multiple exist', async () => {
