@@ -1,5 +1,9 @@
 import {
+  ActionRowBuilder,
   AttachmentBuilder,
+  ButtonBuilder,
+  ButtonInteraction,
+  ButtonStyle,
   ChatInputCommandInteraction,
   EmbedBuilder,
   SlashCommandBuilder,
@@ -7,6 +11,9 @@ import {
 } from 'discord.js';
 import { validateBggUser, getBggUserProfile } from '../utils/bgg';
 import { getBggAccount, setBggAccount, removeBggAccount } from '../utils/bggAccountStorage';
+import { handleImportBgg } from './library';
+
+const BGG_LINK_IMPORT_BUTTON_ID = 'bgg_link_import';
 
 const BGG_LOGO = new AttachmentBuilder('BGG/images/powered_by_BGG_01_SM.png');
 
@@ -99,7 +106,18 @@ async function handleLink(interaction: ChatInputCommandInteraction): Promise<voi
     })
     .setImage('attachment://powered_by_BGG_01_SM.png');
 
-  await interaction.editReply({ embeds: [embed], files: [BGG_LOGO] });
+  const importRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(BGG_LINK_IMPORT_BUTTON_ID)
+      .setLabel('Import my library now')
+      .setStyle(ButtonStyle.Primary),
+  );
+
+  await interaction.editReply({ embeds: [embed], files: [BGG_LOGO], components: [importRow] });
+}
+
+export async function handleBggLinkImportButton(interaction: ButtonInteraction): Promise<void> {
+  await handleImportBgg(interaction);
 }
 
 async function handleUnlink(interaction: ChatInputCommandInteraction): Promise<void> {

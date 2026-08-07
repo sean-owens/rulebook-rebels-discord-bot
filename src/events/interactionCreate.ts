@@ -52,7 +52,7 @@ import {
   handleRequestSuggestConfirm,
 } from '../commands/library';
 import { Complexity } from '../utils/libraryStorage';
-import { execute as executeBgg } from '../commands/bgg';
+import { execute as executeBgg, handleBggLinkImportButton } from '../commands/bgg';
 import {
   execute as executeMarketplace,
   handleAutocomplete as handleMarketplaceAutocomplete,
@@ -322,6 +322,8 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handleHubSnacksAddButton(interaction);
       } else if (id === 'hub_snacks_remove') {
         await handleHubSnacksRemoveButton(interaction);
+      } else if (id === 'bgg_link_import') {
+        await handleBggLinkImportButton(interaction);
       } else if (id.startsWith('game_tags_skip_')) {
         await handleGameTagSkip(interaction, id.slice('game_tags_skip_'.length));
       } else if (id === 'game_bring_confirm') {
