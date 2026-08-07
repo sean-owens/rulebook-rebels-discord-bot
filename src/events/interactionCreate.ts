@@ -49,6 +49,7 @@ import {
   handleHubRequestModal,
   handleHubViewModal,
   handleHubBringButton,
+  handleRequestSuggestConfirm,
 } from '../commands/library';
 import { Complexity } from '../utils/libraryStorage';
 import { execute as executeBgg } from '../commands/bgg';
@@ -277,6 +278,8 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handleTagsSkip(interaction);
       } else if (id.startsWith('library_unrequest_all_')) {
         await handleUnrequestAll(interaction, id.slice('library_unrequest_all_'.length));
+      } else if (id.startsWith('library_suggest_from_request_')) {
+        await handleRequestSuggestConfirm(interaction, id.slice('library_suggest_from_request_'.length));
       } else if (id.startsWith('library_confirmbring_')) {
         await handleLibraryConfirmBring(interaction, id.slice('library_confirmbring_'.length));
       } else if (id.startsWith('library_declinebring_')) {

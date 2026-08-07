@@ -2422,7 +2422,7 @@ export async function handlePriceCustomButton(interaction: ButtonInteraction, dr
   }
   const modal = new ModalBuilder()
     .setCustomId(`mp_price_modal_${draftId}`)
-    .setTitle(`Set your price — ${draft.itemName}`)
+    .setTitle(`Set your price — ${draft.itemName}`.slice(0, 45))
     .addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
@@ -2476,7 +2476,7 @@ export async function handleInterestButton(interaction: ButtonInteraction, listi
 
   const modal = new ModalBuilder()
     .setCustomId(`mp_bid_${listingId}`)
-    .setTitle(`Interested in ${listing.itemName}`);
+    .setTitle(`Interested in ${listing.itemName}`.slice(0, 45));
 
   const components: ActionRowBuilder<TextInputBuilder>[] = [];
 
@@ -3055,7 +3055,7 @@ export async function handleCounterButton(interaction: ButtonInteraction, listin
 
   const modal = new ModalBuilder()
     .setCustomId(`mp_counter_modal_${listingId}_${bidId}`)
-    .setTitle(`Counter offer — ${listing.itemName}`);
+    .setTitle(`Counter offer — ${listing.itemName}`.slice(0, 45));
 
   const components: ActionRowBuilder<TextInputBuilder>[] = [];
 
@@ -3137,8 +3137,12 @@ export async function handleCounterModal(
     return;
   }
 
-  const amountRaw = interaction.fields.getTextInputValue('counter_amount').trim();
-  const offerRaw = interaction.fields.getTextInputValue('counter_offer').trim();
+  const amountRaw = listing.type === 'sell'
+    ? interaction.fields.getTextInputValue('counter_amount').trim()
+    : '';
+  const offerRaw = listing.type !== 'sell'
+    ? interaction.fields.getTextInputValue('counter_offer').trim()
+    : '';
   const messageRaw = interaction.fields.getTextInputValue('counter_message').trim();
 
   let amount: number | undefined;

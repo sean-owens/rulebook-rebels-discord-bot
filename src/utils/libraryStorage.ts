@@ -120,7 +120,10 @@ export async function findGameNamesByPartial(guildId: string, term: string): Pro
   if (!term.trim()) return [];
   const seen = new Set<string>();
   const names: string[] = [];
-  for (const e of (await loadLibrary()).filter((e) => e.guildId === guildId)) {
+  // Expansions can't be suggested/requested on their own — they're always
+  // played alongside their base game — so exclude them here rather than
+  // cluttering the picker with entries the player couldn't actually pick.
+  for (const e of (await loadLibrary()).filter((e) => e.guildId === guildId && !e.isExpansion)) {
     const key = e.gameName.toLowerCase();
     if (matchesFuzzy(term, e.gameName) && !seen.has(key)) {
       seen.add(key);
