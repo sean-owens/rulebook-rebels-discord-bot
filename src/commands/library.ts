@@ -2614,7 +2614,9 @@ function parseCsvLine(line: string): string[] {
   return fields;
 }
 
-async function handleImportBgg(interaction: ChatInputCommandInteraction): Promise<void> {
+export async function handleImportBgg(
+  interaction: ChatInputCommandInteraction | ButtonInteraction,
+): Promise<void> {
   const guildId = interaction.guildId!;
   const userId = interaction.user.id;
 

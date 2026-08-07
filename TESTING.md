@@ -402,7 +402,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 #### `/library import bgg`
 
-**What it does:** Imports all owned games and expansions from your linked BoardGameGeek collection.
+**What it does:** Imports all owned games and expansions from your linked BoardGameGeek collection. The "Import my library now" button shown after `/bgg link` (1.6a/2.6a/3.6a) triggers this same import.
 
 - [ ] Run without a linked BGG account — confirm "You don't have a BoardGameGeek account linked" error
 - [ ] Run with a linked account — confirm success message with game/expansion counts
@@ -485,10 +485,12 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ## 1.6 `/bgg` — BGG Account Linking
 
-**What it does:** Lets members link their BoardGameGeek username to their Discord account on this server.
+**What it does:** Lets members link their BoardGameGeek username to their Discord account on this server, with a one-click option to sync their BGG collection into the library right away.
 
 ### 1.6a `/bgg link`
-- [ ] Run `/bgg link username:validuser` — confirm BGG API validates and success embed appears with "Powered by BGG" logo
+- [ ] Run `/bgg link username:validuser` — confirm BGG API validates and success embed appears with "Powered by BGG" logo and an "Import my library now" button
+- [ ] Click "Import my library now" — confirm it behaves like `/library import bgg` (1.4k): success message with game/expansion counts, and games appear in `/library mine`
+- [ ] Click "Import my library now" a second time — confirm all entries show as "already in your library" (no duplicates)
 - [ ] Run `/bgg link username:nonexistentuser` — confirm "We couldn't verify that BoardGameGeek account" message
 - [ ] Run with same username already linked — confirm "already linked" message
 
@@ -1118,7 +1120,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 #### `/library import bgg`
 
-**What it does:** Imports all owned games and expansions from your linked BoardGameGeek collection.
+**What it does:** Imports all owned games and expansions from your linked BoardGameGeek collection. The "Import my library now" button shown after `/bgg link` (1.6a/2.6a/3.6a) triggers this same import.
 
 - [ ] Run without a linked BGG account — confirm "You don't have a BoardGameGeek account linked" error
 - [ ] Run with a linked account — confirm success message with game/expansion counts
@@ -1196,10 +1198,12 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ## 2.6 `/bgg` — BGG Account Linking
 
-**What it does:** Lets members link their BoardGameGeek username to their Discord account on this server.
+**What it does:** Lets members link their BoardGameGeek username to their Discord account on this server, with a one-click option to sync their BGG collection into the library right away.
 
 ### 2.6a `/bgg link`
-- [ ] Run `/bgg link username:validuser` — confirm BGG API validates and success embed appears with "Powered by BGG" logo
+- [ ] Run `/bgg link username:validuser` — confirm BGG API validates and success embed appears with "Powered by BGG" logo and an "Import my library now" button
+- [ ] Click "Import my library now" — confirm it behaves like `/library import bgg` (2.4k): success message with game/expansion counts, and games appear in `/library mine`
+- [ ] Click "Import my library now" a second time — confirm all entries show as "already in your library" (no duplicates)
 - [ ] Run `/bgg link username:nonexistentuser` — confirm "We couldn't verify that BoardGameGeek account" message
 - [ ] Run with same username already linked — confirm "already linked" message
 
@@ -1883,7 +1887,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 #### `/library import bgg`
 
-**What it does:** Imports all owned games and expansions from your linked BoardGameGeek collection.
+**What it does:** Imports all owned games and expansions from your linked BoardGameGeek collection. The "Import my library now" button shown after `/bgg link` (1.6a/2.6a/3.6a) triggers this same import.
 
 - [ ] Run without a linked BGG account — confirm "You don't have a BoardGameGeek account linked" error
 - [ ] Run with a linked account — confirm success message with game/expansion counts
@@ -1961,10 +1965,12 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ## 3.6 `/bgg` — BGG Account Linking
 
-**What it does:** Lets members link their BoardGameGeek username to their Discord account on this server.
+**What it does:** Lets members link their BoardGameGeek username to their Discord account on this server, with a one-click option to sync their BGG collection into the library right away.
 
 ### 3.6a `/bgg link`
-- [ ] Run `/bgg link username:validuser` — confirm BGG API validates and success embed appears with "Powered by BGG" logo
+- [ ] Run `/bgg link username:validuser` — confirm BGG API validates and success embed appears with "Powered by BGG" logo and an "Import my library now" button
+- [ ] Click "Import my library now" — confirm it behaves like `/library import bgg` (3.4k): success message with game/expansion counts, and games appear in `/library mine`
+- [ ] Click "Import my library now" a second time — confirm all entries show as "already in your library" (no duplicates)
 - [ ] Run `/bgg link username:nonexistentuser` — confirm "We couldn't verify that BoardGameGeek account" message
 - [ ] Run with same username already linked — confirm "already linked" message
 

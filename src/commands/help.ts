@@ -63,7 +63,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       {
         name: '🔗  /bgg',
         value: [
-          '`link` — Connect your BoardGameGeek account to this server',
+          '`link` — Connect your BoardGameGeek account to this server, with an option to import your collection right away',
           '`unlink` — Remove your linked BoardGameGeek account',
           '`profile` — View your currently linked BoardGameGeek account',
         ].join('\n'),
