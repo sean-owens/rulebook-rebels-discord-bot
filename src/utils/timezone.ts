@@ -7,6 +7,24 @@ export function isValidTimeZone(timeZone: string): boolean {
   }
 }
 
+// Today's calendar date as it would read on a clock in `timeZone` — used to
+// decide whether a year-less date ("August 22") should roll forward to next
+// year, without getting the "is this the past" answer wrong for a community
+// on the other side of a midnight boundary from UTC or the host process.
+export function todayInTimeZone(timeZone: string): { year: number; month: number; day: number } {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  const parts: Record<string, string> = {};
+  for (const part of dtf.formatToParts(new Date())) {
+    parts[part.type] = part.value;
+  }
+  return { year: Number(parts.year), month: Number(parts.month) - 1, day: Number(parts.day) };
+}
+
 // Converts a wall-clock date/time as it would read on a clock in `timeZone`
 // into the corresponding absolute instant (UTC). `month` is 0-indexed, matching
 // the native `Date` constructor. This is what lets us store one correct

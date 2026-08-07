@@ -11,6 +11,11 @@ export async function handleGuildMemberAdd(member: GuildMember): Promise<void> {
 
       const fields = [];
 
+      fields.push({
+        name: '🧭 New Here?',
+        value: `Run \`/getting-started\` for a quick, guided walkthrough of your first steps.`,
+      });
+
       if (config.rulesChannelId) {
         fields.push({
           name: '📋 Server Rules',

@@ -16,6 +16,7 @@ import {
   TextInputStyle,
   MessageFlags,
 } from 'discord.js';
+import { randomUUID } from 'crypto';
 import {
   loadLibraryForGuild,
   addGame,
@@ -54,7 +55,7 @@ import { loadGameNights, findGameNight, GameNight } from '../utils/storage';
 import { getGameRoles, getMemberPreferences } from '../utils/gameRoles';
 import { updateRequestPin } from '../utils/requestPin';
 import { invalidateBringDm, reconcileRequestCopies } from '../utils/libraryBringDm';
-import { isLineupLocked } from '../utils/scheduler';
+import { isLineupLocked, LOCK_MESSAGE } from '../utils/scheduler';
 import AdmZip from 'adm-zip';
 import { getBGGGame, getBGGGamesBatch, BGGGame, weightTag, fetchBggOwnedCollection } from '../utils/bgg';
 import { getLastScheduledAt } from '../utils/gameStorage';
@@ -97,6 +98,14 @@ interface PendingRequestConfirm {
   attendingOwnerIds: string[];
 }
 const pendingRequestConfirms = new Map<string, PendingRequestConfirm>();
+
+interface PendingRequestSuggest {
+  eventId: string;
+  gameName: string;
+  ownerIds: string[];
+  requesterId: string;
+}
+const pendingRequestSuggests = new Map<string, PendingRequestSuggest>();
 
 function fuzzyMatchComplexity(input: string): Complexity | null {
   const s = input.toLowerCase().trim();
@@ -1326,8 +1335,11 @@ async function buildGameViewEmbed(
   }
   const resourceParts: string[] = [];
   if (info?.howToPlayUrl) resourceParts.push(`[📹 How to Play](${info.howToPlayUrl})`);
-  if (objectid)
-    resourceParts.push(`[📖 Rules & Files](https://boardgamegeek.com/boardgame/${objectid}/files)`);
+  if (objectid) {
+    // BGG's /files route 302s to the main game page unless the slug segment is present.
+    const slug = canonical.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    resourceParts.push(`[📖 Rules & Files](https://boardgamegeek.com/boardgame/${objectid}/${slug}/files)`);
+  }
   if (resourceParts.length > 0) {
     embed.addFields({ name: 'Resources', value: resourceParts.join(' • ') });
   }
@@ -2301,8 +2313,35 @@ async function resolveRequestFlow(
   const owners = ownerIds.map((id) => `<@${id}>`);
   const locked = isLineupLocked(event);
   const askNote = locked ? '' : ' An owner will be asked to bring it once the lineup locks.';
+
+  // A request only asks an owner to bring the game — it doesn't put it up to
+  // be played. Offer a one-tap follow-up to also suggest it, for the common
+  // case of wanting both at once, without forcing every request through
+  // /game suggest separately. Not offered once locked — suggesting would
+  // just be rejected at that point.
+  let suggestRow: ActionRowBuilder<ButtonBuilder>[] = [];
+  if (!locked) {
+    const key = randomUUID().slice(0, 8);
+    pendingRequestSuggests.set(key, {
+      eventId: event.id,
+      gameName: canonicalName,
+      ownerIds,
+      requesterId: interaction.user.id,
+    });
+    suggestRow = [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`library_suggest_from_request_${key}`)
+          .setLabel('Also suggest to play tonight')
+          .setEmoji('🎲')
+          .setStyle(ButtonStyle.Primary),
+      ),
+    ];
+  }
+
   await interaction.reply({
     content: `<@${interaction.user.id}> requested **${canonicalName}** for the event on ${event.date}. Owner${owners.length > 1 ? 's' : ''}: ${owners.join(', ')}${askNote}`,
+    components: suggestRow,
   });
 
   try {
@@ -2318,6 +2357,45 @@ async function resolveRequestFlow(
   if (locked) {
     await reconcileRequestCopies(interaction.client, interaction.guildId!, event.rsvps, result, event.date);
   }
+}
+
+// ── Button: "Also suggest to play tonight" (follow-up to a request) ────────
+
+export async function handleRequestSuggestConfirm(
+  interaction: ButtonInteraction,
+  key: string,
+): Promise<void> {
+  const pending = pendingRequestSuggests.get(key);
+  if (!pending) {
+    await interaction.reply({
+      content: 'This suggestion prompt has expired.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  if (pending.requesterId !== interaction.user.id) {
+    await interaction.reply({
+      content: 'Only the person who made this request can do this.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const gameNight = await findGameNight(pending.eventId);
+  if (!gameNight || gameNight.cancelled || gameNight.archived) {
+    await interaction.reply({ content: 'That event is no longer available.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  if (isLineupLocked(gameNight)) {
+    await interaction.reply({ content: LOCK_MESSAGE, flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  pendingRequestSuggests.delete(key);
+
+  const info = (await getGameInfo(pending.gameName)) ?? null;
+  const { postLibraryGame } = await import('./game');
+  await postLibraryGame(interaction, gameNight, pending.gameName, info, pending.ownerIds, []);
 }
 
 // ── Hub button: "🙋 Request a Game to Bring" ───────────────────────────────

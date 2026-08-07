@@ -191,6 +191,71 @@ describe('parseDateTime', () => {
     const utc = parseDateTime('July 14 2026', '7pm', 'UTC');
     expect(ny.getTime()).not.toBe(utc.getTime());
   });
+
+  // ── 12-hour / 24-hour clock support ─────────────────────────────────────────
+
+  it('accepts 24-hour clock input ("19:00") equivalently to "7pm"', () => {
+    const d = parseDateTime('August 22', '19:00');
+    expect(d.getUTCHours()).toBe(19);
+    expect(d.getUTCMinutes()).toBe(0);
+  });
+
+  it('accepts 24-hour midnight ("00:00")', () => {
+    const d = parseDateTime('August 22', '00:00');
+    expect(d.getUTCHours()).toBe(0);
+  });
+
+  it('rejects an out-of-range 24-hour value ("25:00")', () => {
+    expect(() => parseDateTime('August 22', '25:00')).toThrow();
+  });
+
+  it('rejects an out-of-range 12-hour value ("13pm")', () => {
+    expect(() => parseDateTime('August 22', '13pm')).toThrow();
+  });
+
+  it('rejects an out-of-range minute value ("7:75pm")', () => {
+    expect(() => parseDateTime('August 22', '7:75pm')).toThrow();
+  });
+
+  // ── Year rollover for year-less dates ────────────────────────────────────────
+
+  describe('with no year given', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('rolls a past month/day forward to next year (December → January)', () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-12-10T12:00:00.000Z'));
+
+      const d = parseDateTime('January 5', '7pm');
+
+      expect(d.getUTCFullYear()).toBe(2027);
+      expect(d.getUTCMonth()).toBe(0);
+      expect(d.getUTCDate()).toBe(5);
+    });
+
+    it('does not roll forward a month/day still ahead later this year', () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-06-01T12:00:00.000Z'));
+
+      const d = parseDateTime('August 22', '7pm');
+
+      expect(d.getUTCFullYear()).toBe(2026);
+    });
+
+    it('does not roll forward for a same-day time earlier than right now', () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-08-22T20:00:00.000Z')); // 8pm UTC
+
+      // 7pm on the same calendar day as "now" — earlier today, not a past year.
+      const d = parseDateTime('August 22', '7pm');
+
+      expect(d.getUTCFullYear()).toBe(2026);
+      expect(d.getUTCMonth()).toBe(7);
+      expect(d.getUTCDate()).toBe(22);
+    });
+  });
 });
 
 // ── handleCreate — title threaded through naming ────────────────────────────
@@ -329,6 +394,50 @@ describe('handleCreate', () => {
       (call: any[]) => call[0].type === 0,
     )![0].topic as string;
     expect(topicArg).toContain(`Event ID: ${nights[0].id}`);
+  });
+
+  it('rejects a start date/time in the past', async () => {
+    const { handleCreate } = await import('../src/commands/gamenight');
+    const guild = makeGuild();
+    const interaction = makeCreateInteraction('Board Game Bash', guild);
+    const options: Record<string, string | null> = {
+      title: 'Board Game Bash',
+      date: 'August 22 2020',
+      time: '7pm',
+      end_time: null,
+      location: null,
+      link: null,
+      description: null,
+    };
+    interaction.options.getString = (name: string) => options[name] ?? null;
+
+    await handleCreate(interaction);
+
+    expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining('is in the past'));
+    expect(guild.scheduledEvents.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects an end_time that is not after the start time', async () => {
+    const { handleCreate } = await import('../src/commands/gamenight');
+    const guild = makeGuild();
+    const interaction = makeCreateInteraction('Board Game Bash', guild);
+    const options: Record<string, string | null> = {
+      title: 'Board Game Bash',
+      date: 'August 22',
+      time: '9pm',
+      end_time: '8pm',
+      location: null,
+      link: null,
+      description: null,
+    };
+    interaction.options.getString = (name: string) => options[name] ?? null;
+
+    await handleCreate(interaction);
+
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      expect.stringContaining('is not after the start time'),
+    );
+    expect(guild.scheduledEvents.create).not.toHaveBeenCalled();
   });
 });
 
@@ -641,6 +750,40 @@ describe('handleEdit', () => {
     const gn = await findGameNight('gn-edit-1');
     expect(gn?.location).toBe('New Venue');
     expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining('updated'));
+  });
+
+  it('rejects moving the start date/time into the past', async () => {
+    const { handleEdit } = await import('../src/commands/gamenight');
+    await seedGameNight();
+    const client = makeClientForEdit();
+
+    const interaction = makeEditInteraction(
+      { id: 'gn-edit-1', date: 'August 22 2020', time: '7pm', title: null, location: null, end_time: null, link: null, description: null },
+      client,
+    );
+    await handleEdit(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('is in the past') }),
+    );
+    expect(interaction.deferReply).not.toHaveBeenCalled();
+  });
+
+  it('rejects an end_time that is not after the start time', async () => {
+    const { handleEdit } = await import('../src/commands/gamenight');
+    await seedGameNight();
+    const client = makeClientForEdit();
+
+    const interaction = makeEditInteraction(
+      { id: 'gn-edit-1', end_time: '6pm', title: null, date: null, time: null, location: null, link: null, description: null },
+      client,
+    );
+    await handleEdit(interaction);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('is not after the start time') }),
+    );
+    expect(interaction.deferReply).not.toHaveBeenCalled();
   });
 
   it('renames and retopics the channel when the title changes', async () => {

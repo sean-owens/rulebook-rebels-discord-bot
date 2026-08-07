@@ -243,6 +243,25 @@ describe('libraryStorage', () => {
       await addGame('guild-2', 'user1', 'Wingspan');
       expect(await findGameNamesByPartial('guild-1', 'wing')).toHaveLength(0);
     });
+
+    it('tolerates a single-letter typo per word (dual/duel homophone)', async () => {
+      await addGame('guild-1', 'user1', 'Duel of Ages');
+      expect(await findGameNamesByPartial('guild-1', 'dual of ages')).toEqual(['Duel of Ages']);
+    });
+
+    it('does not loosen matching for short words (avoids false positives)', async () => {
+      await addGame('guild-1', 'user1', 'War of the Ring');
+      await addGame('guild-1', 'user1', 'Catan');
+      // "of" is too short for the edit-distance fallback to apply — it must
+      // still only match by real prefix, not fuzz-match against "on"/"at"/etc.
+      expect(await findGameNamesByPartial('guild-1', 'of')).toEqual(['War of the Ring']);
+    });
+
+    it('excludes expansions — only base games are offered for suggest/request', async () => {
+      await addGame('guild-1', 'user1', 'Wingspan');
+      await addGame('guild-1', 'user1', 'Wingspan: European Expansion', undefined, true);
+      expect(await findGameNamesByPartial('guild-1', 'wing')).toEqual(['Wingspan']);
+    });
   });
 
   // ── getGamesByUser ─────────────────────────────────────────────────────────

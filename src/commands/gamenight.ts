@@ -16,7 +16,7 @@ import { loadGameNights, findGameNight, upsertGameNight, GameNight } from '../ut
 import { buildGameNightEmbed, buildGameNightButtons } from '../utils/embeds';
 import { cleanupCancelledNight } from './cancelHelper';
 import { getGuildConfig, updateGuildConfig, GuildConfig } from '../utils/config';
-import { isValidTimeZone, zonedTimeToUtc } from '../utils/timezone';
+import { isValidTimeZone, zonedTimeToUtc, todayInTimeZone } from '../utils/timezone';
 import { archiveEventChannel } from '../utils/archive';
 import { ensureGameNightTags, resolvedGameNightTag } from '../utils/gameNightTags';
 import { updateAnnouncementPin } from '../utils/pins';
@@ -83,6 +83,16 @@ export function parseDateTime(dateStr: string, timeStr: string, timeZone = 'UTC'
   let hours = parseInt(colonIdx === -1 ? numeric : numeric.slice(0, colonIdx), 10);
   const minutes = colonIdx === -1 ? 0 : parseInt(numeric.slice(colonIdx + 1, colonIdx + 3), 10);
   if (isNaN(hours) || isNaN(minutes)) throw new Error(`Invalid time: "${timeStr}"`);
+  // 12-hour input ("7pm") is only ever 1–12; 24-hour input ("19:00") is 0–23.
+  // Out-of-range values (e.g. a stray "25:00" or "13pm") would otherwise
+  // silently roll over into a nonsense time via Date's own overflow
+  // handling, rather than surfacing as the parse error they actually are.
+  if (isPM || isAM) {
+    if (hours < 1 || hours > 12) throw new Error(`Invalid time: "${timeStr}"`);
+  } else if (hours < 0 || hours > 23) {
+    throw new Error(`Invalid time: "${timeStr}"`);
+  }
+  if (minutes < 0 || minutes > 59) throw new Error(`Invalid time: "${timeStr}"`);
   if (isPM && hours !== 12) hours += 12;
   if (isAM && hours === 12) hours = 0;
 
@@ -91,14 +101,35 @@ export function parseDateTime(dateStr: string, timeStr: string, timeZone = 'UTC'
   let month = -1;
   let day = -1;
   let year = new Date().getFullYear();
+  let yearExplicit = false;
   for (const part of parts) {
     if (MONTH_NAMES[part] !== undefined) month = MONTH_NAMES[part];
     else if (/^\d{1,2}(st|nd|rd|th)?$/.test(part)) day = parseInt(part, 10);
-    else if (/^\d{4}$/.test(part)) year = parseInt(part, 10);
+    else if (/^\d{4}$/.test(part)) {
+      year = parseInt(part, 10);
+      yearExplicit = true;
+    }
   }
   if (month === -1 || day === -1) throw new Error(`Invalid date: "${dateStr}"`);
 
-  return zonedTimeToUtc(year, month, day, hours, minutes, timeZone);
+  const result = zonedTimeToUtc(year, month, day, hours, minutes, timeZone);
+
+  // No year given ("August 22") — if that reads as already past on today's
+  // calendar date in this timezone, assume next year rather than force a
+  // "that's in the past" rejection on completely ordinary input (e.g. typing
+  // "January 5" in December). A same-day input with just an earlier clock
+  // time is deliberately left alone here — that's a genuine past-time
+  // mistake the caller's own "in the past" check should catch, not something
+  // to silently roll a whole year forward for.
+  if (!yearExplicit) {
+    const today = todayInTimeZone(timeZone);
+    const todayStart = zonedTimeToUtc(today.year, today.month, today.day, 0, 0, timeZone);
+    if (result.getTime() < todayStart.getTime()) {
+      return zonedTimeToUtc(year + 1, month, day, hours, minutes, timeZone);
+    }
+  }
+
+  return result;
 }
 
 function formatDate(date: Date, timeZone = 'UTC'): string {
@@ -158,6 +189,13 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
     return;
   }
 
+  if (startTime.getTime() < Date.now()) {
+    await interaction.editReply(
+      `"${rawDate} ${rawTime}" is in the past. Use a date and time that's today or later.`,
+    );
+    return;
+  }
+
   let endTime: Date;
   if (rawEndTime) {
     try {
@@ -170,6 +208,13 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
     }
   } else {
     endTime = new Date(startTime.getTime() + 4 * 60 * 60 * 1000);
+  }
+
+  if (endTime.getTime() <= startTime.getTime()) {
+    await interaction.editReply(
+      `End time "${rawEndTime}" is not after the start time "${rawTime}". Double-check the times (or leave end_time blank to default to 4 hours after start).`,
+    );
+    return;
   }
 
   const date = formatDate(startTime, timeZone);
@@ -417,6 +462,14 @@ export async function handleEdit(interaction: ChatInputCommandInteraction): Prom
       });
       return;
     }
+
+    if (startTime.getTime() < Date.now()) {
+      await interaction.reply({
+        content: `"${newRawDate ?? currentDateStr} ${newRawTime ?? currentTimeStr}" is in the past. Use a date and time that's today or later.`,
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
   }
 
   let endTime = currentEnd;
@@ -433,6 +486,14 @@ export async function handleEdit(interaction: ChatInputCommandInteraction): Prom
   } else if (newRawDate || newRawTime) {
     // Date/start time shifted but no new end time given — preserve the original duration.
     endTime = new Date(currentEnd.getTime() + (startTime.getTime() - currentStart.getTime()));
+  }
+
+  if (endTime.getTime() <= startTime.getTime()) {
+    await interaction.reply({
+      content: `End time "${newRawEndTime ?? formatTime(endTime, timeZone)}" is not after the start time "${formatTime(startTime, timeZone)}". Double-check the times.`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
   }
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -964,11 +1025,13 @@ export async function handleCancel(interaction: ChatInputCommandInteraction): Pr
 
   gn.cancelled = true;
   await upsertGameNight(gn);
-  await cleanupCancelledNight(interaction.client, gn);
 
-  await updateAnnouncementPin(interaction.client, interaction.guildId!).catch(() => null);
-
+  // Confirm before cleanup — cleanup may delete the event channel this command
+  // was run from, which would orphan the interaction's ephemeral reply.
   await interaction.editReply(`Event \`${id}\` has been cancelled.`);
+
+  await cleanupCancelledNight(interaction.client, gn);
+  await updateAnnouncementPin(interaction.client, interaction.guildId!).catch(() => null);
 }
 
 export async function handleArchiveOld(interaction: ChatInputCommandInteraction): Promise<void> {

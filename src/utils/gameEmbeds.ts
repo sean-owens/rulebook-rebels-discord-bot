@@ -89,10 +89,13 @@ export async function buildGameEmbed(
 
   const resourceParts: string[] = [];
   if (game.howToPlayUrl) resourceParts.push(`[📹 How to Play](${game.howToPlayUrl})`);
-  if (game.bggId)
+  if (game.bggId) {
+    // BGG's /files route 302s to the main game page unless the slug segment is present.
+    const slug = game.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     resourceParts.push(
-      `[📖 Rules & Files](https://boardgamegeek.com/boardgame/${game.bggId}/files)`,
+      `[📖 Rules & Files](https://boardgamegeek.com/boardgame/${game.bggId}/${slug}/files)`,
     );
+  }
   if (resourceParts.length > 0) {
     embed.addFields({ name: 'Resources', value: resourceParts.join(' • ') });
   }

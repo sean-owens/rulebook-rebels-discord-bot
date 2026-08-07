@@ -1050,8 +1050,12 @@ export async function handleLibraryExpansionSelect(
 
 // ── Library match: post directly ──────────────────────────────────────────────
 
-async function postLibraryGame(
-  interaction: ChatInputCommandInteraction | StringSelectMenuInteraction | ModalSubmitInteraction,
+export async function postLibraryGame(
+  interaction:
+    | ChatInputCommandInteraction
+    | StringSelectMenuInteraction
+    | ModalSubmitInteraction
+    | ButtonInteraction,
   gameNight: GameNight,
   gameName: string,
   info: GameInfo | null,
@@ -1142,7 +1146,7 @@ async function postLibraryGame(
     content: `Owned by: ${owners}`,
     embeds: [await buildGameEmbed(game, {})],
     files: [buildBggAttachment()],
-    components: [buildGameButtons(id, false)],
+    components: [buildGameButtons(id, game.seats.length >= game.maxPlayers)],
   });
 
   game.messageId = msg.id;
@@ -1409,7 +1413,7 @@ export async function handleManualGameSubmit(interaction: ModalSubmitInteraction
   const msg = await channel.send({
     embeds: [await buildGameEmbed(game, {})],
     files: [buildBggAttachment()],
-    components: [buildGameButtons(id, false)],
+    components: [buildGameButtons(id, game.seats.length >= game.maxPlayers)],
   });
 
   game.messageId = msg.id;
@@ -1791,7 +1795,7 @@ async function postBGGGame(
   const msg = await channel.send({
     embeds: [await buildGameEmbed(game, {})],
     files: [buildBggAttachment()],
-    components: [buildGameButtons(id, false)],
+    components: [buildGameButtons(id, game.seats.length >= game.maxPlayers)],
   });
 
   game.messageId = msg.id;

@@ -51,11 +51,51 @@ export function normalizeName(s: string): string {
     .trim();
 }
 
+// Bounded edit distance (Levenshtein) — short-circuits once it's clear the
+// distance will exceed maxDist, so a handful of wildly different tokens
+// (the common case) never runs the full O(n*m) comparison.
+function editDistanceAtMost(a: string, b: string, maxDist: number): boolean {
+  if (Math.abs(a.length - b.length) > maxDist) return false;
+  const n = b.length;
+  let prevRow = new Array<number>(n + 1);
+  for (let j = 0; j <= n; j++) prevRow[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    const currRow = new Array<number>(n + 1);
+    currRow[0] = i;
+    let rowMin = currRow[0];
+    for (let j = 1; j <= n; j++) {
+      currRow[j] =
+        a[i - 1] === b[j - 1]
+          ? prevRow[j - 1]
+          : 1 + Math.min(prevRow[j - 1], prevRow[j], currRow[j - 1]);
+      rowMin = Math.min(rowMin, currRow[j]);
+    }
+    if (rowMin > maxDist) return false; // every cell this row already exceeds the bound
+    prevRow = currRow;
+  }
+  return prevRow[n] <= maxDist;
+}
+
+// A query token counts as matching a name token either the existing way
+// (exact prefix — "wing" → "Wingspan") or, for tokens long enough that a
+// single-letter slip is unambiguous, when it's a near-miss of the name
+// token's own leading prefix (e.g. "dual" → "Duel of ...", a common
+// dual/duel homophone typo the strict prefix check can't see at all).
+// Short tokens (3 letters or fewer — "of", "a", "war") skip the fallback
+// entirely, since a 1-edit tolerance on something that short matches almost
+// anything and would defeat the point of "fuzzy" filtering results down.
+function tokenMatches(queryToken: string, nameToken: string): boolean {
+  if (nameToken.startsWith(queryToken)) return true;
+  if (queryToken.length <= 3) return false;
+  const candidate = nameToken.slice(0, Math.min(nameToken.length, queryToken.length + 1));
+  return editDistanceAtMost(queryToken, candidate, 1);
+}
+
 export function matchesFuzzy(query: string, name: string): boolean {
   const qTokens = tokenize(query);
   if (qTokens.length === 0) return false;
   const nTokens = tokenize(name);
-  return qTokens.every((qt) => nTokens.some((nt) => nt.startsWith(qt)));
+  return qTokens.every((qt) => nTokens.some((nt) => tokenMatches(qt, nt)));
 }
 
 function tokenize(s: string): string[] {
