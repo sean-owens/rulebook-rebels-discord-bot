@@ -4,7 +4,25 @@ import os from 'os';
 import path from 'path';
 import { parseDateTime, handleConfig } from '../src/commands/gamenight';
 
-const YEAR = new Date().getFullYear();
+// A date guaranteed to still be upcoming (not yet passed) relative to
+// whenever these tests actually run, so parseDateTime's no-year-given
+// rollover logic (see gamenight.ts) never kicks in — deriving from `now`
+// instead of a hardcoded "August 22" avoids the assertion going stale every
+// year once the calendar reaches that date (parseDateTime correctly rolls a
+// now-past, year-less date to next year, which a fixed date/year pair can't
+// account for). +14 days keeps comfortable margin and, if it happens to cross
+// a Dec→Jan boundary, FUTURE_YEAR already reflects the rolled-forward year
+// the same way parseDateTime's own rollover would compute it.
+const FULL_MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+const _futureDate = new Date();
+_futureDate.setUTCDate(_futureDate.getUTCDate() + 14);
+const FUTURE_MONTH_NAME = FULL_MONTH_NAMES[_futureDate.getUTCMonth()];
+const FUTURE_DAY = _futureDate.getUTCDate();
+const FUTURE_YEAR = _futureDate.getUTCFullYear();
+const FUTURE_MONTH_INDEX = _futureDate.getUTCMonth();
 
 vi.mock('../src/utils/requestPin', () => ({
   updateGameListPin: vi.fn(async () => {}),
@@ -111,10 +129,10 @@ describe('parseDateTime', () => {
   // ── Date parsing ───────────────────────────────────────────────────────────
 
   it('parses full month name', () => {
-    const d = parseDateTime('August 22', '7pm');
-    expect(d.getUTCMonth()).toBe(7); // 0-indexed
-    expect(d.getUTCDate()).toBe(22);
-    expect(d.getUTCFullYear()).toBe(YEAR);
+    const d = parseDateTime(`${FUTURE_MONTH_NAME} ${FUTURE_DAY}`, '7pm');
+    expect(d.getUTCMonth()).toBe(FUTURE_MONTH_INDEX);
+    expect(d.getUTCDate()).toBe(FUTURE_DAY);
+    expect(d.getUTCFullYear()).toBe(FUTURE_YEAR);
   });
 
   it('parses abbreviated month name', () => {
@@ -176,8 +194,10 @@ describe('parseDateTime', () => {
   // local zone instead of an explicit, configured one) ───────────────────────
 
   it('defaults to UTC when no timezone is given', () => {
-    const d = parseDateTime('August 22', '7pm');
-    expect(d.toISOString()).toBe(`${YEAR}-08-22T19:00:00.000Z`);
+    const d = parseDateTime(`${FUTURE_MONTH_NAME} ${FUTURE_DAY}`, '7pm');
+    const expectedMonth = String(FUTURE_MONTH_INDEX + 1).padStart(2, '0');
+    const expectedDay = String(FUTURE_DAY).padStart(2, '0');
+    expect(d.toISOString()).toBe(`${FUTURE_YEAR}-${expectedMonth}-${expectedDay}T19:00:00.000Z`);
   });
 
   it('interprets the wall-clock time in the given IANA timezone', () => {
