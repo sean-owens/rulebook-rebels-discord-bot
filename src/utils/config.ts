@@ -93,6 +93,11 @@ export interface GuildConfig {
   // than the host process's local zone, which has no relation to where the
   // community actually is.
   timezone: string;
+  // Weekly "Guess the Board Game" challenge (see src/utils/boardGameChallenge.ts).
+  // Off by default and requires a channel before it will post — set via
+  // /admin challenge config. Hint/reveal timing uses `timezone` above.
+  boardGameChallengeEnabled: boolean;
+  boardGameChallengeChannelId: string | null;
 }
 
 const DEFAULT_CONFIG: GuildConfig = {
@@ -126,12 +131,24 @@ const DEFAULT_CONFIG: GuildConfig = {
   maxGameRepeats: 3,
   privateRoomCategoryName: 'Private Rooms',
   timezone: 'UTC',
+  boardGameChallengeEnabled: false,
+  boardGameChallengeChannelId: null,
 };
 
 type ConfigStore = Record<string, GuildConfig>;
 
 export async function getGuildConfig(guildId: string): Promise<GuildConfig> {
   return (await readJson<ConfigStore>(FILE, {}))[guildId] ?? { ...DEFAULT_CONFIG };
+}
+
+// Guild IDs with a persisted config record — i.e. every guild that has ever
+// run an /admin config command. Used by scheduled, calendar-driven features
+// (e.g. checkAndAdvanceChallengeSchedule in boardGameChallenge.ts) that need
+// to sweep every guild rather than react to a single guild's event, since
+// there's no per-event record to iterate the way most other periodic checks
+// in this codebase (e.g. checkPendingLocks) work off of.
+export async function getGuildIdsWithConfig(): Promise<string[]> {
+  return Object.keys(await readJson<ConfigStore>(FILE, {}));
 }
 
 export async function updateGuildConfig(

@@ -137,6 +137,7 @@ import {
   handleHubSnacksRemoveButton,
   handleHubSnacksRemoveSelect,
 } from '../commands/snacks';
+import { execute as executeChallenge } from '../commands/boardgamechallenge';
 import { extractCommandUsage, recordCommandUsage } from '../utils/commandUsageStorage';
 
 export async function handleInteraction(interaction: Interaction): Promise<void> {
@@ -173,6 +174,7 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
       else if (interaction.commandName === 'room') await executeRoom(interaction);
       else if (interaction.commandName === 'hub') await executeHub(interaction);
       else if (interaction.commandName === 'snacks') await executeSnacks(interaction);
+      else if (interaction.commandName === 'challenge') await executeChallenge(interaction);
     } else if (interaction.isStringSelectMenu()) {
       const id = interaction.customId;
       if (id.startsWith(EVENT_SELECT_PREFIX)) await handleEventSelect(interaction);

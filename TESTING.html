@@ -1316,6 +1316,38 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Tap "🗑️ Remove Mine" having added exactly one item — confirm it's removed directly, same as `/snacks remove`
 - [ ] Tap "🗑️ Remove Mine" having added more than one item — confirm a select menu lets you pick which one to remove
 
+## 1.12 `/challenge` — Weekly "Guess the Board Game"
+
+**Prerequisites:** an admin must run `/admin challenge config` (3.9s) to set a channel and turn the feature on — see 4.9 for the full automated hint/reveal flow. No permission differences between member/host/admin, so this section isn't mirrored into Parts 2/3.
+
+### 1.12a `/challenge leaderboard`
+
+**What it does:** Shows the top 10 point scorers for this server, most points first.
+
+- [ ] Run with nobody having scored yet — confirm "No points on the board yet — guess correctly in the weekly challenge to get started!"
+- [ ] Run after at least one correct guess has been recorded — confirm an ephemeral leaderboard embed listing scorers ranked highest-first
+
+### 1.12b `/challenge status`
+
+**What it does:** Shows this week's hints so far and when the next one posts (or the reveal, once all 3 are out). Ephemeral, for anyone who missed the original posts.
+
+- [ ] Run when the feature isn't configured/enabled — confirm "The weekly board game challenge isn't set up on this server yet"
+- [ ] Run when enabled but no challenge is currently active (e.g. Sunday, between reveal and the next Monday) — confirm "No challenge is active right now — the next one starts Monday at 8am in #channel"
+- [ ] Run after hint 1 has posted — confirm only hint 1's text is shown, plus "Next hint: Wednesday 8am"
+- [ ] Run after all 3 hints have posted — confirm all 3 hints are shown, plus "the answer reveals Saturday evening"
+
+### 1.12c Guessing (plain messages in the configured channel)
+
+**What it does:** Reply with your guess as a normal message in the configured channel. A guess is matched against the game's title after normalizing case/punctuation/leading articles and a colon/parenthetical subtitle, with typo tolerance for small misspellings. A correct guess is deleted immediately (so the answer never sits visible for others to copy) and the guesser is DMed their points instead; an incorrect guess is left in place with a ❌ reaction. Points are 100 (guessed after hint 1), 80 (after hint 2), or 50 (after hint 3) — everyone who guesses correctly scores, not just the first person, and each person can only score once per week.
+
+- [ ] Post an obviously wrong guess after hint 1 — confirm it's reacted with ❌ and stays visible
+- [ ] Post the exact title (any case/punctuation) — confirm the message is deleted and you're DMed your points (100 if this is right after hint 1)
+- [ ] Post a close typo of the title — confirm it's still accepted as correct
+- [ ] As a second person, post the correct title after the same hint — confirm they're also scored (both scored, not just the first)
+- [ ] As someone who already guessed correctly this week, post the correct title again — confirm nothing happens (no double DM, no double points)
+- [ ] Post a guess in any other channel — confirm the bot ignores it entirely (no reaction, no deletion)
+- [ ] Check `/challenge leaderboard` after a correct guess — confirm the new total is reflected
+
 ---
 
 # Part 2 — Host Tests (Host role / Manage Events permission)
@@ -2926,6 +2958,18 @@ Text channels have no forum tags and no thread is created for a listing — each
 - [ ] Confirm a walk-up (1-seated) game appears in the list alongside table-scheduled games — it never gets a real table slot (4.7), but a BG Stats link is still posted for it, so it's still eligible for open-tracking here
 - [ ] Confirm this is per-server: a locked event in a different server the bot is in doesn't appear here
 
+### 3.9s `/admin challenge config`
+
+**What it does:** Sets the text channel where the weekly "Guess the Board Game" challenge posts hints/reveals and reads guesses, and turns the feature on or off (default: off). See 4.9 for the full automated flow this drives.
+
+- [ ] 👑 Run as non-admin — confirm "requires Manage Server permission"
+- [ ] Run with no options — confirm it shows the current channel ("*not set*" if none) and enabled state
+- [ ] Run with a non-text channel (e.g. a voice or forum channel) as `channel` — confirm "The challenge channel must be a **Text Channel**" and nothing is saved
+- [ ] Run with a valid text channel and `enabled:true` — confirm both save, and the reply reflects the new channel/state
+- [ ] Run with only `channel` set (no `enabled` option) — confirm the channel saves and the reply still shows "Enabled: No", since the feature needs both a channel and `enabled:true` before it posts
+- [ ] Run with no channel ever set — confirm the reply includes a warning that a channel needs to be set before enabling
+- [ ] Run `/challenge status` afterward (with both channel and enabled set) — confirm it now reflects the newly configured channel instead of "isn't set up"
+
 ## 3.10 `/room` — Private Rooms
 
 ### 3.10a `/room create`
@@ -3236,6 +3280,23 @@ The effective table count used at lock time is `max(headcount floor, preference-
 - [ ] Confirm a room whose expiration date hasn't passed yet is left untouched by the same check
 - [ ] Confirm `/room close`, run manually before the expiration date, still works exactly as before (expiration doesn't interfere with early manual closing)
 - [ ] Confirm a persistent room (created with `persist:true`, or switched via `/room persist enabled:true`) is left untouched by the hourly check even after its original/former expiration date would have passed
+
+## 4.9 Weekly Board Game Challenge (Scheduled Hints + Reveal)
+
+**What it does:** Once a server has `/admin challenge config` (3.9s) set with a channel and `enabled:true`, the bot runs a weekly cycle entirely on its own, on the same hourly check as the other scheduled features (plus once on startup), evaluated against the server's configured `timezone` (`/admin event config`, 3.9a): Monday at 8am it picks a random game from BGG's top 500 ranked games (excluding anything this server has played in roughly the last year) and posts hint 1; Wednesday at 8am, hint 2; Friday at 8am, hint 3; Saturday at 6pm, it reveals the answer and lists everyone who guessed correctly that week, then goes quiet until the next Monday. See 1.12c for how guessing itself works. Each server gets its own independent random pick — two opted-in servers are never on the same game at the same time, so someone in both can't spoil it across servers.
+
+**Prerequisites:** `/admin challenge config` set with a valid text channel and `enabled:true`. To actually observe a transition without waiting for the real day/time, temporarily edit `data/board_game_challenges.json`'s `weekStart`/`hintsPostedCount` for this guild's entry (or the server's `timezone` in `data/config.json`) so the next hourly check's day/hour condition is met, then wait for the hourly check or restart the bot.
+
+- [ ] With the feature freshly enabled and no challenge yet this week, reach Monday 8am local time (or simulate it) — confirm a new challenge is created and hint 1 posts in the configured channel, with a "Powered by BGG" attribution image and no title/thumbnail shown
+- [ ] Confirm `/challenge status` reflects hint 1 immediately after it posts
+- [ ] Reach Wednesday 8am — confirm hint 2 posts (and not before)
+- [ ] Reach Friday 8am — confirm hint 3 posts (and not before)
+- [ ] Reach Saturday 6pm — confirm a reveal embed posts with the game's title, BGG link, thumbnail, and a list of everyone who guessed correctly this week (or "Nobody guessed it this week!" if no one did)
+- [ ] Confirm no new challenge is created between the Saturday reveal and the following Monday
+- [ ] Confirm `/challenge leaderboard` totals match the sum of points awarded across the week's correct guesses
+- [ ] Restart the bot mid-week (e.g. right after hint 1) — confirm the next hourly check resumes correctly (doesn't re-post hint 1, still posts hint 2 on schedule) rather than losing track of where the week was
+- [ ] If a reveal is somehow missed entirely for over a week (e.g. extended downtime), confirm the next check force-reveals the stale challenge rather than getting stuck and blocking all future weeks
+- [ ] With two servers both configured, confirm each gets a different game in the same week (not guaranteed every single week by chance, but confirm the selection logic is independent per server, not shared)
 
 ---
 

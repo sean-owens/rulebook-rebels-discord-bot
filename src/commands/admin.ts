@@ -33,6 +33,7 @@ import {
 } from './marketplace';
 import { handleRoomConfig } from './room';
 import { handleGeneralHubConfig } from '../utils/generalHub';
+import { handleChallengeConfig } from './boardgamechallenge';
 
 export const data = new SlashCommandBuilder()
   .setName('admin')
@@ -431,6 +432,30 @@ export const data = new SlashCommandBuilder()
               .setRequired(false),
           ),
       ),
+  )
+  // ── challenge group ──────────────────────────────────────────────────────────
+  .addSubcommandGroup((group) =>
+    group
+      .setName('challenge')
+      .setDescription('Weekly "Guess the Board Game" challenge administration')
+      .addSubcommand((sub) =>
+        sub
+          .setName('config')
+          .setDescription('Set the channel and on/off state for the weekly board game challenge')
+          .addChannelOption((opt) =>
+            opt
+              .setName('channel')
+              .setDescription('Text channel where hints post and guesses are read')
+              .addChannelTypes(ChannelType.GuildText)
+              .setRequired(false),
+          )
+          .addBooleanOption((opt) =>
+            opt
+              .setName('enabled')
+              .setDescription('Turn the weekly challenge on or off (default: off)')
+              .setRequired(false),
+          ),
+      ),
   );
 
 export async function handleAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
@@ -483,6 +508,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     if (sub === 'config') await handleRoomConfig(interaction);
   } else if (group === 'general') {
     if (sub === 'config') await handleGeneralHubConfig(interaction);
+  } else if (group === 'challenge') {
+    if (sub === 'config') await handleChallengeConfig(interaction);
   }
 }
 

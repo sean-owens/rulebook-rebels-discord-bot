@@ -55,3 +55,9 @@ setup notes for adding to server:
     - Needs:
         - Channel: #general (or whatever your main/already-populated chat channel is)
     - Posts a pinned "🎮 Quick Actions" hub message there (RSVP to next event, browse library, my games, random game, request a game to bring) — a member-facing shortcut hub, distinct from the welcome channel
+
+- /admin challenge config (weekly "Guess the Board Game")
+    - Needs:
+        - Channel: a text channel for hints + guesses (e.g. #board-game-challenge)
+        - Enabled: true
+    - **Discord Developer Portal setting required first, or the bot won't even connect:** this feature reads plain-text guesses in the channel, which needs the privileged **Message Content Intent**. Go to https://discord.com/developers/applications → select the bot app → Bot page → enable "Message Content Intent" under Privileged Gateway Intents → Save Changes. Must be done separately for the dev bot app and the prod bot app (they're two separate Discord applications, not one bot reused in two servers) — dev before deploying this to dev, prod before promoting to production.

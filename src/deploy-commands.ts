@@ -13,6 +13,7 @@ import { data as marketplaceCommand } from './commands/marketplace';
 import { data as roomCommand } from './commands/room';
 import { data as hubCommand } from './commands/hub';
 import { data as snacksCommand } from './commands/snacks';
+import { data as challengeCommand } from './commands/boardgamechallenge';
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.DISCORD_CLIENT_ID;
@@ -37,6 +38,7 @@ const commands = [
   roomCommand.toJSON(),
   hubCommand.toJSON(),
   snacksCommand.toJSON(),
+  challengeCommand.toJSON(),
 ];
 const rest = new REST().setToken(token);
 
