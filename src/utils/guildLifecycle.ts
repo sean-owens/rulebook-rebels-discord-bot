@@ -17,6 +17,8 @@ const KEYED_FILES = [
   'bgg_accounts.json',
   'gameroles.json',
   'user_collections.json',
+  'board_game_challenges.json',
+  'board_game_challenge_leaderboard.json',
 ] as const;
 
 interface DeletedGuild {

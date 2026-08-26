@@ -1,3 +1,36 @@
+// Current wall-clock weekday + hour in `timeZone` — used by scheduled,
+// calendar-based features (e.g. the weekly board game challenge, see
+// src/utils/boardGameChallenge.ts) to decide "is it time to post yet?"
+// against a guild's own local clock rather than the host process's.
+export function nowInTimeZone(timeZone: string): { weekday: number; hour: number } {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    weekday: 'short',
+    hour: '2-digit',
+    hourCycle: 'h23',
+  });
+  const parts: Record<string, string> = {};
+  for (const part of dtf.formatToParts(new Date())) {
+    parts[part.type] = part.value;
+  }
+  const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  return { weekday: weekdays.indexOf(parts.weekday), hour: Number(parts.hour) };
+}
+
+// ISO date (YYYY-MM-DD) of the Monday of the current week, as it would read
+// on a clock in `timeZone` — used to key one board game challenge per guild
+// per week (see createWeeklyChallenge in src/utils/boardGameChallengeStorage.ts).
+// Pure calendar-date arithmetic (no timezone conversion needed once we have
+// the local Y/M/D) so it's safe to do with a plain UTC-based Date.
+export function mondayOfWeekInTimeZone(timeZone: string): string {
+  const { weekday } = nowInTimeZone(timeZone);
+  const { year, month, day } = todayInTimeZone(timeZone);
+  const daysSinceMonday = (weekday + 6) % 7; // Sun(0)->6, Mon(1)->0, ... Sat(6)->5
+  const monday = new Date(Date.UTC(year, month, day));
+  monday.setUTCDate(monday.getUTCDate() - daysSinceMonday);
+  return monday.toISOString().slice(0, 10);
+}
+
 export function isValidTimeZone(timeZone: string): boolean {
   try {
     new Intl.DateTimeFormat('en-US', { timeZone });

@@ -26,6 +26,8 @@ export interface BGGGame {
   parentGame?: BGGExpansion;
   tags: string[];
   howToPlayUrl: string | null;
+  yearPublished: number | null;
+  designers: string[];
 }
 
 export function weightTag(weight: number): 'Light' | 'Medium' | 'Heavy' {
@@ -413,6 +415,14 @@ function parseBGGItem(item: any, id: string): Omit<BGGGame, 'howToPlayUrl'> {
   const rawWeight = item.statistics?.ratings?.averageweight?.['@_value'];
   const weight = rawWeight != null && Number(rawWeight) > 0 ? Number(rawWeight) : null;
 
+  const rawYear = item.yearpublished?.['@_value'];
+  const yearPublished = rawYear != null && Number(rawYear) > 0 ? Number(rawYear) : null;
+
+  const designers = links
+    .filter((l) => l['@_type'] === 'boardgamedesigner')
+    .map((l) => decodeEntities(String(l['@_value'])))
+    .slice(0, 5);
+
   return {
     id,
     name: primaryName,
@@ -431,6 +441,8 @@ function parseBGGItem(item: any, id: string): Omit<BGGGame, 'howToPlayUrl'> {
     expansions,
     parentGame,
     tags,
+    yearPublished,
+    designers,
   };
 }
 

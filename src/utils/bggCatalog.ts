@@ -54,7 +54,7 @@ export function normalizeName(s: string): string {
 // Bounded edit distance (Levenshtein) — short-circuits once it's clear the
 // distance will exceed maxDist, so a handful of wildly different tokens
 // (the common case) never runs the full O(n*m) comparison.
-function editDistanceAtMost(a: string, b: string, maxDist: number): boolean {
+export function editDistanceAtMost(a: string, b: string, maxDist: number): boolean {
   if (Math.abs(a.length - b.length) > maxDist) return false;
   const n = b.length;
   let prevRow = new Array<number>(n + 1);
@@ -236,6 +236,15 @@ function sortResults(arr: BGGCatalogEntry[]): BGGCatalogEntry[] {
     const rb = b.rank ?? Infinity;
     return ra - rb;
   });
+}
+
+// Non-expansion entries with a real rank, sorted best-first, capped at
+// `limit` — the pool the weekly board game challenge picks from.
+export function getTopRankedGames(limit = 500): BGGCatalogEntry[] {
+  return entries
+    .filter((e) => !e.isExpansion && e.rank !== null)
+    .sort((a, b) => (a.rank as number) - (b.rank as number))
+    .slice(0, limit);
 }
 
 // Looks up a specific entry by BGG id — used to resolve an explicit
