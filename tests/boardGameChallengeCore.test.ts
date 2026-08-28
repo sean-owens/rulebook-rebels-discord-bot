@@ -228,6 +228,14 @@ describe('checkAndAdvanceChallengeSchedule', () => {
       boardGameChallengeEnabled: true,
       boardGameChallengeChannelId: 'channel-1',
       timezone: 'UTC',
+      challengeClue1Weekday: 1,
+      challengeClue1Hour: 8,
+      challengeClue2Weekday: 3,
+      challengeClue2Hour: 8,
+      challengeClue3Weekday: 5,
+      challengeClue3Hour: 8,
+      challengeRevealWeekday: 6,
+      challengeRevealHour: 18,
       ...overrides,
     };
   }
@@ -349,6 +357,36 @@ describe('checkAndAdvanceChallengeSchedule', () => {
     await checkAndAdvanceChallengeSchedule(client as any);
 
     expect(mockRevealChallenge).not.toHaveBeenCalled();
+  });
+
+  it('honors a per-guild override of the hint 1 day/hour instead of the Monday 8am default', async () => {
+    mockGetGuildConfig.mockResolvedValue(enabledConfig({ challengeClue1Weekday: 2, challengeClue1Hour: 14 })); // Tuesday 2pm
+    mockGetActiveChallenge.mockResolvedValue(undefined);
+    mockCreateWeeklyChallenge.mockResolvedValue(makeChallenge());
+    const client = makeClient();
+
+    mockNowInTimeZone.mockReturnValue({ weekday: 1, hour: 9 }); // old default time — should NOT fire
+    await checkAndAdvanceChallengeSchedule(client as any);
+    expect(mockCreateWeeklyChallenge).not.toHaveBeenCalled();
+
+    mockNowInTimeZone.mockReturnValue({ weekday: 2, hour: 14 }); // configured time — should fire
+    await checkAndAdvanceChallengeSchedule(client as any);
+    expect(mockCreateWeeklyChallenge).toHaveBeenCalled();
+  });
+
+  it('honors a per-guild override of the reveal day/hour instead of the Saturday 6pm default', async () => {
+    mockGetGuildConfig.mockResolvedValue(enabledConfig({ challengeRevealWeekday: 0, challengeRevealHour: 12 })); // Sunday noon
+    const active = makeChallenge({ hintsPostedCount: 3 });
+    mockGetActiveChallenge.mockResolvedValue(active);
+    const client = makeClient();
+
+    mockNowInTimeZone.mockReturnValue({ weekday: 6, hour: 18 }); // old default time — should NOT fire
+    await checkAndAdvanceChallengeSchedule(client as any);
+    expect(mockRevealChallenge).not.toHaveBeenCalled();
+
+    mockNowInTimeZone.mockReturnValue({ weekday: 0, hour: 12 }); // configured time — should fire
+    await checkAndAdvanceChallengeSchedule(client as any);
+    expect(mockRevealChallenge).toHaveBeenCalledWith('guild-1', active.id);
   });
 
   it('force-reveals a stale challenge instead of blocking forever, regardless of weekday', async () => {

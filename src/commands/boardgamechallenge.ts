@@ -20,7 +20,25 @@ export const data = new SlashCommandBuilder()
     sub.setName('status').setDescription("See this week's hints so far, and when the next one posts"),
   );
 
-const HINT_SCHEDULE: string[] = ['Monday 8am', 'Wednesday 8am', 'Friday 8am'];
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+// Shared with the /admin challenge config option builder in admin.ts so the
+// dropdown values and the parsing below can't drift out of sync.
+export const WEEKDAY_CHOICES = WEEKDAY_NAMES.map((name) => ({ name, value: name.toLowerCase() }));
+
+function parseWeekday(value: string): number {
+  return WEEKDAY_NAMES.findIndex((name) => name.toLowerCase() === value);
+}
+
+function formatHour(hour: number): string {
+  const period = hour < 12 ? 'am' : 'pm';
+  const twelveHour = hour % 12 === 0 ? 12 : hour % 12;
+  return `${twelveHour}${period}`;
+}
+
+function scheduleLine(label: string, weekday: number, hour: number): string {
+  return `${label}: **${WEEKDAY_NAMES[weekday]} ${formatHour(hour)}**`;
+}
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   const sub = interaction.options.getSubcommand();
@@ -80,6 +98,19 @@ export async function handleChallengeConfig(interaction: ChatInputCommandInterac
   }
   if (enabled !== null) patch.boardGameChallengeEnabled = enabled;
 
+  const scheduleOptions: [string, string, string][] = [
+    ['clue1_day', 'clue1_hour', 'challengeClue1'],
+    ['clue2_day', 'clue2_hour', 'challengeClue2'],
+    ['clue3_day', 'clue3_hour', 'challengeClue3'],
+    ['reveal_day', 'reveal_hour', 'challengeReveal'],
+  ];
+  for (const [dayOpt, hourOpt, configPrefix] of scheduleOptions) {
+    const day = interaction.options.getString(dayOpt);
+    if (day) patch[`${configPrefix}Weekday`] = parseWeekday(day);
+    const hour = interaction.options.getInteger(hourOpt);
+    if (hour !== null) patch[`${configPrefix}Hour`] = hour;
+  }
+
   if (Object.keys(patch).length > 0) {
     await updateGuildConfig(guildId, patch as Parameters<typeof updateGuildConfig>[1]);
   }
@@ -90,6 +121,11 @@ export async function handleChallengeConfig(interaction: ChatInputCommandInterac
       Object.keys(patch).length > 0 ? 'Board game challenge config updated.' : '**Current board game challenge config:**',
       `• Channel: ${config.boardGameChallengeChannelId ? `<#${config.boardGameChallengeChannelId}>` : '*not set*'}`,
       `• Enabled: **${config.boardGameChallengeEnabled ? 'Yes' : 'No'}**`,
+      `• ${scheduleLine('Hint 1', config.challengeClue1Weekday, config.challengeClue1Hour)}`,
+      `• ${scheduleLine('Hint 2', config.challengeClue2Weekday, config.challengeClue2Hour)}`,
+      `• ${scheduleLine('Hint 3', config.challengeClue3Weekday, config.challengeClue3Hour)}`,
+      `• ${scheduleLine('Reveal', config.challengeRevealWeekday, config.challengeRevealHour)}`,
+      `• Timezone: **${config.timezone}** (set via /admin event config)`,
       !config.boardGameChallengeChannelId
         ? '\n⚠️ Set a channel before enabling — hints have nowhere to post otherwise.'
         : '',
@@ -111,7 +147,7 @@ async function handleStatus(interaction: ChatInputCommandInteraction): Promise<v
   const challenge = await getActiveChallenge(guildId);
   if (!challenge) {
     await interaction.reply({
-      content: `No challenge is active right now — the next one starts Monday at 8am in <#${config.boardGameChallengeChannelId}>.`,
+      content: `No challenge is active right now — the next one starts ${WEEKDAY_NAMES[config.challengeClue1Weekday]} at ${formatHour(config.challengeClue1Hour)} in <#${config.boardGameChallengeChannelId}>.`,
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -121,10 +157,15 @@ async function handleStatus(interaction: ChatInputCommandInteraction): Promise<v
     .slice(0, challenge.hintsPostedCount)
     .map((clue, i) => `**Hint ${i + 1}:** ${clue}`);
 
+  const hintSchedule = [
+    `${WEEKDAY_NAMES[config.challengeClue1Weekday]} ${formatHour(config.challengeClue1Hour)}`,
+    `${WEEKDAY_NAMES[config.challengeClue2Weekday]} ${formatHour(config.challengeClue2Hour)}`,
+    `${WEEKDAY_NAMES[config.challengeClue3Weekday]} ${formatHour(config.challengeClue3Hour)}`,
+  ];
   const next =
     challenge.hintsPostedCount < 3
-      ? `Next hint: **${HINT_SCHEDULE[challenge.hintsPostedCount]}**`
-      : 'All 3 hints are posted — the answer reveals **Saturday evening**.';
+      ? `Next hint: **${hintSchedule[challenge.hintsPostedCount]}**`
+      : `All 3 hints are posted — the answer reveals **${WEEKDAY_NAMES[config.challengeRevealWeekday]} ${formatHour(config.challengeRevealHour)}**.`;
 
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)

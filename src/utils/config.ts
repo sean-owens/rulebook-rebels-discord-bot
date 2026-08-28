@@ -98,6 +98,21 @@ export interface GuildConfig {
   // /admin challenge config. Hint/reveal timing uses `timezone` above.
   boardGameChallengeEnabled: boolean;
   boardGameChallengeChannelId: string | null;
+  // Day-of-week (0=Sunday..6=Saturday, matching nowInTimeZone's `weekday`)
+  // and local hour (0-23) for each of the three hints and the reveal.
+  // Defaults reproduce the original hardcoded Mon/Wed/Fri 8am + Sat 6pm
+  // schedule. Not validated against each other — checkAndAdvanceChallengeSchedule
+  // gates purely on hintsPostedCount, so even an admin picking an out-of-order
+  // schedule (e.g. clue 2 before clue 1) just degrades to posting both hints
+  // on the same day rather than breaking.
+  challengeClue1Weekday: number;
+  challengeClue1Hour: number;
+  challengeClue2Weekday: number;
+  challengeClue2Hour: number;
+  challengeClue3Weekday: number;
+  challengeClue3Hour: number;
+  challengeRevealWeekday: number;
+  challengeRevealHour: number;
 }
 
 const DEFAULT_CONFIG: GuildConfig = {
@@ -133,6 +148,14 @@ const DEFAULT_CONFIG: GuildConfig = {
   timezone: 'UTC',
   boardGameChallengeEnabled: false,
   boardGameChallengeChannelId: null,
+  challengeClue1Weekday: 1, // Monday
+  challengeClue1Hour: 8,
+  challengeClue2Weekday: 3, // Wednesday
+  challengeClue2Hour: 8,
+  challengeClue3Weekday: 5, // Friday
+  challengeClue3Hour: 8,
+  challengeRevealWeekday: 6, // Saturday
+  challengeRevealHour: 18,
 };
 
 type ConfigStore = Record<string, GuildConfig>;

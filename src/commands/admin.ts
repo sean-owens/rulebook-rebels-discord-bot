@@ -33,7 +33,7 @@ import {
 } from './marketplace';
 import { handleRoomConfig } from './room';
 import { handleGeneralHubConfig } from '../utils/generalHub';
-import { handleChallengeConfig } from './boardgamechallenge';
+import { handleChallengeConfig, WEEKDAY_CHOICES } from './boardgamechallenge';
 
 export const data = new SlashCommandBuilder()
   .setName('admin')
@@ -438,10 +438,10 @@ export const data = new SlashCommandBuilder()
     group
       .setName('challenge')
       .setDescription('Weekly "Guess the Board Game" challenge administration')
-      .addSubcommand((sub) =>
+      .addSubcommand((sub) => {
         sub
           .setName('config')
-          .setDescription('Set the channel and on/off state for the weekly board game challenge')
+          .setDescription('Set the channel, on/off state, and hint/reveal schedule for the weekly board game challenge')
           .addChannelOption((opt) =>
             opt
               .setName('channel')
@@ -454,8 +454,33 @@ export const data = new SlashCommandBuilder()
               .setName('enabled')
               .setDescription('Turn the weekly challenge on or off (default: off)')
               .setRequired(false),
-          ),
-      ),
+          );
+        const scheduleFields: [string, string, string][] = [
+          ['clue1', 'Hint 1', 'default Monday 8am'],
+          ['clue2', 'Hint 2', 'default Wednesday 8am'],
+          ['clue3', 'Hint 3', 'default Friday 8am'],
+          ['reveal', 'Reveal', 'default Saturday 6pm'],
+        ];
+        for (const [prefix, label, defaultText] of scheduleFields) {
+          sub
+            .addStringOption((opt) =>
+              opt
+                .setName(`${prefix}_day`)
+                .setDescription(`Day of week ${label.toLowerCase()} posts on (${defaultText})`)
+                .addChoices(...WEEKDAY_CHOICES)
+                .setRequired(false),
+            )
+            .addIntegerOption((opt) =>
+              opt
+                .setName(`${prefix}_hour`)
+                .setDescription(`Local hour (0-23) ${label.toLowerCase()} posts at (${defaultText})`)
+                .setMinValue(0)
+                .setMaxValue(23)
+                .setRequired(false),
+            );
+        }
+        return sub;
+      }),
   );
 
 export async function handleAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
