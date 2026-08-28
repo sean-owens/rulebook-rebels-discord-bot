@@ -823,9 +823,10 @@ All `/game` commands should be used inside an active event channel unless otherw
 **What it does:** Shows this week's hints so far and when the next one posts (or the reveal, once all 3 are out). Ephemeral, for anyone who missed the original posts.
 
 - [ ] Run when the feature isn't configured/enabled — confirm "The weekly board game challenge isn't set up on this server yet"
-- [ ] Run when enabled but no challenge is currently active (e.g. Sunday, between reveal and the next Monday) — confirm "No challenge is active right now — the next one starts Monday at 8am in #channel"
-- [ ] Run after hint 1 has posted — confirm only hint 1's text is shown, plus "Next hint: Wednesday 8am"
-- [ ] Run after all 3 hints have posted — confirm all 3 hints are shown, plus "the answer reveals Saturday evening"
+- [ ] Run when enabled but no challenge is currently active (e.g. Sunday, between reveal and the next Monday), with the default schedule — confirm "No challenge is active right now — the next one starts Monday at 8am in #channel"
+- [ ] Run after hint 1 has posted, with the default schedule — confirm only hint 1's text is shown, plus "Next hint: Wednesday 8am"
+- [ ] Run after all 3 hints have posted, with the default schedule — confirm all 3 hints are shown, plus "the answer reveals Saturday 6pm"
+- [ ] After changing the schedule via `/admin challenge config` (3.9s), e.g. hint 1 to Tuesday 9am — confirm the "next one starts" / "Next hint" text reflects the new day/time, not the old default
 
 ### 1.12c Guessing (plain messages in the configured channel)
 
@@ -2451,15 +2452,17 @@ Text channels have no forum tags and no thread is created for a listing — each
 
 ### 3.9s `/admin challenge config`
 
-**What it does:** Sets the text channel where the weekly "Guess the Board Game" challenge posts hints/reveals and reads guesses, and turns the feature on or off (default: off). See 4.9 for the full automated flow this drives.
+**What it does:** Sets the text channel where the weekly "Guess the Board Game" challenge posts hints/reveals and reads guesses, turns the feature on or off (default: off), and sets the day-of-week + local hour (interpreted using the server's `timezone`, `/admin event config` 3.9a) each of the 3 hints and the reveal post at. Defaults reproduce the original fixed schedule: hint 1 Monday 8am, hint 2 Wednesday 8am, hint 3 Friday 8am, reveal Saturday 6pm. Options: `channel`, `enabled`, `clue1_day`/`clue1_hour`, `clue2_day`/`clue2_hour`, `clue3_day`/`clue3_hour`, `reveal_day`/`reveal_hour`.
 
 - [ ] 👑 Run as non-admin — confirm "requires Manage Server permission"
-- [ ] Run with no options — confirm it shows the current channel ("*not set*" if none) and enabled state
+- [ ] Run with no options — confirm it shows the current channel ("*not set*" if none), enabled state, and all 4 schedule lines (hint 1/2/3 + reveal, each as "Weekday Hour[am/pm]")
 - [ ] Run with a non-text channel (e.g. a voice or forum channel) as `channel` — confirm "The challenge channel must be a **Text Channel**" and nothing is saved
 - [ ] Run with a valid text channel and `enabled:true` — confirm both save, and the reply reflects the new channel/state
 - [ ] Run with only `channel` set (no `enabled` option) — confirm the channel saves and the reply still shows "Enabled: No", since the feature needs both a channel and `enabled:true` before it posts
 - [ ] Run with no channel ever set — confirm the reply includes a warning that a channel needs to be set before enabling
-- [ ] Run `/challenge status` afterward (with both channel and enabled set) — confirm it now reflects the newly configured channel instead of "isn't set up"
+- [ ] Run with e.g. `clue1_day:tuesday clue1_hour:9` — confirm the reply's "Hint 1" line now reads "Tuesday 9am", and only that line changes (hint 2/3/reveal keep their prior values)
+- [ ] Set all 4 schedule pairs to distinct day/hour combinations in one call — confirm all 4 save and the reply reflects each independently
+- [ ] Run `/challenge status` afterward (with both channel and enabled set) — confirm it now reflects the newly configured channel and schedule instead of "isn't set up"
 
 ## 3.10 `/room` — Private Rooms
 
@@ -2774,19 +2777,20 @@ The effective table count used at lock time is `max(headcount floor, preference-
 
 ## 4.9 Weekly Board Game Challenge (Scheduled Hints + Reveal)
 
-**What it does:** Once a server has `/admin challenge config` (3.9s) set with a channel and `enabled:true`, the bot runs a weekly cycle entirely on its own, on the same hourly check as the other scheduled features (plus once on startup), evaluated against the server's configured `timezone` (`/admin event config`, 3.9a): Monday at 8am it picks a random game from BGG's top 500 ranked games (excluding anything this server has played in roughly the last year) and posts hint 1; Wednesday at 8am, hint 2; Friday at 8am, hint 3; Saturday at 6pm, it reveals the answer and lists everyone who guessed correctly that week, then goes quiet until the next Monday. See 1.12c for how guessing itself works. Each server gets its own independent random pick — two opted-in servers are never on the same game at the same time, so someone in both can't spoil it across servers.
+**What it does:** Once a server has `/admin challenge config` (3.9s) set with a channel and `enabled:true`, the bot runs a weekly cycle entirely on its own, on the same hourly check as the other scheduled features (plus once on startup), evaluated against the server's configured `timezone` (`/admin event config`, 3.9a) and its own per-guild schedule (also set via 3.9s, defaulting to Monday/Wednesday/Friday 8am + Saturday 6pm): at the configured hint 1 day/hour it picks a random game from BGG's top 500 ranked games (excluding anything this server has played in roughly the last year) and posts hint 1; at hint 2's day/hour, hint 2; at hint 3's day/hour, hint 3; at the reveal day/hour, it reveals the answer and lists everyone who guessed correctly that week, then goes quiet until the next hint-1 day/hour comes around. See 1.12c for how guessing itself works. Each server gets its own independent random pick — two opted-in servers are never on the same game at the same time, so someone in both can't spoil it across servers.
 
-**Prerequisites:** `/admin challenge config` set with a valid text channel and `enabled:true`. To actually observe a transition without waiting for the real day/time, temporarily edit `data/board_game_challenges.json`'s `weekStart`/`hintsPostedCount` for this guild's entry (or the server's `timezone` in `data/config.json`) so the next hourly check's day/hour condition is met, then wait for the hourly check or restart the bot.
+**Prerequisites:** `/admin challenge config` set with a valid text channel and `enabled:true`. To actually observe a transition without waiting for the real day/time, either set the hint/reveal schedule (also via 3.9s) to something a few minutes out and wait for the next hourly check, or temporarily edit `data/board_game_challenges.json`'s `weekStart`/`hintsPostedCount` for this guild's entry (or the server's `timezone` in `data/config.json`) so the next hourly check's day/hour condition is met, then wait for the hourly check or restart the bot.
 
-- [ ] With the feature freshly enabled and no challenge yet this week, reach Monday 8am local time (or simulate it) — confirm a new challenge is created and hint 1 posts in the configured channel, with a "Powered by BGG" attribution image and no title/thumbnail shown
+- [ ] With the feature freshly enabled and no challenge yet this week, reach the configured hint 1 day/hour (default Monday 8am local time; or simulate it) — confirm a new challenge is created and hint 1 posts in the configured channel, with a "Powered by BGG" attribution image and no title/thumbnail shown
 - [ ] Confirm `/challenge status` reflects hint 1 immediately after it posts
-- [ ] Reach Wednesday 8am — confirm hint 2 posts (and not before)
-- [ ] Reach Friday 8am — confirm hint 3 posts (and not before)
-- [ ] Reach Saturday 6pm — confirm a reveal embed posts with the game's title, BGG link, thumbnail, and a list of everyone who guessed correctly this week (or "Nobody guessed it this week!" if no one did)
-- [ ] Confirm no new challenge is created between the Saturday reveal and the following Monday
+- [ ] Reach the configured hint 2 day/hour (default Wednesday 8am) — confirm hint 2 posts (and not before)
+- [ ] Reach the configured hint 3 day/hour (default Friday 8am) — confirm hint 3 posts (and not before)
+- [ ] Reach the configured reveal day/hour (default Saturday 6pm) — confirm a reveal embed posts with the game's title, BGG link, thumbnail, and a list of everyone who guessed correctly this week (or "Nobody guessed it this week!" if no one did)
+- [ ] Confirm no new challenge is created between the reveal and the next hint 1 day/hour
 - [ ] Confirm `/challenge leaderboard` totals match the sum of points awarded across the week's correct guesses
 - [ ] Restart the bot mid-week (e.g. right after hint 1) — confirm the next hourly check resumes correctly (doesn't re-post hint 1, still posts hint 2 on schedule) rather than losing track of where the week was
 - [ ] If a reveal is somehow missed entirely for over a week (e.g. extended downtime), confirm the next check force-reveals the stale challenge rather than getting stuck and blocking all future weeks
+- [ ] Reconfigure the schedule mid-week (e.g. push hint 3 a day later after hint 2 has already posted) — confirm the change takes effect on the next hourly check without disturbing hints already posted
 - [ ] With two servers both configured, confirm each gets a different game in the same week (not guaranteed every single week by chance, but confirm the selection logic is independent per server, not shared)
 
 ---

@@ -14,9 +14,6 @@ import {
   getLeaderboard,
 } from './boardGameChallengeStorage';
 
-const HINT_POST_HOUR = 8; // local guild time
-const REVEAL_HOUR = 18; // local guild time, Saturday evening
-
 // Picks a random game from BGG's top-ranked pool that this guild hasn't
 // played recently — each guild gets its own independent pick (not synced
 // across servers) so a member active in multiple opted-in servers can't
@@ -137,7 +134,7 @@ export async function postHint(
     .setTitle(`🎲 Weekly Board Game Challenge — Hint ${hintIndex}/3`)
     .setDescription(challenge.clues[hintIndex - 1])
     .setFooter({
-      text: `Reply in this channel with your guess! Correct right now = ${pointsByStage[hintIndex]} points. Answer revealed Saturday evening.`,
+      text: `Reply in this channel with your guess! Correct right now = ${pointsByStage[hintIndex]} points. Answer revealed at week's end — see /challenge status for the exact time.`,
     })
     .setImage('attachment://powered_by_BGG_01_SM.png');
 
@@ -225,13 +222,21 @@ export async function checkAndAdvanceChallengeSchedule(client: Client): Promise<
     }
 
     try {
-      if (weekday === 1 && hour >= HINT_POST_HOUR && !active) {
+      if (weekday === config.challengeClue1Weekday && hour >= config.challengeClue1Hour && !active) {
         await startNewChallenge(client, guildId, channelId, config.timezone);
-      } else if (weekday === 3 && hour >= HINT_POST_HOUR && active?.hintsPostedCount === 1) {
+      } else if (
+        weekday === config.challengeClue2Weekday &&
+        hour >= config.challengeClue2Hour &&
+        active?.hintsPostedCount === 1
+      ) {
         await postHint(client, active, 2);
-      } else if (weekday === 5 && hour >= HINT_POST_HOUR && active?.hintsPostedCount === 2) {
+      } else if (
+        weekday === config.challengeClue3Weekday &&
+        hour >= config.challengeClue3Hour &&
+        active?.hintsPostedCount === 2
+      ) {
         await postHint(client, active, 3);
-      } else if (weekday === 6 && hour >= REVEAL_HOUR && active) {
+      } else if (weekday === config.challengeRevealWeekday && hour >= config.challengeRevealHour && active) {
         await postReveal(client, active);
       }
     } catch (err) {

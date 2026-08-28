@@ -10,7 +10,13 @@ import { createWeeklyChallenge, recordCorrectGuess } from '../src/utils/boardGam
 function makeInteraction(sub: string, overrides: Record<string, unknown> = {}) {
   return {
     guildId: 'guild-1',
-    options: { getSubcommand: () => sub, getChannel: () => null, getBoolean: () => null },
+    options: {
+      getSubcommand: () => sub,
+      getChannel: () => null,
+      getBoolean: () => null,
+      getString: () => null,
+      getInteger: () => null,
+    },
     memberPermissions: { has: () => true },
     reply: vi.fn(async () => {}),
     deferReply: vi.fn(async () => {}),
@@ -143,6 +149,8 @@ describe('/challenge command', () => {
         options: {
           getChannel: () => ({ id: 'voice-1', type: ChannelType.GuildVoice }),
           getBoolean: () => null,
+          getString: () => null,
+          getInteger: () => null,
         },
       });
       await handleChallengeConfig(interaction);
@@ -157,6 +165,8 @@ describe('/challenge command', () => {
         options: {
           getChannel: () => ({ id: 'channel-1', type: ChannelType.GuildText }),
           getBoolean: () => true,
+          getString: () => null,
+          getInteger: () => null,
         },
       });
       await handleChallengeConfig(interaction);
@@ -167,6 +177,65 @@ describe('/challenge command', () => {
       expect(interaction.editReply).toHaveBeenCalledWith(
         expect.objectContaining({ content: expect.stringContaining('updated') }),
       );
+    });
+
+    it('shows the default schedule when no options are given', async () => {
+      const interaction = makeInteraction('config');
+      await handleChallengeConfig(interaction);
+      expect(interaction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: expect.stringMatching(/Hint 1: \*\*Monday 8am\*\*[\s\S]*Reveal: \*\*Saturday 6pm\*\*/),
+        }),
+      );
+    });
+
+    it('updates only the requested schedule field, leaving the rest at their defaults', async () => {
+      const interaction = makeInteraction('config', {
+        options: {
+          getChannel: () => null,
+          getBoolean: () => null,
+          getString: (name: string) => (name === 'clue1_day' ? 'tuesday' : null),
+          getInteger: (name: string) => (name === 'clue1_hour' ? 9 : null),
+        },
+      });
+      await handleChallengeConfig(interaction);
+
+      const config = await getGuildConfig('guild-1');
+      expect(config.challengeClue1Weekday).toBe(2); // Tuesday
+      expect(config.challengeClue1Hour).toBe(9);
+      expect(config.challengeClue2Weekday).toBe(3); // untouched default (Wednesday)
+      expect(config.challengeRevealHour).toBe(18); // untouched default
+      expect(interaction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('Hint 1: **Tuesday 9am**') }),
+      );
+    });
+
+    it('sets all four schedule pairs independently in one call', async () => {
+      const overrides: Record<string, [string, number]> = {
+        clue1: ['sunday', 7],
+        clue2: ['monday', 12],
+        clue3: ['tuesday', 17],
+        reveal: ['wednesday', 20],
+      };
+      const interaction = makeInteraction('config', {
+        options: {
+          getChannel: () => null,
+          getBoolean: () => null,
+          getString: (name: string) => overrides[name.replace('_day', '')]?.[0] ?? null,
+          getInteger: (name: string) => overrides[name.replace('_hour', '')]?.[1] ?? null,
+        },
+      });
+      await handleChallengeConfig(interaction);
+
+      const config = await getGuildConfig('guild-1');
+      expect(config.challengeClue1Weekday).toBe(0);
+      expect(config.challengeClue1Hour).toBe(7);
+      expect(config.challengeClue2Weekday).toBe(1);
+      expect(config.challengeClue2Hour).toBe(12);
+      expect(config.challengeClue3Weekday).toBe(2);
+      expect(config.challengeClue3Hour).toBe(17);
+      expect(config.challengeRevealWeekday).toBe(3);
+      expect(config.challengeRevealHour).toBe(20);
     });
   });
 });
