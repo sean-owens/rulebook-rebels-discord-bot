@@ -64,9 +64,11 @@ import {
   buildBgStatsButton,
   buildBgStatsButtonUrl,
   buildBgStatsQrAttachment,
+  formatBgStatsLinkStatus,
+  BG_STATS_LINK_FIELD_NAME,
 } from '../utils/bgStats';
 import { resolvePlayerNames } from '../utils/playerNames';
-import { getShortLinkStatsForGame } from '../utils/shortLinkStorage';
+import { getShortLinkStatsForGame, registerShortLinkStatusMessage } from '../utils/shortLinkStorage';
 
 const MANUAL_VALUE = '__manual__';
 const BGG_VALUE = '__bgg__';
@@ -873,24 +875,25 @@ async function handleGameBgStats(interaction: ChatInputCommandInteraction): Prom
   // fields/description), so this goes in a field rather than setFooter.
   if (buttonUrl) {
     const stats = await getShortLinkStatsForGame(match.guildId, match.eventId, match.id);
-    embed.addFields({
-      name: '🔗 BG Stats Link',
-      value:
-        stats.openCount > 0
-          ? `Opened ${stats.openCount} time${stats.openCount === 1 ? '' : 's'}${
-              stats.lastOpenedAt
-                ? ` · last opened <t:${Math.floor(new Date(stats.lastOpenedAt).getTime() / 1000)}:R>`
-                : ''
-            }`
-          : 'Not yet opened',
-    });
+    embed.addFields({ name: BG_STATS_LINK_FIELD_NAME, value: formatBgStatsLinkStatus(stats) });
   }
 
-  await interaction.editReply({
+  const posted = await interaction.editReply({
     embeds: [embed],
     components: buttonUrl ? [buildBgStatsButton(buttonUrl)] : [],
     files: [qrAttachment],
   });
+
+  // Lets the redirect hop (shortLinkServer.ts) find and edit this exact
+  // message in place once someone opens the link, instead of the status
+  // field only ever refreshing on the next manual `/game bgstats` run.
+  if (buttonUrl && posted?.id) {
+    await registerShortLinkStatusMessage(
+      { guildId: match.guildId, eventId: match.eventId, gameId: match.id },
+      posted.channelId,
+      posted.id,
+    );
+  }
 }
 
 export async function handleHostGameCancel(

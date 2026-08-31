@@ -470,12 +470,10 @@ export const data = new SlashCommandBuilder()
                 .addChoices(...WEEKDAY_CHOICES)
                 .setRequired(false),
             )
-            .addIntegerOption((opt) =>
+            .addStringOption((opt) =>
               opt
                 .setName(`${prefix}_hour`)
-                .setDescription(`Local hour (0-23) ${label.toLowerCase()} posts at (${defaultText})`)
-                .setMinValue(0)
-                .setMaxValue(23)
+                .setDescription(`Hour ${label.toLowerCase()} posts at: 12h or 24h, e.g. "8am"/"20" (${defaultText})`)
                 .setRequired(false),
             );
         }

@@ -215,7 +215,9 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run `/game bgstats title:Wingspan location:Sean's place` — confirm the supplied location overrides the event's default
 - [ ] Run the same command inside a `/room`-created private room with a suggested game — confirm it works identically, and that location is blank unless the `location` option is given (rooms have no location of their own)
 - [ ] Run with a title that doesn't match any suggested game — confirm a clear ephemeral "No game called... found" error listing current games
-- [ ] With `SHORT_LINK_BASE_URL` configured, run `/game bgstats` for a game whose link hasn't been opened yet — confirm a "🔗 BG Stats Link" field reads "Not yet opened"; open the link/QR, then run the command again for the same game — confirm the field now shows the open count and a relative "last opened" time
+- [ ] With `SHORT_LINK_BASE_URL` configured, run `/game bgstats` for a game whose link hasn't been opened yet — confirm a "🔗 BG Stats Link" field reads "Not yet opened"
+- [ ] Open that same link/QR — confirm the **original posted message** updates in place (no need to re-run the command) to show the open count and a relative "last opened" time; open it again and confirm the count increments further
+- [ ] Run `/game bgstats` again for the same game (regenerating a new link/message) — confirm its "🔗 BG Stats Link" field reflects the combined open count across both links, and opening either link updates both posted messages
 - [ ] Without `SHORT_LINK_BASE_URL` configured, confirm the "🔗 BG Stats Link" field is omitted entirely (there's no short link to track opens on)
 
 ### 1.3h Quick Actions Hub (button panel)
@@ -2452,7 +2454,7 @@ Text channels have no forum tags and no thread is created for a listing — each
 
 ### 3.9s `/admin challenge config`
 
-**What it does:** Sets the text channel where the weekly "Guess the Board Game" challenge posts hints/reveals and reads guesses, turns the feature on or off (default: off), and sets the day-of-week + local hour (interpreted using the server's `timezone`, `/admin event config` 3.9a) each of the 3 hints and the reveal post at. Defaults reproduce the original fixed schedule: hint 1 Monday 8am, hint 2 Wednesday 8am, hint 3 Friday 8am, reveal Saturday 6pm. Options: `channel`, `enabled`, `clue1_day`/`clue1_hour`, `clue2_day`/`clue2_hour`, `clue3_day`/`clue3_hour`, `reveal_day`/`reveal_hour`.
+**What it does:** Sets the text channel where the weekly "Guess the Board Game" challenge posts hints/reveals and reads guesses, turns the feature on or off (default: off), and sets the day-of-week + local hour (interpreted using the server's `timezone`, `/admin event config` 3.9a) each of the 3 hints and the reveal post at. Each `*_hour` option accepts either 12-hour ("8am", "8pm") or 24-hour ("20") input. Defaults reproduce the original fixed schedule: hint 1 Monday 8am, hint 2 Wednesday 8am, hint 3 Friday 8am, reveal Saturday 6pm. Options: `channel`, `enabled`, `clue1_day`/`clue1_hour`, `clue2_day`/`clue2_hour`, `clue3_day`/`clue3_hour`, `reveal_day`/`reveal_hour`.
 
 - [ ] 👑 Run as non-admin — confirm "requires Manage Server permission"
 - [ ] Run with no options — confirm it shows the current channel ("*not set*" if none), enabled state, and all 4 schedule lines (hint 1/2/3 + reveal, each as "Weekday Hour[am/pm]")
@@ -2460,8 +2462,10 @@ Text channels have no forum tags and no thread is created for a listing — each
 - [ ] Run with a valid text channel and `enabled:true` — confirm both save, and the reply reflects the new channel/state
 - [ ] Run with only `channel` set (no `enabled` option) — confirm the channel saves and the reply still shows "Enabled: No", since the feature needs both a channel and `enabled:true` before it posts
 - [ ] Run with no channel ever set — confirm the reply includes a warning that a channel needs to be set before enabling
-- [ ] Run with e.g. `clue1_day:tuesday clue1_hour:9` — confirm the reply's "Hint 1" line now reads "Tuesday 9am", and only that line changes (hint 2/3/reveal keep their prior values)
-- [ ] Set all 4 schedule pairs to distinct day/hour combinations in one call — confirm all 4 save and the reply reflects each independently
+- [ ] Run with e.g. `clue1_day:tuesday clue1_hour:9` (24-hour form) — confirm the reply's "Hint 1" line now reads "Tuesday 9am", and only that line changes (hint 2/3/reveal keep their prior values)
+- [ ] Run with `clue1_hour:9pm` (12-hour form) — confirm the "Hint 1" line reads "Tuesday 9pm"
+- [ ] Run with an unparseable hour (e.g. `clue1_hour:noon`) — confirm a clear "Could not parse..." error and nothing is saved
+- [ ] Set all 4 schedule pairs to distinct day/hour combinations in one call, mixing 12-hour and 24-hour input — confirm all 4 save and the reply reflects each independently
 - [ ] Run `/challenge status` afterward (with both channel and enabled set) — confirm it now reflects the newly configured channel and schedule instead of "isn't set up"
 
 ## 3.10 `/room` — Private Rooms

@@ -9,9 +9,17 @@ import {
   buildBgStatsButtonUrl,
   buildBgStatsQrAttachment,
   fitsDiscordButton,
+  formatBgStatsLinkStatus,
+  updateBgStatsLinkMessages,
+  BG_STATS_LINK_FIELD_NAME,
   DISCORD_BUTTON_URL_MAX_LENGTH,
 } from '../src/utils/bgStats';
-import { findShortLink } from '../src/utils/shortLinkStorage';
+import {
+  findShortLink,
+  createShortLink,
+  recordShortLinkOpen,
+  registerShortLinkStatusMessage,
+} from '../src/utils/shortLinkStorage';
 
 const PLAY_DATE = new Date('2026-07-11T19:30:00.000Z');
 
@@ -346,5 +354,94 @@ describe('buildBgStatsQrAttachment', () => {
     expect(json.name).toBe('bgstats-game-1.png');
     expect(Buffer.isBuffer(attachment.attachment)).toBe(true);
     expect((attachment.attachment as Buffer).length).toBeGreaterThan(0);
+  });
+});
+
+describe('formatBgStatsLinkStatus', () => {
+  it('reports "Not yet opened" for a zero count', () => {
+    expect(formatBgStatsLinkStatus({ openCount: 0 })).toBe('Not yet opened');
+  });
+
+  it('pluralizes "time"/"times" correctly and includes a relative last-opened timestamp', () => {
+    expect(formatBgStatsLinkStatus({ openCount: 1, lastOpenedAt: '2026-01-01T00:00:00.000Z' })).toBe(
+      'Opened 1 time · last opened <t:1767225600:R>',
+    );
+    expect(formatBgStatsLinkStatus({ openCount: 3, lastOpenedAt: '2026-01-01T00:00:00.000Z' })).toBe(
+      'Opened 3 times · last opened <t:1767225600:R>',
+    );
+  });
+
+  it('omits the last-opened timestamp when none is given', () => {
+    expect(formatBgStatsLinkStatus({ openCount: 2 })).toBe('Opened 2 times');
+  });
+});
+
+describe('updateBgStatsLinkMessages', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-bgstats-updatemsg-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeEmbed() {
+    return {
+      title: '📊 Wingspan',
+      fields: [
+        { name: 'Players', value: 'p1' },
+        { name: BG_STATS_LINK_FIELD_NAME, value: 'Not yet opened' },
+      ],
+    };
+  }
+
+  function makeClient(message: { embeds: unknown[]; edit: ReturnType<typeof vi.fn> } | null) {
+    const channel = { messages: { fetch: vi.fn(async () => message) } };
+    return { channels: { fetch: vi.fn(async () => channel) }, _channel: channel } as any;
+  }
+
+  it('edits only the BG Stats Link field on every tracked message for the game', async () => {
+    await createShortLink('https://app.bgstatsapp.com/createPlay.html?data=abc', {
+      guildId: 'g1',
+      eventId: 'e1',
+      gameId: 'game1',
+    });
+    await registerShortLinkStatusMessage({ guildId: 'g1', eventId: 'e1', gameId: 'game1' }, 'chan-1', 'msg-1');
+    const links = await import('../src/utils/shortLinkStorage').then((m) => m.loadShortLinks());
+    await recordShortLinkOpen(links[0].code);
+
+    const editMock = vi.fn(async () => {});
+    const client = makeClient({ embeds: [makeEmbed()], edit: editMock });
+
+    await updateBgStatsLinkMessages(client, { guildId: 'g1', eventId: 'e1', gameId: 'game1' });
+
+    expect(client.channels.fetch).toHaveBeenCalledWith('chan-1');
+    expect(client._channel.messages.fetch).toHaveBeenCalledWith('msg-1');
+    expect(editMock).toHaveBeenCalledTimes(1);
+    const editedEmbed = editMock.mock.calls[0][0].embeds[0].toJSON();
+    expect(editedEmbed.fields.find((f: any) => f.name === 'Players').value).toBe('p1');
+    expect(editedEmbed.fields.find((f: any) => f.name === BG_STATS_LINK_FIELD_NAME).value).toContain(
+      'Opened 1 time',
+    );
+  });
+
+  it('does nothing when no message is tracked for the game', async () => {
+    const client = makeClient(null);
+    await updateBgStatsLinkMessages(client, { guildId: 'g1', eventId: 'e1', gameId: 'game1' });
+    expect(client.channels.fetch).not.toHaveBeenCalled();
+  });
+
+  it('is a no-op (does not throw) when the tracked message has been deleted', async () => {
+    await registerShortLinkStatusMessage({ guildId: 'g1', eventId: 'e1', gameId: 'game1' }, 'chan-1', 'msg-1');
+    const client = makeClient(null);
+
+    await expect(
+      updateBgStatsLinkMessages(client, { guildId: 'g1', eventId: 'e1', gameId: 'game1' }),
+    ).resolves.toBeUndefined();
   });
 });

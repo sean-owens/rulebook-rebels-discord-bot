@@ -1053,7 +1053,7 @@ describe('/game bgstats', () => {
       },
       reply: vi.fn(async () => {}),
       deferReply: vi.fn(async () => {}),
-      editReply: vi.fn(async () => {}),
+      editReply: vi.fn(async () => ({ id: 'posted-msg-1', channelId })),
       channelId,
       guildId,
       user: { id: userId },
@@ -1124,6 +1124,34 @@ describe('/game bgstats', () => {
 
     const field = reply.embeds[0].toJSON().fields.find((f: any) => f.name === '🔗 BG Stats Link');
     expect(field?.value).toBe('Not yet opened');
+  });
+
+  // Regression: the "🔗 BG Stats Link" field only ever refreshed on a manual
+  // re-run of this command — nothing tracked which Discord message to update
+  // when the link was actually opened. registerShortLinkStatusMessage records
+  // that pointer so the redirect hop (shortLinkServer.ts) can edit this exact
+  // message in place.
+  it('registers the posted message so it can be live-updated once the link is opened', async () => {
+    vi.stubEnv('SHORT_LINK_BASE_URL', 'https://bot.example.com');
+    const { getShortLinkStatusMessages } = await import('../src/utils/shortLinkStorage');
+    await upsertGameNight(makeGameNight({ id: 'gn1', eventChannelId: 'event-channel-1', location: 'The Rec Room' }));
+    await seedSuggestion();
+
+    await execute(makeBgStatsInteraction('Wingspan', null, 'event-channel-1'));
+
+    const messages = await getShortLinkStatusMessages('g1', 'gn1', 'game1');
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ channelId: 'event-channel-1', messageId: 'posted-msg-1' });
+  });
+
+  it('does not register a status message when short links are not configured (no button, nothing to track)', async () => {
+    const { getShortLinkStatusMessages } = await import('../src/utils/shortLinkStorage');
+    await upsertGameNight(makeGameNight({ id: 'gn1', eventChannelId: 'event-channel-1', location: 'The Rec Room' }));
+    await seedSuggestion();
+
+    await execute(makeBgStatsInteraction('Wingspan', null, 'event-channel-1'));
+
+    expect(await getShortLinkStatusMessages('g1', 'gn1', 'game1')).toEqual([]);
   });
 
   it('shows the open count once the short link has been opened', async () => {

@@ -4,7 +4,8 @@ import os from 'os';
 import path from 'path';
 import http from 'http';
 import { startShortLinkServer } from '../src/utils/shortLinkServer';
-import { createShortLink, findShortLink } from '../src/utils/shortLinkStorage';
+import { createShortLink, findShortLink, registerShortLinkStatusMessage } from '../src/utils/shortLinkStorage';
+import { BG_STATS_LINK_FIELD_NAME } from '../src/utils/bgStats';
 
 function get(port: number, urlPath: string): Promise<{ status: number; contentType?: string; body: string }> {
   return new Promise((resolve, reject) => {
@@ -103,5 +104,51 @@ describe('shortLinkServer', () => {
 
     const res = await get(port, '/');
     expect(res.status).toBe(404);
+  });
+
+  it('live-updates the tracked BG Stats status message when a client is provided', async () => {
+    const link = await createShortLink('https://app.bgstatsapp.com/createPlay.html?data=abc', {
+      guildId: 'g1',
+      eventId: 'e1',
+      gameId: 'game1',
+    });
+    await registerShortLinkStatusMessage({ guildId: 'g1', eventId: 'e1', gameId: 'game1' }, 'chan-1', 'msg-1');
+
+    const editMock = vi.fn(async () => {});
+    const message = {
+      embeds: [{ fields: [{ name: BG_STATS_LINK_FIELD_NAME, value: 'Not yet opened' }] }],
+      edit: editMock,
+    };
+    const channel = { messages: { fetch: vi.fn(async () => message) } };
+    const client = { channels: { fetch: vi.fn(async () => channel) } } as any;
+
+    server = startShortLinkServer(0, client);
+    const port = getPort(server);
+
+    await get(port, `/s/${link.code}`);
+
+    await vi.waitFor(() => {
+      expect(editMock).toHaveBeenCalledTimes(1);
+    });
+    const editedField = editMock.mock.calls[0][0].embeds[0].toJSON().fields[0];
+    expect(editedField.value).toContain('Opened 1 time');
+  });
+
+  it('does not attempt to update any message when no client is provided (no-op, matches existing behavior)', async () => {
+    const link = await createShortLink('https://app.bgstatsapp.com/createPlay.html?data=abc', {
+      guildId: 'g1',
+      eventId: 'e1',
+      gameId: 'game1',
+    });
+    await registerShortLinkStatusMessage({ guildId: 'g1', eventId: 'e1', gameId: 'game1' }, 'chan-1', 'msg-1');
+
+    server = startShortLinkServer(0);
+    const port = getPort(server);
+
+    await get(port, `/s/${link.code}`);
+    await vi.waitFor(async () => {
+      const stored = await findShortLink(link.code);
+      expect(stored?.openCount).toBe(1);
+    });
   });
 });

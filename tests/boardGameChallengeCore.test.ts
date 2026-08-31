@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mockGetGuildConfig = vi.fn();
 const mockGetGuildIdsWithConfig = vi.fn();
@@ -221,6 +221,18 @@ describe('checkAndAdvanceChallengeSchedule', () => {
     ]);
     mockGetRecentGameIds.mockResolvedValue(new Set());
     mockGetBGGGame.mockResolvedValue(makeGame());
+    // The "force-reveal a stale challenge" safety net (checkAndAdvanceChallengeSchedule
+    // in boardGameChallenge.ts) compares the real wall clock against
+    // makeChallenge()'s hardcoded weekStart ('2026-08-24'), not the mocked
+    // nowInTimeZone() the rest of these tests drive — pin the clock so that
+    // comparison stays under the 7-day staleness threshold regardless of
+    // when the suite actually runs.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-24T09:00:00Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   function enabledConfig(overrides: Record<string, unknown> = {}) {

@@ -1,5 +1,44 @@
 import { describe, it, expect } from 'vitest';
-import { isValidTimeZone, zonedTimeToUtc } from '../src/utils/timezone';
+import { isValidTimeZone, zonedTimeToUtc, parseHourInput } from '../src/utils/timezone';
+
+describe('parseHourInput', () => {
+  it('accepts 24-hour input', () => {
+    expect(parseHourInput('0')).toBe(0);
+    expect(parseHourInput('9')).toBe(9);
+    expect(parseHourInput('20')).toBe(20);
+    expect(parseHourInput('23')).toBe(23);
+  });
+
+  it('accepts 12-hour input, case-insensitively and with a space before am/pm', () => {
+    expect(parseHourInput('12am')).toBe(0);
+    expect(parseHourInput('8AM')).toBe(8);
+    expect(parseHourInput('8 am')).toBe(8);
+    expect(parseHourInput('12pm')).toBe(12);
+    expect(parseHourInput('8pm')).toBe(20);
+  });
+
+  it('rejects out-of-range hours for each format', () => {
+    expect(() => parseHourInput('24')).toThrow();
+    expect(() => parseHourInput('-1')).toThrow();
+    expect(() => parseHourInput('13pm')).toThrow();
+    expect(() => parseHourInput('0am')).toThrow();
+  });
+
+  it('rejects non-zero minutes since the schedule has no minute granularity', () => {
+    expect(() => parseHourInput('8:30am')).toThrow();
+    expect(() => parseHourInput('20:15')).toThrow();
+  });
+
+  it('accepts an explicit :00', () => {
+    expect(parseHourInput('8:00am')).toBe(8);
+    expect(parseHourInput('20:00')).toBe(20);
+  });
+
+  it('rejects garbage input', () => {
+    expect(() => parseHourInput('not-a-time')).toThrow();
+    expect(() => parseHourInput('')).toThrow();
+  });
+});
 
 describe('isValidTimeZone', () => {
   it('accepts a valid IANA timezone name', () => {

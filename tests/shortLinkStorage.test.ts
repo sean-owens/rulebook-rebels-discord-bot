@@ -10,7 +10,12 @@ import {
   generateShortCode,
   recordShortLinkOpen,
   getShortLinkStatsForGame,
+  registerShortLinkStatusMessage,
+  getShortLinkStatusMessages,
+  loadShortLinkStatusMessages,
+  saveShortLinkStatusMessages,
   ShortLink,
+  ShortLinkStatusMessage,
 } from '../src/utils/shortLinkStorage';
 
 describe('shortLinkStorage', () => {
@@ -135,6 +140,62 @@ describe('shortLinkStorage', () => {
     it('returns zero opens and no lastOpenedAt when nothing matches', async () => {
       const stats = await getShortLinkStatsForGame('g1', 'e1', 'game1');
       expect(stats).toEqual({ openCount: 0, lastOpenedAt: undefined });
+    });
+  });
+
+  describe('short link status messages', () => {
+    it('returns an empty array when none are registered', async () => {
+      expect(await getShortLinkStatusMessages('g1', 'e1', 'game1')).toEqual([]);
+    });
+
+    it('registers a status message and finds it by guild/event/game', async () => {
+      await registerShortLinkStatusMessage({ guildId: 'g1', eventId: 'e1', gameId: 'game1' }, 'chan-1', 'msg-1');
+
+      const found = await getShortLinkStatusMessages('g1', 'e1', 'game1');
+      expect(found).toHaveLength(1);
+      expect(found[0]).toMatchObject({
+        guildId: 'g1',
+        eventId: 'e1',
+        gameId: 'game1',
+        channelId: 'chan-1',
+        messageId: 'msg-1',
+      });
+      expect(found[0].createdAt).toBeDefined();
+    });
+
+    it('supports multiple registered messages for the same game (e.g. a regenerated link)', async () => {
+      await registerShortLinkStatusMessage({ guildId: 'g1', eventId: 'e1', gameId: 'game1' }, 'chan-1', 'msg-1');
+      await registerShortLinkStatusMessage({ guildId: 'g1', eventId: 'e1', gameId: 'game1' }, 'chan-1', 'msg-2');
+
+      const found = await getShortLinkStatusMessages('g1', 'e1', 'game1');
+      expect(found.map((m) => m.messageId).sort()).toEqual(['msg-1', 'msg-2']);
+    });
+
+    it('ignores messages registered for other games/events/guilds', async () => {
+      await registerShortLinkStatusMessage({ guildId: 'g1', eventId: 'e1', gameId: 'game1' }, 'chan-1', 'own');
+      await registerShortLinkStatusMessage({ guildId: 'g1', eventId: 'e1', gameId: 'game2' }, 'chan-1', 'other-game');
+      await registerShortLinkStatusMessage({ guildId: 'g2', eventId: 'e1', gameId: 'game1' }, 'chan-1', 'other-guild');
+
+      const found = await getShortLinkStatusMessages('g1', 'e1', 'game1');
+      expect(found.map((m) => m.messageId)).toEqual(['own']);
+    });
+
+    it('prunes status messages older than the short link TTL on cleanup, keeping fresh ones', async () => {
+      const stale: ShortLinkStatusMessage = {
+        guildId: 'g1',
+        eventId: 'e1',
+        gameId: 'game1',
+        channelId: 'chan-1',
+        messageId: 'stale-msg',
+        createdAt: new Date(Date.now() - 100 * 24 * 60 * 60 * 1000).toISOString(),
+      };
+      await saveShortLinkStatusMessages([stale]);
+      await registerShortLinkStatusMessage({ guildId: 'g1', eventId: 'e1', gameId: 'game1' }, 'chan-1', 'fresh-msg');
+
+      await cleanupExpiredShortLinks();
+
+      const remaining = await loadShortLinkStatusMessages();
+      expect(remaining.map((m) => m.messageId)).toEqual(['fresh-msg']);
     });
   });
 });

@@ -31,6 +31,35 @@ export function mondayOfWeekInTimeZone(timeZone: string): string {
   return monday.toISOString().slice(0, 10);
 }
 
+// Accepts either 24-hour ("20") or 12-hour ("8pm") input for a single hour —
+// used by the weekly board game challenge's hint/reveal schedule (see
+// /admin challenge config in boardgamechallenge.ts), where hosts commonly
+// think in 12-hour time but the stored config (GuildConfig.challengeClue1Hour
+// etc.) is always a 0-23 hour. Only whole hours are accepted since that
+// schedule has no minute granularity.
+export function parseHourInput(raw: string): number {
+  const t = raw.trim().toLowerCase().replace(/\s/g, '');
+  const isPM = t.endsWith('pm');
+  const isAM = t.endsWith('am');
+  const numeric = t.replace(/(am|pm)$/, '');
+  const colonIdx = numeric.indexOf(':');
+  let hours = parseInt(colonIdx === -1 ? numeric : numeric.slice(0, colonIdx), 10);
+  const minutes = colonIdx === -1 ? 0 : parseInt(numeric.slice(colonIdx + 1, colonIdx + 3), 10);
+  if (isNaN(hours) || isNaN(minutes)) throw new Error(`Invalid hour: "${raw}"`);
+  if (minutes !== 0) {
+    throw new Error(`Invalid hour: "${raw}" — only whole hours are supported, e.g. "8am" or "20"`);
+  }
+  // 12-hour input ("8pm") is only ever 1-12; 24-hour input ("20") is 0-23.
+  if (isPM || isAM) {
+    if (hours < 1 || hours > 12) throw new Error(`Invalid hour: "${raw}"`);
+  } else if (hours < 0 || hours > 23) {
+    throw new Error(`Invalid hour: "${raw}"`);
+  }
+  if (isPM && hours !== 12) hours += 12;
+  if (isAM && hours === 12) hours = 0;
+  return hours;
+}
+
 export function isValidTimeZone(timeZone: string): boolean {
   try {
     new Intl.DateTimeFormat('en-US', { timeZone });
