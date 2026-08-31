@@ -1,5 +1,7 @@
 import http from 'http';
+import { Client } from 'discord.js';
 import { findShortLink, recordShortLinkOpen } from './shortLinkStorage';
+import { updateBgStatsLinkMessages } from './bgStats';
 
 const CODE_PATTERN = /^\/s\/([A-Za-z0-9_-]+)$/;
 
@@ -69,8 +71,14 @@ function renderNotFoundPage(): string {
  * Only ever links to URLs this bot generated and stored itself via a random
  * short code — it never accepts or reflects a caller-supplied redirect
  * target, so it can't be used as an open redirect.
+ *
+ * `client` is optional so tests (and any other caller with no bot connection
+ * on hand) can still exercise the redirect/tracking behavior — passing it
+ * additionally live-updates any Discord message showing this game's
+ * "🔗 BG Stats Link" status field (see updateBgStatsLinkMessages in
+ * bgStats.ts) the moment the link is opened.
  */
-export function startShortLinkServer(port: number): http.Server {
+export function startShortLinkServer(port: number, client?: Client): http.Server {
   const server = http.createServer(async (req, res) => {
     if (req.method !== 'GET') {
       res.writeHead(405).end();
@@ -90,9 +98,17 @@ export function startShortLinkServer(port: number): http.Server {
         return;
       }
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(renderLandingPage(link.url));
-      recordShortLinkOpen(link.code).catch((err) =>
-        console.warn('[ShortLinkServer] Failed to record open:', err),
-      );
+      recordShortLinkOpen(link.code)
+        .then(() => {
+          if (client && link.guildId && link.eventId && link.gameId) {
+            return updateBgStatsLinkMessages(client, {
+              guildId: link.guildId,
+              eventId: link.eventId,
+              gameId: link.gameId,
+            });
+          }
+        })
+        .catch((err) => console.warn('[ShortLinkServer] Failed to record open:', err));
     } catch (err) {
       console.warn('[ShortLinkServer] Error resolving short link:', err);
       res.writeHead(500).end();

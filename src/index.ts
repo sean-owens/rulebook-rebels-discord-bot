@@ -18,13 +18,6 @@ import { startShortLinkServer } from './utils/shortLinkServer';
 
 loadBGGCatalog().catch((err) => console.error('[BGGCatalog] Startup error:', err));
 
-// Backs the BG Stats "Log in BG Stats" button (see src/utils/bgStats.ts) — a
-// short redirect URL that fits Discord's button length limit regardless of
-// player count. No-ops entirely if not configured (see .env.example).
-if (process.env.SHORT_LINK_BASE_URL && process.env.PORT) {
-  startShortLinkServer(Number(process.env.PORT));
-}
-
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -39,6 +32,16 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
   ],
 });
+
+// Backs the BG Stats "Log in BG Stats" button (see src/utils/bgStats.ts) — a
+// short redirect URL that fits Discord's button length limit regardless of
+// player count, and that also live-updates the originating Discord message's
+// status field when opened (see updateBgStatsLinkMessages). No-ops entirely
+// if not configured (see .env.example). Started after `client` exists (even
+// though login is still pending) so the redirect hop can use it once ready.
+if (process.env.SHORT_LINK_BASE_URL && process.env.PORT) {
+  startShortLinkServer(Number(process.env.PORT), client);
+}
 
 client.once('clientReady', () => handleReady(client));
 client.on('interactionCreate', handleInteraction);

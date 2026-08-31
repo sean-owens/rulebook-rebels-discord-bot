@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { readJson, writeJson } from './db';
 
 const FILE = 'shortlinks.json';
+const MESSAGES_FILE = 'shortlink-status-messages.json';
 
 // Redirect helpers created for the BG Stats button (see src/utils/bgStats.ts).
 // Not guild-scoped and deliberately excluded from the guild-deletion data
@@ -99,4 +100,57 @@ export async function cleanupExpiredShortLinks(): Promise<void> {
   if (remaining.length !== links.length) {
     await saveShortLinks(remaining);
   }
+
+  const messages = await loadShortLinkStatusMessages();
+  const remainingMessages = messages.filter(
+    (m) => now.getTime() - new Date(m.createdAt).getTime() < SHORT_LINK_TTL_MS,
+  );
+  if (remainingMessages.length !== messages.length) {
+    await saveShortLinkStatusMessages(remainingMessages);
+  }
+}
+
+// Tracks which Discord messages currently display a "🔗 BG Stats Link" status
+// field for a given game (see buildBgStatsLinkField/updateBgStatsLinkMessages
+// in bgStats.ts) so the redirect hop in shortLinkServer.ts can edit them
+// in place — e.g. from "Not yet opened" to "Opened 1 time" — the moment
+// someone actually opens the link, rather than only on the next manual
+// `/game bgstats` run. Same TTL/lifecycle as the short links themselves;
+// a message that's since been deleted is simply skipped (best-effort) rather
+// than tracked for cleanup here.
+export interface ShortLinkStatusMessage {
+  guildId: string;
+  eventId: string;
+  gameId: string;
+  channelId: string;
+  messageId: string;
+  createdAt: string;
+}
+
+export async function loadShortLinkStatusMessages(): Promise<ShortLinkStatusMessage[]> {
+  return readJson<ShortLinkStatusMessage[]>(MESSAGES_FILE, []);
+}
+
+export async function saveShortLinkStatusMessages(messages: ShortLinkStatusMessage[]): Promise<void> {
+  await writeJson(MESSAGES_FILE, messages);
+}
+
+export async function registerShortLinkStatusMessage(
+  meta: ShortLinkMeta,
+  channelId: string,
+  messageId: string,
+): Promise<void> {
+  const messages = await loadShortLinkStatusMessages();
+  messages.push({ ...meta, channelId, messageId, createdAt: new Date().toISOString() });
+  await saveShortLinkStatusMessages(messages);
+}
+
+export async function getShortLinkStatusMessages(
+  guildId: string,
+  eventId: string,
+  gameId: string,
+): Promise<ShortLinkStatusMessage[]> {
+  return (await loadShortLinkStatusMessages()).filter(
+    (m) => m.guildId === guildId && m.eventId === eventId && m.gameId === gameId,
+  );
 }

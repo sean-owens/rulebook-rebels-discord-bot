@@ -1,6 +1,11 @@
-import { ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, Client, EmbedBuilder, TextChannel } from 'discord.js';
 import QRCode from 'qrcode';
-import { createShortLink, ShortLinkMeta } from './shortLinkStorage';
+import {
+  createShortLink,
+  getShortLinkStatsForGame,
+  getShortLinkStatusMessages,
+  ShortLinkMeta,
+} from './shortLinkStorage';
 
 const BG_STATS_CREATE_PLAY_URL = 'https://app.bgstatsapp.com/createPlay.html';
 
@@ -158,4 +163,50 @@ export async function buildBgStatsQrAttachment(
     width: 300,
   });
   return new AttachmentBuilder(buffer, { name: filename });
+}
+
+// Shared between the embed field built at post time (see handleGameBgStats in
+// game.ts) and the live update fired when someone actually opens the link
+// (updateBgStatsLinkMessages below), so the two can never drift into
+// different wording for the same state.
+export const BG_STATS_LINK_FIELD_NAME = '🔗 BG Stats Link';
+
+export function formatBgStatsLinkStatus(stats: { openCount: number; lastOpenedAt?: string }): string {
+  if (stats.openCount === 0) return 'Not yet opened';
+  return `Opened ${stats.openCount} time${stats.openCount === 1 ? '' : 's'}${
+    stats.lastOpenedAt
+      ? ` · last opened <t:${Math.floor(new Date(stats.lastOpenedAt).getTime() / 1000)}:R>`
+      : ''
+  }`;
+}
+
+/**
+ * Edits the "🔗 BG Stats Link" field in place on every Discord message
+ * currently showing status for this game (see registerShortLinkStatusMessage
+ * in shortLinkStorage.ts), so a host watching the original post sees
+ * "Not yet opened" flip to "Opened 1 time" without having to re-run
+ * `/game bgstats`. Called from the redirect hop in shortLinkServer.ts right
+ * after recordShortLinkOpen — best-effort throughout, since a tracked message
+ * may since have been deleted or the bot may lack access to its channel.
+ */
+export async function updateBgStatsLinkMessages(client: Client, meta: ShortLinkMeta): Promise<void> {
+  const [stats, messages] = await Promise.all([
+    getShortLinkStatsForGame(meta.guildId, meta.eventId, meta.gameId),
+    getShortLinkStatusMessages(meta.guildId, meta.eventId, meta.gameId),
+  ]);
+  if (messages.length === 0) return;
+  const value = formatBgStatsLinkStatus(stats);
+
+  for (const { channelId, messageId } of messages) {
+    try {
+      const channel = (await client.channels.fetch(channelId)) as TextChannel | null;
+      const message = await channel?.messages.fetch(messageId);
+      const embed = message?.embeds[0];
+      if (!embed) continue;
+      const fields = embed.fields.map((f) => (f.name === BG_STATS_LINK_FIELD_NAME ? { ...f, value } : f));
+      await message!.edit({ embeds: [EmbedBuilder.from(embed).setFields(fields)] });
+    } catch (err) {
+      console.warn(`[BgStats] Failed to refresh status message ${messageId} in channel ${channelId}:`, err);
+    }
+  }
 }

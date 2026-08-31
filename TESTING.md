@@ -215,7 +215,9 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run `/game bgstats title:Wingspan location:Sean's place` — confirm the supplied location overrides the event's default
 - [ ] Run the same command inside a `/room`-created private room with a suggested game — confirm it works identically, and that location is blank unless the `location` option is given (rooms have no location of their own)
 - [ ] Run with a title that doesn't match any suggested game — confirm a clear ephemeral "No game called... found" error listing current games
-- [ ] With `SHORT_LINK_BASE_URL` configured, run `/game bgstats` for a game whose link hasn't been opened yet — confirm a "🔗 BG Stats Link" field reads "Not yet opened"; open the link/QR, then run the command again for the same game — confirm the field now shows the open count and a relative "last opened" time
+- [ ] With `SHORT_LINK_BASE_URL` configured, run `/game bgstats` for a game whose link hasn't been opened yet — confirm a "🔗 BG Stats Link" field reads "Not yet opened"
+- [ ] Open that same link/QR — confirm the **original posted message** updates in place (no need to re-run the command) to show the open count and a relative "last opened" time; open it again and confirm the count increments further
+- [ ] Run `/game bgstats` again for the same game (regenerating a new link/message) — confirm its "🔗 BG Stats Link" field reflects the combined open count across both links, and opening either link updates both posted messages
 - [ ] Without `SHORT_LINK_BASE_URL` configured, confirm the "🔗 BG Stats Link" field is omitted entirely (there's no short link to track opens on)
 
 ### 1.3h Quick Actions Hub (button panel)
