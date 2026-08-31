@@ -9,6 +9,7 @@ import {
 import { getGuildConfig, updateGuildConfig } from '../utils/config';
 import { getActiveChallenge } from '../utils/boardGameChallengeStorage';
 import { getLeaderboard } from '../utils/boardGameChallenge';
+import { parseHourInput } from '../utils/timezone';
 
 export const data = new SlashCommandBuilder()
   .setName('challenge')
@@ -107,8 +108,17 @@ export async function handleChallengeConfig(interaction: ChatInputCommandInterac
   for (const [dayOpt, hourOpt, configPrefix] of scheduleOptions) {
     const day = interaction.options.getString(dayOpt);
     if (day) patch[`${configPrefix}Weekday`] = parseWeekday(day);
-    const hour = interaction.options.getInteger(hourOpt);
-    if (hour !== null) patch[`${configPrefix}Hour`] = hour;
+    const hourRaw = interaction.options.getString(hourOpt);
+    if (hourRaw !== null) {
+      try {
+        patch[`${configPrefix}Hour`] = parseHourInput(hourRaw);
+      } catch {
+        await interaction.editReply({
+          content: `Could not parse "${hourRaw}" as an hour. Try 12-hour ("8am", "8pm") or 24-hour ("20").`,
+        });
+        return;
+      }
+    }
   }
 
   if (Object.keys(patch).length > 0) {

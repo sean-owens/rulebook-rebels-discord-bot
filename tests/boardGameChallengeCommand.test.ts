@@ -194,8 +194,9 @@ describe('/challenge command', () => {
         options: {
           getChannel: () => null,
           getBoolean: () => null,
-          getString: (name: string) => (name === 'clue1_day' ? 'tuesday' : null),
-          getInteger: (name: string) => (name === 'clue1_hour' ? 9 : null),
+          getString: (name: string) =>
+            name === 'clue1_day' ? 'tuesday' : name === 'clue1_hour' ? '9' : null,
+          getInteger: () => null,
         },
       });
       await handleChallengeConfig(interaction);
@@ -210,19 +211,56 @@ describe('/challenge command', () => {
       );
     });
 
-    it('sets all four schedule pairs independently in one call', async () => {
-      const overrides: Record<string, [string, number]> = {
-        clue1: ['sunday', 7],
-        clue2: ['monday', 12],
-        clue3: ['tuesday', 17],
-        reveal: ['wednesday', 20],
+    it('accepts 12-hour hour input ("8pm") alongside 24-hour', async () => {
+      const interaction = makeInteraction('config', {
+        options: {
+          getChannel: () => null,
+          getBoolean: () => null,
+          getString: (name: string) => (name === 'clue1_hour' ? '8pm' : null),
+          getInteger: () => null,
+        },
+      });
+      await handleChallengeConfig(interaction);
+
+      const config = await getGuildConfig('guild-1');
+      expect(config.challengeClue1Hour).toBe(20);
+    });
+
+    it('rejects an unparseable hour and leaves the config untouched', async () => {
+      const interaction = makeInteraction('config', {
+        options: {
+          getChannel: () => null,
+          getBoolean: () => null,
+          getString: (name: string) => (name === 'clue1_hour' ? 'not-a-time' : null),
+          getInteger: () => null,
+        },
+      });
+      await handleChallengeConfig(interaction);
+
+      expect(interaction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('Could not parse "not-a-time"') }),
+      );
+      const config = await getGuildConfig('guild-1');
+      expect(config.challengeClue1Hour).toBe(8); // untouched default
+    });
+
+    it('sets all four schedule pairs independently in one call, mixing 12h and 24h input', async () => {
+      const overrides: Record<string, [string, string]> = {
+        clue1: ['sunday', '7am'],
+        clue2: ['monday', '12'],
+        clue3: ['tuesday', '5pm'],
+        reveal: ['wednesday', '20'],
       };
       const interaction = makeInteraction('config', {
         options: {
           getChannel: () => null,
           getBoolean: () => null,
-          getString: (name: string) => overrides[name.replace('_day', '')]?.[0] ?? null,
-          getInteger: (name: string) => overrides[name.replace('_hour', '')]?.[1] ?? null,
+          getString: (name: string) => {
+            if (name.endsWith('_day')) return overrides[name.replace('_day', '')]?.[0] ?? null;
+            if (name.endsWith('_hour')) return overrides[name.replace('_hour', '')]?.[1] ?? null;
+            return null;
+          },
+          getInteger: () => null,
         },
       });
       await handleChallengeConfig(interaction);
