@@ -1,4 +1,4 @@
-import { Message } from 'discord.js';
+import { Message, TextChannel } from 'discord.js';
 import { getGuildConfig } from '../utils/config';
 import { getActiveChallenge, recordCorrectGuess } from '../utils/boardGameChallengeStorage';
 import { isCorrectGuess } from '../utils/boardGameChallenge';
@@ -36,11 +36,21 @@ export async function handleMessageCreate(message: Message): Promise<void> {
     console.warn(`[BoardGameChallenge] Failed to delete correct guess in guild ${message.guildId}:`, err),
   );
 
+  // The delete above leaves no visible trace anything happened — post a
+  // public, answer-free acknowledgement so a correct guess is obviously
+  // recognized instead of just silently vanishing. The channel is always the
+  // configured (guild text) challenge channel checked above, so it's always sendable.
+  await (message.channel as TextChannel)
+    .send(`🎉 <@${message.author.id}> guessed it! (+${result.points} points)`)
+    .catch((err: unknown) =>
+      console.warn(`[BoardGameChallenge] Failed to post correct-guess announcement in guild ${message.guildId}:`, err),
+    );
+
   try {
     await message.author.send(
-      `🎉 Correct! **${challenge.title}** was this week's board game challenge — you earned **${result.points} points** ` +
+      `🎉 Correct! **${challenge.title}** was this cycle's board game challenge — you earned **${result.points} points** ` +
         `(guessed after hint ${challenge.hintsPostedCount}/3). Your running total is now **${result.totalPoints} points**. ` +
-        "Keep it to yourself until Saturday's reveal!",
+        "Keep it to yourself until the reveal!",
     );
   } catch (err) {
     console.warn(`[BoardGameChallenge] Failed to DM ${message.author.id} their guess result:`, err);

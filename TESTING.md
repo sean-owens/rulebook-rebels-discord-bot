@@ -531,6 +531,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Click **Add Link**, submit a URL in the modal — confirm the listing embed shows a "Reference link" entry pointing to that URL
 - [ ] Click **Skip** — confirm the listing posts with no reference link and no BGG thumbnail
 - [ ] Click **Add Link** and submit a non-URL string (e.g. plain text) — confirm graceful validation rather than a broken link field
+- [ ] Confirm a custom/non-BGG listing's forum/text post shows **no** "Powered by BGG" logo (there's no BGG data to attribute) — whether Add Link or Skip was chosen
 
 #### Catalog match confirmation (regression: a search like "gloom" no longer silently attaches the wrong game, e.g. "Gloom" instead of the intended "Gloomhaven")
 - [ ] Type an item name and pick a real suggestion from the autocomplete dropdown — confirm it goes straight to the next step (price screen / expansion select / include-base-game prompt) with **no** "Found a possible match" confirmation in between
@@ -627,7 +628,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.7l Permission boundaries (Regular Member)
 
-- [ ] Confirm a regular member CAN use `post sell`, `post trade`, `price`, `conditions`, `browse`, `my`, `close` (own listings), `reopen` (own listings)
+- [ ] Confirm a regular member CAN use `post sell`, `post trade`, `price`, `conditions`, `browse`, `my`, `close` (own listings), `reopen` (own listings), `edit` (own listings)
 - [ ] 👑 Try `/admin marketplace config` and `/admin marketplace purge` as a regular member — confirm "requires Manage Server permission"
 
 ### 1.7m Quick Actions Hub (button panel)
@@ -646,6 +647,20 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Tap "🔍 Browse Listings" — confirm it shows the same output as `/marketplace browse` with no type filter (all sell + trade listings)
 - [ ] Tap "📋 My Listings" — confirm it shows the same output as `/marketplace my` for the tapping user
 - [ ] Start the Sell (or Trade) wizard, then wait or restart the bot before finishing a step — confirm tapping a stale condition/offers button shows a "session has expired" message rather than an error or a crash
+
+### 1.7n `/marketplace edit`
+
+**What it does:** Lets the owner of a still-active/pending listing update its price (sell) / looking-for (trade) / notes without reposting from scratch. Opens a modal pre-filled with the listing's current values; type, condition, and offers-allowed aren't editable (repost if those need to change). Saving refreshes the forum/text-channel post in place.
+
+- [ ] Run `/marketplace edit id:<your active sell listing>` — confirm a modal opens with the current asking price (or blank if "open to offers") and notes pre-filled
+- [ ] Change the price and submit — confirm the forum post's "Price" field updates to the new value (still labeled "Price", not "Sold For" — that label only appears once the listing actually sells, see 5.1b) and the ephemeral reply confirms "...has been updated"
+- [ ] Leave the price field blank and submit — confirm the listing reverts to "Open to offers"
+- [ ] Enter a non-numeric price (e.g. "free") — confirm "Invalid price..." and nothing is saved
+- [ ] Run `/marketplace edit` on a trade listing — confirm the modal shows a "Looking for" field (not a price field), pre-filled with the current value; changing it updates the post's "Looking For" field
+- [ ] Change only the notes field — confirm the post's Notes field updates and price/looking-for are untouched
+- [ ] 👑 Run as a different user (non-admin) on someone else's listing — confirm "You can only edit your own listings" and nothing is saved (note: unlike `close`, admins do **not** get an override here — editing another member's listing content stays owner-only)
+- [ ] Run on a sold or closed listing — confirm "Only active or pending listings can be edited" and no modal opens
+- [ ] Confirm the autocomplete on `id` only offers your own active/pending listings (same filter as `close`)
 
 ## 1.8 `/room` — Private Rooms
 
@@ -809,37 +824,38 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Tap "🗑️ Remove Mine" having added exactly one item — confirm it's removed directly, same as `/snacks remove`
 - [ ] Tap "🗑️ Remove Mine" having added more than one item — confirm a select menu lets you pick which one to remove
 
-## 1.12 `/challenge` — Weekly "Guess the Board Game"
+## 1.12 `/challenge` — "Guess the Board Game"
 
-**Prerequisites:** an admin must run `/admin challenge config` (3.9s) to set a channel and turn the feature on — see 4.9 for the full automated hint/reveal flow. No permission differences between member/host/admin, so this section isn't mirrored into Parts 2/3.
+**Prerequisites:** an admin must run `/admin challenge config` (3.9s) to set a channel and turn the feature on — see 4.9 for the full automated hint/reveal flow, and 3.9s for the `frequency` setting (daily/weekly/bi-weekly) that governs how often a new challenge cycle starts. No permission differences between member/host/admin, so this section isn't mirrored into Parts 2/3.
 
 ### 1.12a `/challenge leaderboard`
 
 **What it does:** Shows the top 10 point scorers for this server, most points first.
 
-- [ ] Run with nobody having scored yet — confirm "No points on the board yet — guess correctly in the weekly challenge to get started!"
+- [ ] Run with nobody having scored yet — confirm "No points on the board yet — guess correctly in the board game challenge to get started!"
 - [ ] Run after at least one correct guess has been recorded — confirm an ephemeral leaderboard embed listing scorers ranked highest-first
 
 ### 1.12b `/challenge status`
 
-**What it does:** Shows this week's hints so far and when the next one posts (or the reveal, once all 3 are out). Ephemeral, for anyone who missed the original posts.
+**What it does:** Shows this cycle's hints so far and when the next one posts (or the reveal, once all 3 are out). Ephemeral, for anyone who missed the original posts. In daily mode, the schedule text shows only the hour (no day-of-week, since every stage falls on the cycle's own day) — see 3.9s.
 
-- [ ] Run when the feature isn't configured/enabled — confirm "The weekly board game challenge isn't set up on this server yet"
-- [ ] Run when enabled but no challenge is currently active (e.g. Sunday, between reveal and the next Monday), with the default schedule — confirm "No challenge is active right now — the next one starts Monday at 8am in #channel"
+- [ ] Run when the feature isn't configured/enabled — confirm "The board game challenge isn't set up on this server yet"
+- [ ] Run when enabled but no challenge is currently active (e.g. Sunday, between reveal and the next Monday), with the default (weekly) schedule — confirm "No challenge is active right now — the next one starts Monday at 8am in #channel"
 - [ ] Run after hint 1 has posted, with the default schedule — confirm only hint 1's text is shown, plus "Next hint: Wednesday 8am"
 - [ ] Run after all 3 hints have posted, with the default schedule — confirm all 3 hints are shown, plus "the answer reveals Saturday 6pm"
 - [ ] After changing the schedule via `/admin challenge config` (3.9s), e.g. hint 1 to Tuesday 9am — confirm the "next one starts" / "Next hint" text reflects the new day/time, not the old default
+- [ ] With `frequency:daily` set, run status at any point in the cycle — confirm the schedule text shows just the hour (e.g. "Next hint: **12pm**"), with no day-of-week name anywhere in it
 
 ### 1.12c Guessing (plain messages in the configured channel)
 
-**What it does:** Reply with your guess as a normal message in the configured channel. A guess is matched against the game's title after normalizing case/punctuation/leading articles and a colon/parenthetical subtitle, with typo tolerance for small misspellings. A correct guess is deleted immediately (so the answer never sits visible for others to copy) and the guesser is DMed their points instead; an incorrect guess is left in place with a ❌ reaction. Points are 100 (guessed after hint 1), 80 (after hint 2), or 50 (after hint 3) — everyone who guesses correctly scores, not just the first person, and each person can only score once per week.
+**What it does:** Reply with your guess as a normal message in the configured channel. A guess is matched against the game's title after normalizing case/punctuation/leading articles and a colon/parenthetical subtitle, with typo tolerance for small misspellings. A correct guess is deleted immediately (so the answer never sits visible for others to copy), a public "🎉 \<user\> guessed it! (+N points)" message posts in the channel so the win is obviously visible (without revealing the title), and the guesser is separately DMed their exact points/running total; an incorrect guess is left in place with a ❌ reaction. Points are 100 (guessed after hint 1), 80 (after hint 2), or 50 (after hint 3) — everyone who guesses correctly scores, not just the first person, and each person can only score once per cycle.
 
 - [ ] Post an obviously wrong guess after hint 1 — confirm it's reacted with ❌ and stays visible
-- [ ] Post the exact title (any case/punctuation) — confirm the message is deleted and you're DMed your points (100 if this is right after hint 1)
+- [ ] Post the exact title (any case/punctuation) — confirm the message is deleted, a public "guessed it! (+100 points)" message posts in the channel (without the title), and you're DMed your points and running total
 - [ ] Post a close typo of the title — confirm it's still accepted as correct
-- [ ] As a second person, post the correct title after the same hint — confirm they're also scored (both scored, not just the first)
-- [ ] As someone who already guessed correctly this week, post the correct title again — confirm nothing happens (no double DM, no double points)
-- [ ] Post a guess in any other channel — confirm the bot ignores it entirely (no reaction, no deletion)
+- [ ] As a second person, post the correct title after the same hint — confirm they're also scored (both scored, not just the first), each getting their own public announcement
+- [ ] As someone who already guessed correctly this cycle, post the correct title again — confirm nothing happens (no double DM, no double announcement, no double points)
+- [ ] Post a guess in any other channel — confirm the bot ignores it entirely (no reaction, no deletion, no announcement)
 - [ ] Check `/challenge leaderboard` after a correct guess — confirm the new total is reflected
 
 ---
@@ -1277,6 +1293,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Click **Add Link**, submit a URL in the modal — confirm the listing embed shows a "Reference link" entry pointing to that URL
 - [ ] Click **Skip** — confirm the listing posts with no reference link and no BGG thumbnail
 - [ ] Click **Add Link** and submit a non-URL string (e.g. plain text) — confirm graceful validation rather than a broken link field
+- [ ] Confirm a custom/non-BGG listing's forum/text post shows **no** "Powered by BGG" logo (there's no BGG data to attribute) — whether Add Link or Skip was chosen
 
 #### Catalog match confirmation (regression: a search like "gloom" no longer silently attaches the wrong game, e.g. "Gloom" instead of the intended "Gloomhaven")
 - [ ] Type an item name and pick a real suggestion from the autocomplete dropdown — confirm it goes straight to the next step (price screen / expansion select / include-base-game prompt) with **no** "Found a possible match" confirmation in between
@@ -1373,7 +1390,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.7l Permission boundaries (Host)
 
-- [ ] Confirm a Host CAN use `post sell`, `post trade`, `price`, `conditions`, `browse`, `my`, `close` (own listings), `reopen` (own listings) — same as a regular member
+- [ ] Confirm a Host CAN use `post sell`, `post trade`, `price`, `conditions`, `browse`, `my`, `close` (own listings), `reopen` (own listings), `edit` (own listings) — same as a regular member
 - [ ] 👑 Try `/admin marketplace config` and `/admin marketplace purge` as a Host — confirm "requires Manage Server permission" (Host role alone does not grant this)
 
 ### 2.7m Quick Actions Hub (button panel)
@@ -1392,6 +1409,17 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Tap "🔍 Browse Listings" — confirm it shows the same output as `/marketplace browse` with no type filter (all sell + trade listings)
 - [ ] Tap "📋 My Listings" — confirm it shows the same output as `/marketplace my` for the tapping user
 - [ ] Start the Sell (or Trade) wizard, then wait or restart the bot before finishing a step — confirm tapping a stale condition/offers button shows a "session has expired" message rather than an error or a crash
+
+### 2.7n `/marketplace edit`
+
+**What it does:** Lets the owner of a still-active/pending listing update its price (sell) / looking-for (trade) / notes without reposting from scratch. Opens a modal pre-filled with the listing's current values; type, condition, and offers-allowed aren't editable (repost if those need to change). Saving refreshes the forum/text-channel post in place.
+
+- [ ] Run `/marketplace edit id:<your active sell listing>` — confirm a modal opens with the current asking price (or blank if "open to offers") and notes pre-filled; changing the price and submitting updates the post's "Price" field
+- [ ] Leave the price field blank and submit — confirm the listing reverts to "Open to offers"
+- [ ] Enter a non-numeric price (e.g. "free") — confirm "Invalid price..." and nothing is saved
+- [ ] Run `/marketplace edit` on a trade listing — confirm the modal shows a "Looking for" field (not a price field), pre-filled with the current value; changing it updates the post's "Looking For" field
+- [ ] 👑 Run as a different user on someone else's listing (Host, not the owner) — confirm "You can only edit your own listings" — Host does not grant an override here, unlike `close`
+- [ ] Run on a sold or closed listing — confirm "Only active or pending listings can be edited" and no modal opens
 
 ## 2.8 `/host` — Host Commands
 
@@ -2044,6 +2072,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Click **Add Link**, submit a URL in the modal — confirm the listing embed shows a "Reference link" entry pointing to that URL
 - [ ] Click **Skip** — confirm the listing posts with no reference link and no BGG thumbnail
 - [ ] Click **Add Link** and submit a non-URL string (e.g. plain text) — confirm graceful validation rather than a broken link field
+- [ ] Confirm a custom/non-BGG listing's forum/text post shows **no** "Powered by BGG" logo (there's no BGG data to attribute) — whether Add Link or Skip was chosen
 
 #### Catalog match confirmation (regression: a search like "gloom" no longer silently attaches the wrong game, e.g. "Gloom" instead of the intended "Gloomhaven")
 - [ ] Type an item name and pick a real suggestion from the autocomplete dropdown — confirm it goes straight to the next step (price screen / expansion select / include-base-game prompt) with **no** "Found a possible match" confirmation in between
@@ -2136,6 +2165,17 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] After an offer is accepted, confirm `bid_accepted` and `listing_sold` entries appear
 - [ ] After an offer is denied, confirm `bid_denied` entry appears
 - [ ] Confirm no entries are missing for any action in the flow above
+
+### 3.7l `/marketplace edit`
+
+**What it does:** Lets the owner of a still-active/pending listing update its price (sell) / looking-for (trade) / notes without reposting from scratch. Opens a modal pre-filled with the listing's current values; type, condition, and offers-allowed aren't editable (repost if those need to change). Saving refreshes the forum/text-channel post in place, and logs a `listing_edited` entry (3.7k).
+
+- [ ] Run `/marketplace edit id:<your active sell listing>` — confirm a modal opens with the current asking price (or blank if "open to offers") and notes pre-filled; changing the price and submitting updates the post's "Price" field
+- [ ] Leave the price field blank and submit — confirm the listing reverts to "Open to offers"
+- [ ] Enter a non-numeric price (e.g. "free") — confirm "Invalid price..." and nothing is saved
+- [ ] Run `/marketplace edit` on a trade listing — confirm the modal shows a "Looking for" field (not a price field), pre-filled with the current value; changing it updates the post's "Looking For" field
+- [ ] 👑 As an Admin, try editing another member's listing — confirm "You can only edit your own listings" — Admin does not grant an override here, unlike `/admin marketplace purge`
+- [ ] Run on a sold or closed listing — confirm "Only active or pending listings can be edited" and no modal opens
 
 ## 3.8 `/host` — Host Commands
 
@@ -2454,19 +2494,33 @@ Text channels have no forum tags and no thread is created for a listing — each
 
 ### 3.9s `/admin challenge config`
 
-**What it does:** Sets the text channel where the weekly "Guess the Board Game" challenge posts hints/reveals and reads guesses, turns the feature on or off (default: off), and sets the day-of-week + local hour (interpreted using the server's `timezone`, `/admin event config` 3.9a) each of the 3 hints and the reveal post at. Each `*_hour` option accepts either 12-hour ("8am", "8pm") or 24-hour ("20") input. Defaults reproduce the original fixed schedule: hint 1 Monday 8am, hint 2 Wednesday 8am, hint 3 Friday 8am, reveal Saturday 6pm. Options: `channel`, `enabled`, `clue1_day`/`clue1_hour`, `clue2_day`/`clue2_hour`, `clue3_day`/`clue3_hour`, `reveal_day`/`reveal_hour`.
+**What it does:** Sets the text channel where the "Guess the Board Game" challenge posts hints/reveals and reads guesses, turns the feature on or off (default: off), sets how often a new cycle starts (`frequency`: daily/weekly/bi-weekly, default weekly), and sets the day-of-week + local hour (interpreted using the server's `timezone`, `/admin event config` 3.9a) each of the 3 hints and the reveal post at. Each `*_hour` option accepts either 12-hour ("8am", "8pm") or 24-hour ("20") input. Defaults reproduce the original fixed weekly schedule: hint 1 Monday 8am, hint 2 Wednesday 8am, hint 3 Friday 8am, reveal Saturday 6pm. Options: `channel`, `enabled`, `frequency`, `start_date`, `clue1_day`/`clue1_hour`, `clue2_day`/`clue2_hour`, `clue3_day`/`clue3_hour`, `reveal_day`/`reveal_hour`. If `enabled:true` is set with no channel given and none already configured, the bot auto-creates a **#board-game-challenge** text channel (reusing one by that name if it already exists) and posts a short welcome message there explaining the feature, instead of blocking with an error.
+
+**Frequency:**
+- **Weekly** (default): one cycle per week, starting Monday — the `*_day` options set which weekday each stage falls on, exactly as before this setting existed.
+- **Daily**: all 3 hints + the reveal happen within a single day — the `*_day` options are ignored entirely (there's no "day of week" within a 1-day cycle); only the `*_hour` options matter, and they should be spread across the day (e.g. 8am/12pm/4pm/8pm) rather than all the same hour.
+- **Bi-weekly**: reuses the same weekday-based schedule as weekly, but only starts a new cycle every *other* week — the week in between is idle. Which weeks are "on" is anchored to `start_date` (any date in the desired starting week — it's normalized to that week's Monday); if `start_date` isn't given the first time bi-weekly is turned on, it defaults to the current week.
 
 - [ ] 👑 Run as non-admin — confirm "requires Manage Server permission"
-- [ ] Run with no options — confirm it shows the current channel ("*not set*" if none), enabled state, and all 4 schedule lines (hint 1/2/3 + reveal, each as "Weekday Hour[am/pm]")
+- [ ] Run with no options — confirm it shows the current channel ("*not set*" if none), enabled state, **Frequency: Weekly**, and all 4 schedule lines (hint 1/2/3 + reveal, each as "Weekday Hour[am/pm]") — confirm nothing is auto-created just from viewing config
 - [ ] Run with a non-text channel (e.g. a voice or forum channel) as `channel` — confirm "The challenge channel must be a **Text Channel**" and nothing is saved
 - [ ] Run with a valid text channel and `enabled:true` — confirm both save, and the reply reflects the new channel/state
 - [ ] Run with only `channel` set (no `enabled` option) — confirm the channel saves and the reply still shows "Enabled: No", since the feature needs both a channel and `enabled:true` before it posts
-- [ ] Run with no channel ever set — confirm the reply includes a warning that a channel needs to be set before enabling
+- [ ] With no channel ever set, run with only `enabled:true` (no `channel` option) — confirm a **#board-game-challenge** channel is created, a welcome message posts in it, and the reply shows "📌 Created #board-game-challenge since no channel was configured" plus the new channel in "Channel:"
+- [ ] Repeat the above in a server that already has a **#board-game-challenge** text channel (not yet configured) — confirm that existing channel is reused instead of a second one being created
 - [ ] Run with e.g. `clue1_day:tuesday clue1_hour:9` (24-hour form) — confirm the reply's "Hint 1" line now reads "Tuesday 9am", and only that line changes (hint 2/3/reveal keep their prior values)
 - [ ] Run with `clue1_hour:9pm` (12-hour form) — confirm the "Hint 1" line reads "Tuesday 9pm"
 - [ ] Run with an unparseable hour (e.g. `clue1_hour:noon`) — confirm a clear "Could not parse..." error and nothing is saved
 - [ ] Set all 4 schedule pairs to distinct day/hour combinations in one call, mixing 12-hour and 24-hour input — confirm all 4 save and the reply reflects each independently
 - [ ] Run `/challenge status` afterward (with both channel and enabled set) — confirm it now reflects the newly configured channel and schedule instead of "isn't set up"
+
+**Frequency-specific:**
+- [ ] Run with `frequency:daily` — confirm the reply shows "Frequency: **Daily**" and the schedule lines show just the hour (e.g. "Hint 1: **8am** (daily)") with no weekday name; the welcome message posted when auto-creating a channel (or the next time one is created) reflects "Each day..." instead of "Each week..."
+- [ ] Run with `frequency:weekly` after having set daily/bi-weekly — confirm it reverts to showing weekday names on the schedule lines
+- [ ] Run with `frequency:biweekly` and no `start_date` — confirm the reply shows "Frequency: **Bi-weekly**" and an "On weeks: starting `<this week's Monday>`, then every other week" line
+- [ ] Run with `frequency:biweekly start_date:"August 22"` (any day of the desired starting week, not necessarily a Monday) — confirm the anchor shown is normalized to that week's Monday
+- [ ] Run with an unparseable `start_date` (e.g. "whenever") — confirm a clear "Could not parse..." error and nothing is saved
+- [ ] Having already set a bi-weekly anchor, run `/admin challenge config` again changing only an unrelated setting (e.g. a schedule hour) — confirm the existing anchor is left untouched, not silently reset
 
 ## 3.10 `/room` — Private Rooms
 
@@ -2779,23 +2833,53 @@ The effective table count used at lock time is `max(headcount floor, preference-
 - [ ] Confirm `/room close`, run manually before the expiration date, still works exactly as before (expiration doesn't interfere with early manual closing)
 - [ ] Confirm a persistent room (created with `persist:true`, or switched via `/room persist enabled:true`) is left untouched by the hourly check even after its original/former expiration date would have passed
 
-## 4.9 Weekly Board Game Challenge (Scheduled Hints + Reveal)
+## 4.9 Board Game Challenge (Scheduled Hints + Reveal)
 
-**What it does:** Once a server has `/admin challenge config` (3.9s) set with a channel and `enabled:true`, the bot runs a weekly cycle entirely on its own, on the same hourly check as the other scheduled features (plus once on startup), evaluated against the server's configured `timezone` (`/admin event config`, 3.9a) and its own per-guild schedule (also set via 3.9s, defaulting to Monday/Wednesday/Friday 8am + Saturday 6pm): at the configured hint 1 day/hour it picks a random game from BGG's top 500 ranked games (excluding anything this server has played in roughly the last year) and posts hint 1; at hint 2's day/hour, hint 2; at hint 3's day/hour, hint 3; at the reveal day/hour, it reveals the answer and lists everyone who guessed correctly that week, then goes quiet until the next hint-1 day/hour comes around. See 1.12c for how guessing itself works. Each server gets its own independent random pick — two opted-in servers are never on the same game at the same time, so someone in both can't spoil it across servers.
+**What it does:** Once a server has `/admin challenge config` (3.9s) set with a channel and `enabled:true`, the bot runs a weekly cycle entirely on its own, on the same hourly check as the other scheduled features (plus once on startup), evaluated against the server's configured `timezone` (`/admin event config`, 3.9a) and its own per-guild schedule (also set via 3.9s, defaulting to Monday/Wednesday/Friday 8am + Saturday 6pm): at or after the configured hint 1 day/hour it picks a random game from BGG's top 500 ranked games (excluding anything this server has played in roughly the last year) and posts hint 1 (with a "How to play" field explaining the rules — hints 2/3 omit it); at or after hint 2's day/hour, hint 2; at or after hint 3's day/hour, hint 3; at or after the reveal day/hour, it reveals the answer, lists everyone who guessed correctly that week, then posts the current leaderboard and pins it (unpinning its own previous leaderboard pin first, leaving any other pins in the channel alone), then goes quiet until the next hint-1 day/hour comes around, **unless a challenge has already run this week** — checked by weekStart, not just "nothing currently active", specifically so a reveal that lands on the same weekday as hint 1 (e.g. a same-day testing schedule like Mon 8am/10am/12pm/5pm) can't immediately restart the whole cycle later that same day (see the regression note below). Each stage's "at or after" check is a real-timestamp comparison anchored to the challenge's own `weekStart` (not "is today exactly the configured weekday"), so a stage whose entire scheduled day was missed during an outage still catches up rather than being skipped forever — see the multi-day-outage note further below. See 1.12c for how guessing itself works. Each server gets its own independent random pick — two opted-in servers are never on the same game at the same time, so someone in both can't spoil it across servers.
+
+**Note on timing precision:** the hourly check (`src/events/ready.ts`) is a `setInterval` anchored to whenever the bot process last started, not a clock-aligned cron — so a hint/reveal typically posts a few minutes *after* its configured hour rather than exactly on it, and the exact offset shifts on every restart/redeploy. This is expected; it isn't a sign anything is broken.
+
+**Clue content (vaguest → most specific):** each hint holds up to 3 facts, individually omitted when BGG has no data for that one (e.g. no categories tagged) — a fact only appears once, in its designated hint, never repeated or duplicated across hints.
+- Hint 1: player count, duration, genre (BGG's *categories*, e.g. "Strategy/Economic genre") — the two broadest facts (count/duration) always have some value since BGG data defaults them, so hint 1 is never blank even with no genre on file.
+- Hint 2: mechanics (BGG's *mechanics*, kept separate from categories — e.g. "Mechanics: Worker Placement, Engine Building"), weight/complexity (Light/Medium/Heavy), and best player count ("Best with N players") — the best-player-count fact always has a value, so hint 2 is never blank either.
+- Hint 3: year released, designer(s), and publisher (first one only, if several are on file) — falls back to "That's all the data we've got — good luck!" only if all three are missing (a very thinly-documented catalog entry).
 
 **Prerequisites:** `/admin challenge config` set with a valid text channel and `enabled:true`. To actually observe a transition without waiting for the real day/time, either set the hint/reveal schedule (also via 3.9s) to something a few minutes out and wait for the next hourly check, or temporarily edit `data/board_game_challenges.json`'s `weekStart`/`hintsPostedCount` for this guild's entry (or the server's `timezone` in `data/config.json`) so the next hourly check's day/hour condition is met, then wait for the hourly check or restart the bot.
 
-- [ ] With the feature freshly enabled and no challenge yet this week, reach the configured hint 1 day/hour (default Monday 8am local time; or simulate it) — confirm a new challenge is created and hint 1 posts in the configured channel, with a "Powered by BGG" attribution image and no title/thumbnail shown
+- [ ] With the feature freshly enabled and no challenge yet this week, reach the configured hint 1 day/hour (default Monday 8am local time; or simulate it) — confirm a new challenge is created and hint 1 posts in the configured channel, with a "Powered by BGG" attribution image, no title/thumbnail shown, a "How to play" field explaining the rules, and a description covering **only** player count/duration/genre (no weight, mechanics, year, designer, or publisher)
 - [ ] Confirm `/challenge status` reflects hint 1 immediately after it posts
-- [ ] Reach the configured hint 2 day/hour (default Wednesday 8am) — confirm hint 2 posts (and not before)
-- [ ] Reach the configured hint 3 day/hour (default Friday 8am) — confirm hint 3 posts (and not before)
-- [ ] Reach the configured reveal day/hour (default Saturday 6pm) — confirm a reveal embed posts with the game's title, BGG link, thumbnail, and a list of everyone who guessed correctly this week (or "Nobody guessed it this week!" if no one did)
+- [ ] Reach the configured hint 2 day/hour (default Wednesday 8am) — confirm hint 2 posts (and not before), with no "How to play" field this time, and a description covering **only** mechanics/weight/best-player-count (no categories, year, designer, or publisher)
+- [ ] Reach the configured hint 3 day/hour (default Friday 8am) — confirm hint 3 posts (and not before), with a description covering **only** year/designer(s)/publisher — if more than one publisher is on file, confirm only the first is shown
+- [ ] Reach the configured reveal day/hour (default Saturday 6pm) — confirm a reveal embed posts with the game's title, BGG link, thumbnail, and a list of everyone who guessed correctly this week (or "Nobody guessed it this week!" if no one did), immediately followed by a separate leaderboard embed message that gets pinned in the channel
+- [ ] Confirm the leaderboard pin from a previous week's reveal is unpinned when the new one is pinned, and that any unrelated pin in the channel is left alone
 - [ ] Confirm no new challenge is created between the reveal and the next hint 1 day/hour
-- [ ] Confirm `/challenge leaderboard` totals match the sum of points awarded across the week's correct guesses
+- [ ] Confirm `/challenge leaderboard` totals match the sum of points awarded across the week's correct guesses, and match the pinned leaderboard message
 - [ ] Restart the bot mid-week (e.g. right after hint 1) — confirm the next hourly check resumes correctly (doesn't re-post hint 1, still posts hint 2 on schedule) rather than losing track of where the week was
-- [ ] If a reveal is somehow missed entirely for over a week (e.g. extended downtime), confirm the next check force-reveals the stale challenge rather than getting stuck and blocking all future weeks
+- [ ] If a reveal is somehow missed entirely for over a week (e.g. extended downtime), confirm the next check force-reveals the stale challenge rather than getting stuck and blocking all future weeks, and still posts/pins the leaderboard
 - [ ] Reconfigure the schedule mid-week (e.g. push hint 3 a day later after hint 2 has already posted) — confirm the change takes effect on the next hourly check without disturbing hints already posted
 - [ ] With two servers both configured, confirm each gets a different game in the same week (not guaranteed every single week by chance, but confirm the selection logic is independent per server, not shared)
+- [ ] Configure all 4 stages on the same weekday (e.g. hint 1 Mon 8am, hint 2 Mon 10am, hint 3 Mon 12pm, reveal Mon 5pm) and let a full cycle run through the reveal — confirm the check that runs *after* the reveal that same evening does **not** start a second challenge (no new hint posts, no second reveal); the feature should stay quiet until next Monday 8am, exactly as it would with the default multi-day spread
+
+**Daily frequency (`/admin challenge config frequency:daily`):**
+- [ ] With `frequency:daily` and hours e.g. 8am/12pm/4pm/8pm, freshly enable the feature — confirm a challenge is created and hint 1 posts at 8am *that same day*, regardless of what the `*_day` options are set to (they're ignored in daily mode)
+- [ ] Confirm hint 2, hint 3, and the reveal all post later *that same day*, at 12pm/4pm/8pm respectively
+- [ ] Confirm the very next day, a brand-new challenge starts at 8am (a new game, hint 1 again) — the cycle repeats daily rather than waiting a week
+- [ ] Confirm the check that runs right after a reveal (later the same day) does **not** immediately start a second challenge that same day — the next one waits for the next day's hint-1 hour
+- [ ] Switch an already-running weekly/bi-weekly server to `frequency:daily` mid-cycle — confirm this is a rough edge you should expect (same as reordering hint days already is): the in-flight challenge may behave oddly since its remaining stages now resolve to day-offset 0 instead of their old weekday; switching frequency is best done between cycles, not mid-cycle
+
+**Bi-weekly frequency (`/admin challenge config frequency:biweekly`):**
+- [ ] With `frequency:biweekly` freshly enabled and no `start_date` given, reach hint 1's day/hour — confirm a challenge starts this week, exactly like weekly mode would
+- [ ] The following week (the "off" week), reach what would have been hint 1's day/hour — confirm **no** new challenge starts, and nothing posts in the channel
+- [ ] Two weeks after the first challenge started (the next "on" week), reach hint 1's day/hour — confirm a new challenge starts with a fresh game
+- [ ] Set `start_date` to a date in a future week — confirm nothing starts until that week arrives, even if hint 1's day/hour passes in the weeks before it
+- [ ] Confirm hint 2/hint 3/reveal within an "on" week's challenge behave exactly like weekly mode (same weekday-based schedule) — bi-weekly only changes how often a *new* cycle starts, not how a cycle plays out once running
+- [ ] If a bi-weekly challenge is somehow still unrevealed after a full 14 days (not just 7), confirm the force-reveal safety net still eventually fires — bi-weekly's staleness window is 14 days, not the 7 days weekly uses
+
+**Recovering from a multi-day outage (not just a brief restart):** each stage's "is it time yet" check compares the real clock against that stage's exact scheduled instant (computed from the challenge's own `weekStart`), not "is today exactly the configured weekday" — so a stage whose entire scheduled day was missed (the bot was down all of Wednesday when hint 2 was due, say) still catches up once the bot is back, rather than being skipped forever. Catch-up happens one stage per hourly check, in order — it won't jump straight to the reveal and skip hints that never posted.
+- [ ] With hint 1 already posted, simulate the bot being down through all of hint 2's scheduled day (e.g. edit `data/board_game_challenges.json`'s `hintsPostedCount` to stay at 1, then let the next hourly check land on hint 3's day or later) — confirm hint 2 still posts (late), instead of being silently skipped
+- [ ] Continuing from the same scenario, confirm the *next* hourly check posts hint 3 (not the reveal) — each check advances exactly one stage, never skipping ahead
+- [ ] Let checks continue normally from there — confirm the reveal eventually posts once hint 3 has gone out, completing the week with all 3 hints intact rather than a truncated one
+- [ ] Confirm a normal, brief restart (seconds to minutes) is unaffected by this — hints still post at essentially their configured time, not measurably delayed by this change
 
 ---
 
@@ -2869,13 +2953,15 @@ These test cases involve genuine back-and-forth between two distinct Discord ide
 - [ ] As buyer, submit an offer amount of 0 or a non-numeric value on a negotiable listing — confirm graceful validation rather than a broken offer
 - [ ] Have two different buyer accounts both open offers on the same negotiable listing — confirm the seller sees both as separate open offers and can act on each independently
 
-### 5.1b Negotiation — Accept / Deny / Counter
+### 5.1b Negotiation — Accept / Deny / Counter / Reply
 
-**What it does:** Seller responds to offers with Accept, Deny, or Counter buttons sent via DM (or thread fallback if DMs are disabled).
+**What it does:** Seller responds to offers with Accept, Deny, Counter, or Reply buttons sent via DM (or thread fallback if DMs are disabled).
 
 **Accept:**
 - [ ] Seller clicks Accept on an offer in their DM — confirm the DM message updates to "✅ Accepted — deal done!" with buttons removed
-- [ ] Confirm listing status becomes 🔴 Sold in forum post — note the underlying status value is `sold` for both sell **and** trade listings (there's no separate "traded" status), but every message below uses type-aware wording: "sold" for a sell listing, "traded" for a trade listing
+- [ ] Confirm listing status becomes 🔴 Sold (sell) or 🔴 Traded (trade) in the forum post — note the underlying status value is `sold` for both sell **and** trade listings (there's no separate "traded" status), but the displayed Status field and every message below use type-aware wording: "sold" for a sell listing, "traded" for a trade listing
+- [ ] Confirm the listing post's "Price" field is replaced with a "Sold For" field showing what was actually accepted (the final negotiated amount if there was a counter, otherwise the buyer's original offer, or the asking price for a Buy It Now) — **not** the original asking price if it differed
+- [ ] For a trade, confirm the "Looking For" field is replaced with a "Traded For" field showing the actual item the buyer offered
 - [ ] Confirm the seller's ephemeral reply reads "Offer accepted! **{item}** is now marked as sold" for a sell listing, or "...marked as traded" for a trade listing
 - [ ] Confirm buyer gets DM: "Your offer on **{item}** was accepted by {seller}!"
 - [ ] If other open offers exist, confirm those buyers get DM: "Sorry, **{item}** has been sold to someone else" (or "...traded to someone else" for a trade listing), **and** confirm their outstanding Accept/Deny/Counter (or Accept Counter/Decline) DM prompt is edited to show "🔒 Closed — this listing has been sold to someone else." (or "...traded to someone else." for a trade listing) with its buttons removed
@@ -2899,13 +2985,21 @@ These test cases involve genuine back-and-forth between two distinct Discord ide
 - [ ] Countering one offer leaves any other open offers on the same listing untouched — confirm the seller can still Accept/Deny/Counter those independently
 
 **Firm-price listings have no Counter at all:**
-- [ ] On a firm-price listing, confirm the seller's DM never shows a Counter button — only Accept/Deny
+- [ ] On a firm-price listing, confirm the seller's DM never shows a Counter button — only Accept/Deny/Reply
 - [ ] If a stale/old Counter button somehow gets clicked on a firm listing, confirm the bot replies "This is a firm-price listing — there's no price to counter" instead of opening a modal
+
+**Reply (free-text question, not a decision — available on every listing, including firm-price ones where Counter isn't):**
+- [ ] Before a counter has happened, seller clicks Reply on a buyer's offer and sends a message (e.g. "does it include the expansion?") — confirm the seller's DM updates to "💬 Reply sent — waiting for response." with buttons removed, and the buyer receives a DM with the message plus **Withdraw Offer** and **Reply** buttons only (no "Accept", since there's no counter for them to accept)
+- [ ] Buyer taps Reply and answers — confirm the seller receives a DM with the buyer's answer and their normal Accept/Deny/Counter/Reply row (Counter omitted on a firm-price listing)
+- [ ] Confirm sending a Reply does **not** change the offer's status, the listing's status, or strip any *other* outstanding offer's buttons — it's purely a message, not a decision
+- [ ] Attempt Reply as someone who is neither the seller nor that specific buyer — confirm "Only the seller or the other party can reply"
+- [ ] Attempt Reply on an offer that's no longer open (already accepted/denied) — confirm "This offer is no longer open" and no modal opens
 
 **Interacting via DM specifically (not a forum-thread fallback):**
 - [ ] Confirm Accept clicked from the seller's DM works (no "Listing not found" error) — this is the normal path since these buttons are always sent via DM first
 - [ ] Confirm Deny clicked from the seller's or buyer's DM works (no "Listing not found" error)
 - [ ] Confirm Counter clicked from a DM, and the resulting counter-offer modal submission, both work (no "Listing not found" error)
+- [ ] Confirm Reply clicked from a DM, and the resulting reply modal submission, both work (no "Listing not found" error)
 
 **Edge cases:**
 - [ ] Disable "Allow direct messages from server members" on the seller's account before a buyer submits an offer — confirm the Accept/Deny/Counter prompt falls back to a thread instead of failing silently (per the "What it does" note above)
@@ -2913,13 +3007,16 @@ These test cases involve genuine back-and-forth between two distinct Discord ide
 
 ### 5.1c Negotiation modes (public vs. private)
 
-**What it does:** Controls whether offer negotiation is visible publicly in the forum thread or in a private thread.
+**What it does:** `/admin marketplace config`'s `negotiation_mode` (3.9m) controls whether an offer/counter/reply's content (amount, offer text, message) is ever visible in the public marketplace channel, or DM-only end to end. Private mode does **not** create a separate private thread — it's DM-only: nothing with any offer content is ever posted to the public channel, only the listing post itself (which just shows status, e.g. 🟡 Pending, with no offer details). If the recipient's DMs are disabled in private mode, there is deliberately **no** public fallback (unlike public mode, which falls back to posting the Accept/Deny/Counter/Reply buttons in the channel when a DM fails) — the offer simply can't reach them until they re-enable DMs, since falling back publicly would leak content private mode is meant to keep off the channel entirely.
 
-- [ ] With negotiation_mode=public: click "I'm Interested" — confirm offer notification posted in the public forum thread (visible to all); Accept/Deny/Counter buttons go to seller via DM
-- [ ] With negotiation_mode=private: click "I'm Interested" — confirm a private thread is created with buyer, seller, and bot; offer notification posted there; buttons go to seller via DM
+- [ ] With negotiation_mode=public: click "I'm Interested" — confirm the offer's amount/message is posted as a text-only notification in the public forum/text-channel post (visible to all), with Accept/Deny/Counter/Reply buttons going to the seller via DM only
+- [ ] With negotiation_mode=private: click "I'm Interested" — confirm **no** offer content is posted to the public channel at all (the listing post only reflects the updated 🟡 Pending status); the seller receives the offer details and Accept/Deny/Counter/Reply buttons only via DM
+- [ ] With negotiation_mode=private, send a Counter or a Reply — confirm neither the counter's amount/message nor the reply's message text ever appears in the public channel, matching the initial offer's behavior
+- [ ] With negotiation_mode=public, disable DMs on the recipient's account, then send an offer/counter/reply — confirm the buttons (not the content, which already posted publicly per the bullet above) get posted to the public channel as a fallback so the recipient can still respond
+- [ ] With negotiation_mode=private, disable DMs on the recipient's account, then send an offer/counter/reply — confirm there is **no** public fallback of any kind (no content, no buttons) — this is expected, not a bug; the sender isn't told the DM failed, so consider this a known limitation to flag rather than something the recipient can work around
 
 **Edge cases:**
-- [ ] 👑 In private mode, have a third account (neither buyer nor seller) try to view or join the private negotiation thread — confirm they cannot see it (a server owner can typically still see private threads via Discord's own `Manage Threads` permission, which owners always have — this isn't a bot bug, it's Discord's platform behavior)
+- [ ] 👑 As a server owner (who can always see channels via Discord's own `Manage Threads`/`View Channel` permissions), confirm you still cannot see any offer content in private mode either — it was never posted anywhere public to begin with, so there's no thread-visibility question the way there would be if it used a private thread
 
 ## 5.2 New Member Join — Welcome Flow *(System/Automated flow — triggered by a real `guildMemberAdd` join event, not a slash command permission tier)*
 

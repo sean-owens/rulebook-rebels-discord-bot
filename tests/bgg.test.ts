@@ -165,6 +165,9 @@ describe('getBGGGame', () => {
     <link type="boardgamecategory" id="1029" value="Economic"/>
     <link type="boardgamemechanic" id="2664" value="Engine Building"/>
     <link type="boardgamemechanic" id="2081" value="Hand Management"/>
+    <link type="boardgamedesigner" id="1" value="Elizabeth Hargrave"/>
+    <link type="boardgamepublisher" id="2" value="Stonemaier Games"/>
+    <link type="boardgamepublisher" id="3" value="Feuerland Spiele"/>
     <link type="boardgameexpansion" id="300837" value="Wingspan: European Expansion"/>
     <link type="boardgameexpansion" id="300838" value="Wingspan: Oceania Expansion"/>
     <poll name="suggested_numplayers" title="User Suggested: # of Players" totalvotes="500">
@@ -213,6 +216,25 @@ describe('getBGGGame', () => {
     expect(game.tags).toContain('Economic');
     expect(game.tags).toContain('Engine Building');
     expect(game.tags).toContain('Hand Management');
+  });
+
+  it('also splits categories and mechanics into their own fields (used by the weekly challenge clues)', async () => {
+    mockFetch(WINGSPAN_XML);
+    const game = await getBGGGame('266192');
+    expect(game.categories).toEqual(['Economic']);
+    expect(game.mechanics).toEqual(['Engine Building', 'Hand Management']);
+  });
+
+  it('extracts designers', async () => {
+    mockFetch(WINGSPAN_XML);
+    const game = await getBGGGame('266192');
+    expect(game.designers).toEqual(['Elizabeth Hargrave']);
+  });
+
+  it('extracts publishers', async () => {
+    mockFetch(WINGSPAN_XML);
+    const game = await getBGGGame('266192');
+    expect(game.publishers).toEqual(['Stonemaier Games', 'Feuerland Spiele']);
   });
 
   it('extracts outbound expansion links', async () => {

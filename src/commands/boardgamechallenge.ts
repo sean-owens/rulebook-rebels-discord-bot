@@ -2,23 +2,31 @@ import {
   ChannelType,
   ChatInputCommandInteraction,
   EmbedBuilder,
+  Guild,
   MessageFlags,
   PermissionFlagsBits,
   SlashCommandBuilder,
+  TextChannel,
 } from 'discord.js';
-import { getGuildConfig, updateGuildConfig } from '../utils/config';
+import { getGuildConfig, updateGuildConfig, GuildConfig } from '../utils/config';
 import { getActiveChallenge } from '../utils/boardGameChallengeStorage';
-import { getLeaderboard } from '../utils/boardGameChallenge';
-import { parseHourInput } from '../utils/timezone';
+import { getLeaderboard, buildLeaderboardEmbed } from '../utils/boardGameChallenge';
+import { parseHourInput, mondayOfWeekInTimeZone, mondayOfDateInTimeZone } from '../utils/timezone';
+import { parseDateTime } from './gamenight';
+
+// Name used when auto-creating the challenge channel (see
+// findOrCreateChallengeChannel) — checked against existing channels first so
+// re-running /admin challenge config never creates a duplicate.
+const CHALLENGE_CHANNEL_NAME = 'board-game-challenge';
 
 export const data = new SlashCommandBuilder()
   .setName('challenge')
-  .setDescription('Weekly "Guess the Board Game" challenge')
+  .setDescription('"Guess the Board Game" challenge')
   .addSubcommand((sub) =>
-    sub.setName('leaderboard').setDescription('See who has the most weekly challenge points'),
+    sub.setName('leaderboard').setDescription('See who has the most challenge points'),
   )
   .addSubcommand((sub) =>
-    sub.setName('status').setDescription("See this week's hints so far, and when the next one posts"),
+    sub.setName('status').setDescription("See this cycle's hints so far, and when the next one posts"),
   );
 
 const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -37,9 +45,23 @@ function formatHour(hour: number): string {
   return `${twelveHour}${period}`;
 }
 
-function scheduleLine(label: string, weekday: number, hour: number): string {
-  return `${label}: **${WEEKDAY_NAMES[weekday]} ${formatHour(hour)}**`;
+// Daily mode has no "day of week" of its own — every stage falls on
+// whatever day the cycle itself starts on, so only the hour is meaningful
+// there (see stageDayOffset in utils/boardGameChallenge.ts).
+function describeStage(weekday: number, hour: number, frequency: GuildConfig['challengeFrequency']): string {
+  return frequency === 'daily' ? formatHour(hour) : `${WEEKDAY_NAMES[weekday]} ${formatHour(hour)}`;
 }
+
+function scheduleLine(label: string, weekday: number, hour: number, frequency: GuildConfig['challengeFrequency']): string {
+  const when = describeStage(weekday, hour, frequency);
+  return frequency === 'daily' ? `${label}: **${when}** (daily)` : `${label}: **${when}**`;
+}
+
+const FREQUENCY_LABELS: Record<GuildConfig['challengeFrequency'], string> = {
+  daily: 'Daily',
+  weekly: 'Weekly',
+  biweekly: 'Bi-weekly',
+};
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   const sub = interaction.options.getSubcommand();
@@ -51,22 +73,64 @@ async function handleLeaderboard(interaction: ChatInputCommandInteraction): Prom
   const entries = await getLeaderboard(interaction.guildId!);
   if (entries.length === 0) {
     await interaction.reply({
-      content: 'No points on the board yet — guess correctly in the weekly challenge to get started!',
+      content: 'No points on the board yet — guess correctly in the board game challenge to get started!',
       flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
-  const lines = entries
-    .slice(0, 10)
-    .map((e, i) => `**${i + 1}.** <@${e.userId}> — ${e.points} pt${e.points === 1 ? '' : 's'}`);
+  await interaction.reply({ embeds: [buildLeaderboardEmbed(entries)], flags: MessageFlags.Ephemeral });
+}
 
-  const embed = new EmbedBuilder()
-    .setColor(0x5865f2)
-    .setTitle('🏆 Weekly Board Game Challenge — Leaderboard')
-    .setDescription(lines.join('\n'));
+const FREQUENCY_CADENCE_TEXT: Record<GuildConfig['challengeFrequency'], string> = {
+  daily: 'Each day a new mystery game gets hinted here',
+  weekly: 'Each week a new mystery game gets hinted here across the week',
+  biweekly: 'Every other week a new mystery game gets hinted here across the week',
+};
 
-  await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+// Finds an existing "board-game-challenge" text channel or creates one, so an
+// admin turning the feature on doesn't have to go create a channel by hand
+// first. Best-effort: a creation failure (e.g. missing Manage Channels) is
+// logged and swallowed, leaving the channel unset same as before this existed.
+async function findOrCreateChallengeChannel(
+  guild: Guild,
+  frequency: GuildConfig['challengeFrequency'],
+): Promise<TextChannel | undefined> {
+  const existing = guild.channels.cache.find(
+    (c) => c.type === ChannelType.GuildText && c.name === CHALLENGE_CHANNEL_NAME,
+  );
+  if (existing) return existing as TextChannel;
+
+  try {
+    const created = (await guild.channels.create({
+      name: CHALLENGE_CHANNEL_NAME,
+      type: ChannelType.GuildText,
+      topic: '"Guess the Board Game" challenge — hints post here, reply with your guess!',
+    })) as TextChannel;
+
+    const me = await guild.members.fetchMe();
+    await created.permissionOverwrites.create(me, {
+      ViewChannel: true,
+      SendMessages: true,
+      ManageMessages: true,
+      PinMessages: true,
+    });
+
+    await created
+      .send(
+        [
+          '🎲 **Board Game Challenge** is set up in this channel!',
+          `${FREQUENCY_CADENCE_TEXT[frequency]} — reply with your guess any time, no command needed.`,
+          "A correct guess is deleted and confirmed privately by DM so the answer stays secret for everyone else until the reveal.",
+        ].join('\n'),
+      )
+      .catch((err) => console.warn(`[BoardGameChallenge] Failed to post welcome message in guild ${guild.id}:`, err));
+
+    return created;
+  } catch (err) {
+    console.warn(`[BoardGameChallenge] Failed to auto-create challenge channel for guild ${guild.id}:`, err);
+    return undefined;
+  }
 }
 
 // /admin challenge config — mirrors the shape of other /admin *.config
@@ -86,16 +150,49 @@ export async function handleChallengeConfig(interaction: ChatInputCommandInterac
   }
 
   const guildId = interaction.guildId!;
+  const currentConfig = await getGuildConfig(guildId);
   const channel = interaction.options.getChannel('channel');
   const enabled = interaction.options.getBoolean('enabled');
+  const frequencyRaw = interaction.options.getString('frequency') as GuildConfig['challengeFrequency'] | null;
+  const startDateRaw = interaction.options.getString('start_date');
 
   const patch: Record<string, unknown> = {};
+  let autoCreatedChannel: TextChannel | undefined;
+  // The frequency this call will leave in effect — used below to decide the
+  // auto-create welcome message's wording and the bi-weekly anchor default,
+  // even when frequency itself isn't being changed this call.
+  const effectiveFrequency = frequencyRaw ?? currentConfig.challengeFrequency;
+
+  if (frequencyRaw) patch.challengeFrequency = frequencyRaw;
+
+  if (startDateRaw) {
+    try {
+      const parsed = parseDateTime(startDateRaw, '12:00am', currentConfig.timezone);
+      patch.challengeCycleAnchor = mondayOfDateInTimeZone(parsed, currentConfig.timezone);
+    } catch {
+      await interaction.editReply({
+        content: `Could not parse "${startDateRaw}" as a date. Try something like "August 22".`,
+      });
+      return;
+    }
+  } else if (effectiveFrequency === 'biweekly' && !currentConfig.challengeCycleAnchor) {
+    // Switching to bi-weekly (or already bi-weekly) with no anchor set and
+    // none given this call — default to "starting this week" so bi-weekly
+    // works without requiring the extra option.
+    patch.challengeCycleAnchor = mondayOfWeekInTimeZone(currentConfig.timezone);
+  }
+
   if (channel) {
     if (channel.type !== ChannelType.GuildText) {
       await interaction.editReply({ content: 'The challenge channel must be a **Text Channel**.' });
       return;
     }
     patch.boardGameChallengeChannelId = channel.id;
+  } else if (enabled === true && !currentConfig.boardGameChallengeChannelId) {
+    // Turning the feature on with no channel set (and none given this call) —
+    // auto-create one instead of blocking the admin with a "set a channel first" error.
+    autoCreatedChannel = await findOrCreateChallengeChannel(interaction.guild!, effectiveFrequency);
+    if (autoCreatedChannel) patch.boardGameChallengeChannelId = autoCreatedChannel.id;
   }
   if (enabled !== null) patch.boardGameChallengeEnabled = enabled;
 
@@ -131,15 +228,22 @@ export async function handleChallengeConfig(interaction: ChatInputCommandInterac
       Object.keys(patch).length > 0 ? 'Board game challenge config updated.' : '**Current board game challenge config:**',
       `• Channel: ${config.boardGameChallengeChannelId ? `<#${config.boardGameChallengeChannelId}>` : '*not set*'}`,
       `• Enabled: **${config.boardGameChallengeEnabled ? 'Yes' : 'No'}**`,
-      `• ${scheduleLine('Hint 1', config.challengeClue1Weekday, config.challengeClue1Hour)}`,
-      `• ${scheduleLine('Hint 2', config.challengeClue2Weekday, config.challengeClue2Hour)}`,
-      `• ${scheduleLine('Hint 3', config.challengeClue3Weekday, config.challengeClue3Hour)}`,
-      `• ${scheduleLine('Reveal', config.challengeRevealWeekday, config.challengeRevealHour)}`,
+      `• Frequency: **${FREQUENCY_LABELS[config.challengeFrequency]}**`,
+      config.challengeFrequency === 'biweekly' && config.challengeCycleAnchor
+        ? `• On weeks: starting **${config.challengeCycleAnchor}**, then every other week`
+        : '',
+      `• ${scheduleLine('Hint 1', config.challengeClue1Weekday, config.challengeClue1Hour, config.challengeFrequency)}`,
+      `• ${scheduleLine('Hint 2', config.challengeClue2Weekday, config.challengeClue2Hour, config.challengeFrequency)}`,
+      `• ${scheduleLine('Hint 3', config.challengeClue3Weekday, config.challengeClue3Hour, config.challengeFrequency)}`,
+      `• ${scheduleLine('Reveal', config.challengeRevealWeekday, config.challengeRevealHour, config.challengeFrequency)}`,
       `• Timezone: **${config.timezone}** (set via /admin event config)`,
+      autoCreatedChannel ? `\n📌 Created <#${autoCreatedChannel.id}> since no channel was configured.` : '',
       !config.boardGameChallengeChannelId
         ? '\n⚠️ Set a channel before enabling — hints have nowhere to post otherwise.'
         : '',
-    ].join('\n'),
+    ]
+      .filter((line) => line !== '')
+      .join('\n'),
   });
 }
 
@@ -148,7 +252,7 @@ async function handleStatus(interaction: ChatInputCommandInteraction): Promise<v
   const config = await getGuildConfig(guildId);
   if (!config.boardGameChallengeEnabled || !config.boardGameChallengeChannelId) {
     await interaction.reply({
-      content: 'The weekly board game challenge isn\'t set up on this server yet.',
+      content: 'The board game challenge isn\'t set up on this server yet.',
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -157,7 +261,7 @@ async function handleStatus(interaction: ChatInputCommandInteraction): Promise<v
   const challenge = await getActiveChallenge(guildId);
   if (!challenge) {
     await interaction.reply({
-      content: `No challenge is active right now — the next one starts ${WEEKDAY_NAMES[config.challengeClue1Weekday]} at ${formatHour(config.challengeClue1Hour)} in <#${config.boardGameChallengeChannelId}>.`,
+      content: `No challenge is active right now — the next one starts ${describeStage(config.challengeClue1Weekday, config.challengeClue1Hour, config.challengeFrequency)} in <#${config.boardGameChallengeChannelId}>.`,
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -168,18 +272,18 @@ async function handleStatus(interaction: ChatInputCommandInteraction): Promise<v
     .map((clue, i) => `**Hint ${i + 1}:** ${clue}`);
 
   const hintSchedule = [
-    `${WEEKDAY_NAMES[config.challengeClue1Weekday]} ${formatHour(config.challengeClue1Hour)}`,
-    `${WEEKDAY_NAMES[config.challengeClue2Weekday]} ${formatHour(config.challengeClue2Hour)}`,
-    `${WEEKDAY_NAMES[config.challengeClue3Weekday]} ${formatHour(config.challengeClue3Hour)}`,
+    describeStage(config.challengeClue1Weekday, config.challengeClue1Hour, config.challengeFrequency),
+    describeStage(config.challengeClue2Weekday, config.challengeClue2Hour, config.challengeFrequency),
+    describeStage(config.challengeClue3Weekday, config.challengeClue3Hour, config.challengeFrequency),
   ];
   const next =
     challenge.hintsPostedCount < 3
       ? `Next hint: **${hintSchedule[challenge.hintsPostedCount]}**`
-      : `All 3 hints are posted — the answer reveals **${WEEKDAY_NAMES[config.challengeRevealWeekday]} ${formatHour(config.challengeRevealHour)}**.`;
+      : `All 3 hints are posted — the answer reveals **${describeStage(config.challengeRevealWeekday, config.challengeRevealHour, config.challengeFrequency)}**.`;
 
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
-    .setTitle("🎲 This Week's Board Game Challenge")
+    .setTitle('🎲 Current Board Game Challenge')
     .setDescription(`${hintLines.join('\n\n')}\n\n${next}\n\nReply with your guess in <#${challenge.channelId}>.`);
 
   await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });

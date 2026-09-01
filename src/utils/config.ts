@@ -113,6 +113,20 @@ export interface GuildConfig {
   challengeClue3Hour: number;
   challengeRevealWeekday: number;
   challengeRevealHour: number;
+  // How often a new challenge cycle starts (see checkAndAdvanceChallengeSchedule
+  // in boardGameChallenge.ts). 'weekly' (default) is the original behavior —
+  // one cycle per week, starting Monday. 'daily' runs all 3 hints + the reveal
+  // within a single day, using only the *Hour fields above (the *Weekday
+  // fields are ignored — there's no "day of week" within a 1-day cycle).
+  // 'biweekly' reuses the same weekday-based schedule as 'weekly' but only
+  // starts a new cycle every other week, anchored to challengeCycleAnchor.
+  challengeFrequency: 'daily' | 'weekly' | 'biweekly';
+  // Monday ("YYYY-MM-DD") of the first "on" week for 'biweekly' mode — every
+  // 14 days after this date is another on week, the week in between is idle.
+  // Ignored for 'daily'/'weekly'. Set via /admin challenge config's
+  // `start_date`; defaults to the current week the first time 'biweekly' is
+  // turned on without one (see handleChallengeConfig), so it's optional.
+  challengeCycleAnchor: string | null;
 }
 
 const DEFAULT_CONFIG: GuildConfig = {
@@ -156,6 +170,8 @@ const DEFAULT_CONFIG: GuildConfig = {
   challengeClue3Hour: 8,
   challengeRevealWeekday: 6, // Saturday
   challengeRevealHour: 18,
+  challengeFrequency: 'weekly',
+  challengeCycleAnchor: null,
 };
 
 type ConfigStore = Record<string, GuildConfig>;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isValidTimeZone, zonedTimeToUtc, parseHourInput } from '../src/utils/timezone';
+import { isValidTimeZone, zonedTimeToUtc, parseHourInput, mondayOfDateInTimeZone } from '../src/utils/timezone';
 
 describe('parseHourInput', () => {
   it('accepts 24-hour input', () => {
@@ -75,5 +75,29 @@ describe('zonedTimeToUtc', () => {
     // 9:00 AM AEDT (UTC+11) in January (Southern Hemisphere summer).
     const d = zonedTimeToUtc(2026, 0, 15, 9, 0, 'Australia/Sydney');
     expect(d.toISOString()).toBe('2026-01-14T22:00:00.000Z');
+  });
+});
+
+describe('mondayOfDateInTimeZone', () => {
+  it('returns the same date when given a Monday', () => {
+    // 2026-08-24 is a Monday.
+    expect(mondayOfDateInTimeZone(new Date('2026-08-24T12:00:00Z'), 'UTC')).toBe('2026-08-24');
+  });
+
+  it('rolls a mid-week date back to that week\'s Monday', () => {
+    // 2026-08-27 is a Thursday.
+    expect(mondayOfDateInTimeZone(new Date('2026-08-27T12:00:00Z'), 'UTC')).toBe('2026-08-24');
+  });
+
+  it('rolls a Sunday back to that (ending) week\'s Monday, not the next one', () => {
+    // 2026-08-30 is a Sunday, still part of the Aug 24 week.
+    expect(mondayOfDateInTimeZone(new Date('2026-08-30T12:00:00Z'), 'UTC')).toBe('2026-08-24');
+  });
+
+  it('resolves against the given timezone, not UTC', () => {
+    // 2026-08-24T02:00:00Z is still Sunday Aug 23 in America/New_York (UTC-4
+    // in August) — should roll back to the *previous* week's Monday there,
+    // even though the instant reads as Monday in UTC.
+    expect(mondayOfDateInTimeZone(new Date('2026-08-24T02:00:00Z'), 'America/New_York')).toBe('2026-08-17');
   });
 });

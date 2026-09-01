@@ -6,6 +6,10 @@ import { ChannelType } from 'discord.js';
 import {
   handleDenyBid,
   handleCounterButton,
+  handleCounterModal,
+  handleReplyButton,
+  handleReplyModal,
+  handleMarketplaceEditModal,
   handleAdminPurge,
   handleBidModal,
   handleAcceptBid,
@@ -986,6 +990,647 @@ describe('/marketplace post sell — catalog match confirmation', () => {
 
     expect(interaction.editReply).toHaveBeenCalledWith(
       expect.objectContaining({ content: expect.stringContaining("wasn't found on BoardGameGeek") }),
+    );
+  });
+});
+
+describe('handleCounterModal — negotiation-mode privacy', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-counter-privacy-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeCounterModalInteraction(
+    userId: string,
+    targetSend: ReturnType<typeof vi.fn>,
+    channelsFetch?: ReturnType<typeof vi.fn>,
+  ) {
+    return {
+      guildId: 'guild-1',
+      user: { id: userId, username: 'Seller' },
+      member: null,
+      fields: { getTextInputValue: (name: string) => (name === 'counter_amount' ? '30.00' : '') },
+      deferReply: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
+      client: {
+        users: { fetch: vi.fn(async () => ({ send: targetSend })) },
+        channels: { fetch: channelsFetch ?? vi.fn(async () => { throw new Error('no thread in test'); }) },
+      },
+    } as any;
+  }
+
+  it('does not post counter figures to the public channel in private mode', async () => {
+    await updateGuildConfig('guild-1', { marketplaceNegotiationMode: 'private' });
+    const listing = await createListing('guild-1', { ...BASE_LISTING, forumThreadId: 'thread-1' });
+    const added = await addBid('guild-1', listing.id, { userId: 'buyer-1', username: 'Buyer', amount: 20 });
+
+    const threadSend = vi.fn(async () => ({ id: 'msg-2', channelId: 'thread-1' }));
+    const targetSend = vi.fn(async () => ({ id: 'dm-1', channelId: 'chan-1' }));
+    const interaction = makeCounterModalInteraction('user-1', targetSend, vi.fn(async () => ({ send: threadSend })));
+
+    await handleCounterModal(interaction, listing.id, added!.bid.id);
+
+    expect(threadSend).not.toHaveBeenCalled();
+    expect(targetSend).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('30') }));
+  });
+
+  it('does not fall back to a public post when DMs are disabled in private mode', async () => {
+    await updateGuildConfig('guild-1', { marketplaceNegotiationMode: 'private' });
+    const listing = await createListing('guild-1', { ...BASE_LISTING, forumThreadId: 'thread-1' });
+    const added = await addBid('guild-1', listing.id, { userId: 'buyer-1', username: 'Buyer', amount: 20 });
+
+    const threadSend = vi.fn(async () => ({ id: 'msg-2', channelId: 'thread-1' }));
+    const targetSend = vi.fn(async () => { throw new Error('DMs disabled'); });
+    const interaction = makeCounterModalInteraction('user-1', targetSend, vi.fn(async () => ({ send: threadSend })));
+
+    await handleCounterModal(interaction, listing.id, added!.bid.id);
+
+    expect(threadSend).not.toHaveBeenCalled();
+  });
+
+  it('still posts counter figures to the public channel in public mode', async () => {
+    await updateGuildConfig('guild-1', { marketplaceNegotiationMode: 'public' });
+    const listing = await createListing('guild-1', { ...BASE_LISTING, forumThreadId: 'thread-1' });
+    const added = await addBid('guild-1', listing.id, { userId: 'buyer-1', username: 'Buyer', amount: 20 });
+
+    const threadSend = vi.fn(async () => ({ id: 'msg-2', channelId: 'thread-1' }));
+    const targetSend = vi.fn(async () => ({ id: 'dm-1', channelId: 'chan-1' }));
+    const interaction = makeCounterModalInteraction('user-1', targetSend, vi.fn(async () => ({ send: threadSend })));
+
+    await handleCounterModal(interaction, listing.id, added!.bid.id);
+
+    expect(threadSend).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('30') }));
+  });
+});
+
+describe('handleReplyButton / handleReplyModal — free-text reply independent of Accept/Deny/Counter', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-reply-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeReplyModalInteraction(
+    userId: string,
+    username: string,
+    targetSend: ReturnType<typeof vi.fn>,
+    channelsFetch?: ReturnType<typeof vi.fn>,
+  ) {
+    return {
+      guildId: 'guild-1',
+      user: { id: userId, username },
+      member: null,
+      fields: { getTextInputValue: () => 'Does it include the expansion?' },
+      deferReply: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
+      client: {
+        users: { fetch: vi.fn(async () => ({ send: targetSend })) },
+        channels: { fetch: channelsFetch ?? vi.fn(async () => { throw new Error('no thread in test'); }) },
+      },
+    } as any;
+  }
+
+  it('opens a reply modal from a DM even on a firm-price listing (no Counter available there)', async () => {
+    const listing = await createListing('guild-1', { ...BASE_LISTING, bidsAllowed: false });
+    const added = await addBid('guild-1', listing.id, { userId: 'buyer-1', username: 'Buyer' });
+    const interaction = makeButtonInteraction('user-1', { guildId: null });
+
+    await handleReplyButton(interaction, listing.id, added!.bid.id);
+
+    expect(interaction.showModal).toHaveBeenCalled();
+  });
+
+  it('rejects a reply attempt from someone who is neither party', async () => {
+    const listing = await createListing('guild-1', BASE_LISTING);
+    const added = await addBid('guild-1', listing.id, { userId: 'buyer-1', username: 'Buyer' });
+    const interaction = makeButtonInteraction('rando-1', { guildId: null });
+
+    await handleReplyButton(interaction, listing.id, added!.bid.id);
+
+    expect(interaction.showModal).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('Only the seller or the other party') }),
+    );
+  });
+
+  it('rejects a reply once the offer is no longer open', async () => {
+    const listing = await createListing('guild-1', BASE_LISTING);
+    const added = await addBid('guild-1', listing.id, { userId: 'buyer-1', username: 'Buyer' });
+    await handleDenyBid(makeButtonInteraction('buyer-1', { guildId: null }), listing.id, added!.bid.id);
+
+    const interaction = makeButtonInteraction('user-1', { guildId: null });
+    await handleReplyButton(interaction, listing.id, added!.bid.id);
+
+    expect(interaction.showModal).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('no longer open') }),
+    );
+  });
+
+  it('sends the buyer a withdraw+reply row (no premature Accept) when the seller replies', async () => {
+    const listing = await createListing('guild-1', BASE_LISTING);
+    const added = await addBid('guild-1', listing.id, { userId: 'buyer-1', username: 'Buyer' });
+    const targetSend = vi.fn(async () => ({ id: 'dm-1', channelId: 'chan-1' }));
+    const interaction = makeReplyModalInteraction('user-1', 'Seller', targetSend);
+
+    await handleReplyModal(interaction, listing.id, added!.bid.id);
+
+    expect(targetSend).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('Does it include the expansion?') }),
+    );
+    const customIds = targetSend.mock.calls[0][0].components[0].components.map((c: any) => c.data.custom_id);
+    expect(customIds).toEqual([`mp_deny_${listing.id}_${added!.bid.id}`, `mp_reply_${listing.id}_${added!.bid.id}`]);
+  });
+
+  it('sends the seller their normal Accept/Deny/Counter/Reply row when the buyer replies', async () => {
+    const listing = await createListing('guild-1', BASE_LISTING);
+    const added = await addBid('guild-1', listing.id, { userId: 'buyer-1', username: 'Buyer' });
+    const targetSend = vi.fn(async () => ({ id: 'dm-1', channelId: 'chan-1' }));
+    const interaction = makeReplyModalInteraction('buyer-1', 'Buyer', targetSend);
+
+    await handleReplyModal(interaction, listing.id, added!.bid.id);
+
+    const customIds = targetSend.mock.calls[0][0].components[0].components.map((c: any) => c.data.custom_id);
+    expect(customIds).toEqual([
+      `mp_accept_${listing.id}_${added!.bid.id}`,
+      `mp_deny_${listing.id}_${added!.bid.id}`,
+      `mp_counter_${listing.id}_${added!.bid.id}`,
+      `mp_reply_${listing.id}_${added!.bid.id}`,
+    ]);
+  });
+
+  it('excludes Counter from the seller row when the listing is firm-price', async () => {
+    const listing = await createListing('guild-1', { ...BASE_LISTING, bidsAllowed: false });
+    const added = await addBid('guild-1', listing.id, { userId: 'buyer-1', username: 'Buyer' });
+    const targetSend = vi.fn(async () => ({ id: 'dm-1', channelId: 'chan-1' }));
+    const interaction = makeReplyModalInteraction('buyer-1', 'Buyer', targetSend);
+
+    await handleReplyModal(interaction, listing.id, added!.bid.id);
+
+    const customIds = targetSend.mock.calls[0][0].components[0].components.map((c: any) => c.data.custom_id);
+    expect(customIds).not.toContain(`mp_counter_${listing.id}_${added!.bid.id}`);
+  });
+
+  it('does not change bid or listing status — a reply is not a decision', async () => {
+    const listing = await createListing('guild-1', BASE_LISTING);
+    const added = await addBid('guild-1', listing.id, { userId: 'buyer-1', username: 'Buyer' });
+    const targetSend = vi.fn(async () => ({ id: 'dm-1', channelId: 'chan-1' }));
+    const interaction = makeReplyModalInteraction('user-1', 'Seller', targetSend);
+
+    await handleReplyModal(interaction, listing.id, added!.bid.id);
+
+    const updated = await getListing('guild-1', listing.id);
+    expect(updated!.bids[0].status).toBe('open');
+    expect(updated!.status).toBe('pending');
+  });
+
+  it('respects private negotiation mode — no public post, and no fallback if DMs are off', async () => {
+    await updateGuildConfig('guild-1', { marketplaceNegotiationMode: 'private' });
+    const listing = await createListing('guild-1', { ...BASE_LISTING, forumThreadId: 'thread-1' });
+    const added = await addBid('guild-1', listing.id, { userId: 'buyer-1', username: 'Buyer' });
+
+    const threadSend = vi.fn(async () => ({ id: 'msg-2', channelId: 'thread-1' }));
+    const targetSend = vi.fn(async () => { throw new Error('DMs disabled'); });
+    const interaction = makeReplyModalInteraction('user-1', 'Seller', targetSend, vi.fn(async () => ({ send: threadSend })));
+
+    await handleReplyModal(interaction, listing.id, added!.bid.id);
+
+    expect(threadSend).not.toHaveBeenCalled();
+  });
+
+  it('posts publicly (text-only) in public negotiation mode', async () => {
+    await updateGuildConfig('guild-1', { marketplaceNegotiationMode: 'public' });
+    const listing = await createListing('guild-1', { ...BASE_LISTING, forumThreadId: 'thread-1' });
+    const added = await addBid('guild-1', listing.id, { userId: 'buyer-1', username: 'Buyer' });
+
+    const threadSend = vi.fn(async () => ({ id: 'msg-2', channelId: 'thread-1' }));
+    const targetSend = vi.fn(async () => ({ id: 'dm-1', channelId: 'chan-1' }));
+    const interaction = makeReplyModalInteraction('user-1', 'Seller', targetSend, vi.fn(async () => ({ send: threadSend })));
+
+    await handleReplyModal(interaction, listing.id, added!.bid.id);
+
+    expect(threadSend).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('Does it include the expansion?') }),
+    );
+  });
+});
+
+describe('BGG attribution omitted for listings with no BGG data', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-bgg-attrib-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeTextChannelInteraction(userId: string, messageEdit: ReturnType<typeof vi.fn>) {
+    return {
+      guildId: null,
+      user: { id: userId },
+      message: { content: 'original', edit: vi.fn(async () => {}) },
+      reply: vi.fn(async () => {}),
+      deferReply: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
+      client: {
+        user: { id: 'bot-1' },
+        users: { fetch: vi.fn(async (id: string) => ({ id, send: vi.fn(async () => ({})) })) },
+        channels: {
+          fetch: vi.fn(async () => ({
+            isTextBased: () => true,
+            messages: {
+              fetch: vi.fn(async () => ({ author: { id: 'bot-1' }, edit: messageEdit, reply: vi.fn(async () => {}) })),
+            },
+          })),
+        },
+      },
+    } as any;
+  }
+
+  it('omits the BGG logo/attachment for a listing with no bggId', async () => {
+    const listing = await createListing('guild-1', {
+      ...BASE_LISTING,
+      listingChannelId: 'chan-1',
+      listingMessageId: 'msg-1',
+    });
+    const added = await addBid('guild-1', listing.id, { userId: 'buyer-1', username: 'Buyer' });
+    const messageEdit = vi.fn(async () => {});
+    const interaction = makeTextChannelInteraction('buyer-1', messageEdit);
+
+    await handleDenyBid(interaction, listing.id, added!.bid.id);
+
+    expect(messageEdit).toHaveBeenCalledWith(expect.objectContaining({ files: [] }));
+  });
+
+  it('includes the BGG logo/attachment for a listing that references real BGG data', async () => {
+    const listing = await createListing('guild-1', {
+      ...BASE_LISTING,
+      bggId: '266192',
+      listingChannelId: 'chan-1',
+      listingMessageId: 'msg-1',
+    });
+    const added = await addBid('guild-1', listing.id, { userId: 'buyer-1', username: 'Buyer' });
+    const messageEdit = vi.fn(async () => {});
+    const interaction = makeTextChannelInteraction('buyer-1', messageEdit);
+
+    await handleDenyBid(interaction, listing.id, added!.bid.id);
+
+    expect(messageEdit.mock.calls[0][0].files).toHaveLength(1);
+  });
+});
+
+describe('listing post reflects final sold/traded terms', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-final-terms-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function findField(embed: any, name: string): string | undefined {
+    return embed.data.fields?.find((f: { name: string }) => f.name === name)?.value;
+  }
+
+  function makeAcceptInteraction(messageEdit: ReturnType<typeof vi.fn>) {
+    return {
+      guildId: null,
+      user: { id: 'user-1' },
+      message: { content: 'original', edit: vi.fn(async () => {}) },
+      reply: vi.fn(async () => {}),
+      deferReply: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
+      followUp: vi.fn(async () => {}),
+      client: {
+        user: { id: 'bot-1' },
+        users: { fetch: vi.fn(async (id: string) => ({ id, send: vi.fn(async () => ({})) })) },
+        channels: {
+          fetch: vi.fn(async () => ({
+            isTextBased: () => true,
+            messages: { fetch: vi.fn(async () => ({ author: { id: 'bot-1' }, edit: messageEdit, reply: vi.fn(async () => {}) })) },
+          })),
+        },
+      },
+    } as any;
+  }
+
+  it('shows the accepted offer amount as "Sold For" (not the original asking price)', async () => {
+    const listing = await createListing('guild-1', {
+      ...BASE_LISTING,
+      askingPrice: 50,
+      listingChannelId: 'chan-1',
+      listingMessageId: 'msg-1',
+    });
+    const added = await addBid('guild-1', listing.id, { userId: 'buyer-1', username: 'Buyer', amount: 35 });
+    const messageEdit = vi.fn(async () => {});
+
+    await handleAcceptBid(makeAcceptInteraction(messageEdit), listing.id, added!.bid.id);
+
+    const embed = messageEdit.mock.calls[0][0].embeds[0];
+    expect(findField(embed, 'Sold For')).toBe('$35.00');
+    expect(findField(embed, 'Price')).toBeUndefined();
+  });
+
+  it('shows the final countered amount, not the buyer\'s original offer', async () => {
+    const listing = await createListing('guild-1', {
+      ...BASE_LISTING,
+      askingPrice: 50,
+      listingChannelId: 'chan-1',
+      listingMessageId: 'msg-1',
+    });
+    const added = await addBid('guild-1', listing.id, { userId: 'buyer-1', username: 'Buyer', amount: 35 });
+    const { addCounter } = await import('../src/utils/marketplaceStorage');
+    await addCounter('guild-1', listing.id, added!.bid.id, { fromUserId: 'user-1', fromUsername: 'Seller', amount: 45 });
+    const messageEdit = vi.fn(async () => {});
+
+    await handleAcceptBid(makeAcceptInteraction(messageEdit), listing.id, added!.bid.id);
+
+    const embed = messageEdit.mock.calls[0][0].embeds[0];
+    expect(findField(embed, 'Sold For')).toBe('$45.00');
+  });
+
+  it('shows the fixed asking price as "Sold For" for a Buy It Now purchase (bid carries no amount)', async () => {
+    const listing = await createListing('guild-1', {
+      ...BASE_LISTING,
+      bidsAllowed: false,
+      askingPrice: 60,
+      listingChannelId: 'chan-1',
+      listingMessageId: 'msg-1',
+    });
+    const messageEdit = vi.fn(async () => {});
+    const interaction = {
+      guildId: 'guild-1',
+      user: { id: 'buyer-1', username: 'Buyer' },
+      member: null,
+      deferUpdate: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
+      client: {
+        user: { id: 'bot-1' },
+        users: { fetch: vi.fn(async (id: string) => ({ id, send: vi.fn(async () => ({})) })) },
+        channels: {
+          fetch: vi.fn(async () => ({
+            isTextBased: () => true,
+            messages: { fetch: vi.fn(async () => ({ author: { id: 'bot-1' }, edit: messageEdit, reply: vi.fn(async () => {}) })) },
+          })),
+        },
+      },
+    } as any;
+
+    await handleBuyNowConfirm(interaction, listing.id);
+
+    const embed = messageEdit.mock.calls[0][0].embeds[0];
+    expect(findField(embed, 'Sold For')).toBe('$60.00');
+  });
+
+  it('labels a completed trade "Traded For" / "Traded" (not "Sold")', async () => {
+    const listing = await createListing('guild-1', {
+      ...BASE_LISTING,
+      type: 'trade' as const,
+      lookingFor: 'Terraforming Mars',
+      listingChannelId: 'chan-1',
+      listingMessageId: 'msg-1',
+    });
+    const added = await addBid('guild-1', listing.id, { userId: 'buyer-1', username: 'Buyer', offer: 'Wingspan' });
+    const messageEdit = vi.fn(async () => {});
+
+    await handleAcceptBid(makeAcceptInteraction(messageEdit), listing.id, added!.bid.id);
+
+    const embed = messageEdit.mock.calls[0][0].embeds[0];
+    expect(findField(embed, 'Traded For')).toBe('Wingspan');
+    expect(findField(embed, 'Looking For')).toBeUndefined();
+    expect(findField(embed, 'Status')).toContain('Traded');
+    expect(findField(embed, 'Status')).not.toContain('Sold');
+  });
+
+  it('leaves a still-active listing (denied offer) showing "Price", not "Sold For"', async () => {
+    const listing = await createListing('guild-1', {
+      ...BASE_LISTING,
+      askingPrice: 50,
+      listingChannelId: 'chan-1',
+      listingMessageId: 'msg-1',
+    });
+    const added = await addBid('guild-1', listing.id, { userId: 'buyer-1', username: 'Buyer', amount: 35 });
+    const messageEdit = vi.fn(async () => {});
+
+    await handleDenyBid(makeAcceptInteraction(messageEdit), listing.id, added!.bid.id);
+
+    const embed = messageEdit.mock.calls[0][0].embeds[0];
+    expect(findField(embed, 'Price')).toBe('$50.00');
+    expect(findField(embed, 'Sold For')).toBeUndefined();
+  });
+});
+
+describe('/marketplace edit', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-edit-command-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeEditCommandInteraction(userId: string, listingId: string) {
+    return {
+      guildId: 'guild-1',
+      user: { id: userId },
+      options: {
+        getSubcommandGroup: () => null,
+        getSubcommand: () => 'edit',
+        getString: () => listingId,
+      },
+      reply: vi.fn(async () => {}),
+      showModal: vi.fn(async () => {}),
+    } as any;
+  }
+
+  function modalFields(interaction: ReturnType<typeof makeEditCommandInteraction>) {
+    const modal = interaction.showModal.mock.calls[0][0];
+    return modal.components.flatMap((row: any) => row.components);
+  }
+
+  it('opens an edit modal prefilled with the current asking price and notes for a sell listing', async () => {
+    const listing = await createListing('guild-1', { ...BASE_LISTING, askingPrice: 40, notes: 'Great condition' });
+    const interaction = makeEditCommandInteraction('user-1', listing.id);
+
+    await execute(interaction);
+
+    expect(interaction.showModal).toHaveBeenCalled();
+    const fields = modalFields(interaction);
+    expect(fields.find((f: any) => f.data.custom_id === 'edit_price').data.value).toBe('40.00');
+    expect(fields.find((f: any) => f.data.custom_id === 'edit_notes').data.value).toBe('Great condition');
+  });
+
+  it('opens an edit modal with a "Looking for" field (not price) for a trade listing', async () => {
+    const listing = await createListing('guild-1', { ...BASE_LISTING, type: 'trade' as const, lookingFor: 'Ark Nova' });
+    const interaction = makeEditCommandInteraction('user-1', listing.id);
+
+    await execute(interaction);
+
+    const fields = modalFields(interaction);
+    expect(fields.some((f: any) => f.data.custom_id === 'edit_price')).toBe(false);
+    expect(fields.find((f: any) => f.data.custom_id === 'edit_looking_for').data.value).toBe('Ark Nova');
+  });
+
+  it("rejects editing someone else's listing", async () => {
+    const listing = await createListing('guild-1', BASE_LISTING);
+    const interaction = makeEditCommandInteraction('rando-1', listing.id);
+
+    await execute(interaction);
+
+    expect(interaction.showModal).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('your own listings') }),
+    );
+  });
+
+  it('rejects editing a closed listing', async () => {
+    const listing = await createListing('guild-1', BASE_LISTING);
+    await closeListing('guild-1', listing.id);
+    const interaction = makeEditCommandInteraction('user-1', listing.id);
+
+    await execute(interaction);
+
+    expect(interaction.showModal).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('active or pending') }),
+    );
+  });
+});
+
+describe('handleMarketplaceEditModal', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-edit-modal-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeEditModalInteraction(userId: string, values: Record<string, string>) {
+    return {
+      guildId: 'guild-1',
+      user: { id: userId },
+      fields: { getTextInputValue: (name: string) => values[name] ?? '' },
+      deferReply: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
+      client: {
+        channels: { fetch: vi.fn(async () => { throw new Error('no thread in test'); }) },
+      },
+    } as any;
+  }
+
+  it('updates the asking price on a sell listing', async () => {
+    const listing = await createListing('guild-1', { ...BASE_LISTING, askingPrice: 40 });
+    const interaction = makeEditModalInteraction('user-1', { edit_price: '55.00', edit_notes: '' });
+
+    await handleMarketplaceEditModal(interaction, listing.id);
+
+    const updated = await getListing('guild-1', listing.id);
+    expect(updated!.askingPrice).toBe(55);
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('updated') }),
+    );
+  });
+
+  it('clears the asking price when the price field is left blank ("open to offers")', async () => {
+    const listing = await createListing('guild-1', { ...BASE_LISTING, askingPrice: 40 });
+    const interaction = makeEditModalInteraction('user-1', { edit_price: '', edit_notes: '' });
+
+    await handleMarketplaceEditModal(interaction, listing.id);
+
+    const updated = await getListing('guild-1', listing.id);
+    expect(updated!.askingPrice).toBeUndefined();
+  });
+
+  it('rejects an invalid price and saves nothing', async () => {
+    const listing = await createListing('guild-1', { ...BASE_LISTING, askingPrice: 40 });
+    const interaction = makeEditModalInteraction('user-1', { edit_price: 'free', edit_notes: '' });
+
+    await handleMarketplaceEditModal(interaction, listing.id);
+
+    const updated = await getListing('guild-1', listing.id);
+    expect(updated!.askingPrice).toBe(40);
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('Invalid price') }),
+    );
+  });
+
+  it('updates "looking for" on a trade listing', async () => {
+    const listing = await createListing('guild-1', { ...BASE_LISTING, type: 'trade' as const, lookingFor: 'Wingspan' });
+    const interaction = makeEditModalInteraction('user-1', { edit_looking_for: 'Ark Nova', edit_notes: '' });
+
+    await handleMarketplaceEditModal(interaction, listing.id);
+
+    const updated = await getListing('guild-1', listing.id);
+    expect(updated!.lookingFor).toBe('Ark Nova');
+  });
+
+  it('updates notes', async () => {
+    const listing = await createListing('guild-1', BASE_LISTING);
+    const interaction = makeEditModalInteraction('user-1', { edit_price: '', edit_notes: 'Box has some wear' });
+
+    await handleMarketplaceEditModal(interaction, listing.id);
+
+    const updated = await getListing('guild-1', listing.id);
+    expect(updated!.notes).toBe('Box has some wear');
+  });
+
+  it("rejects editing someone else's listing and saves nothing", async () => {
+    const listing = await createListing('guild-1', { ...BASE_LISTING, askingPrice: 40 });
+    const interaction = makeEditModalInteraction('rando-1', { edit_price: '99.00', edit_notes: '' });
+
+    await handleMarketplaceEditModal(interaction, listing.id);
+
+    const updated = await getListing('guild-1', listing.id);
+    expect(updated!.askingPrice).toBe(40);
+  });
+
+  it('rejects editing once the listing is no longer active/pending', async () => {
+    const listing = await createListing('guild-1', { ...BASE_LISTING, askingPrice: 40 });
+    await closeListing('guild-1', listing.id);
+    const interaction = makeEditModalInteraction('user-1', { edit_price: '99.00', edit_notes: '' });
+
+    await handleMarketplaceEditModal(interaction, listing.id);
+
+    const updated = await getListing('guild-1', listing.id);
+    expect(updated!.askingPrice).toBe(40);
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('active or pending') }),
     );
   });
 });

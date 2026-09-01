@@ -24,10 +24,21 @@ export interface BGGGame {
   thumbnail: string | null;
   expansions: BGGExpansion[];
   parentGame?: BGGExpansion;
+  // Combined categories+mechanics through BGG_TO_TAG's curated vocabulary —
+  // this is the field the library-tagging system (game.ts/library.ts) reads;
+  // don't repurpose it for the challenge's clues, which need category and
+  // mechanic kept separate (see categories/mechanics below) to progress from
+  // vague to specific across hints 1/2.
   tags: string[];
+  // Same curated vocabulary as `tags`, split by BGG link type — categories
+  // read as a "genre" (hint 1, vaguest), mechanics as gameplay systems
+  // (hint 2, more specific). Used by generateClues (boardGameChallenge.ts) only.
+  categories: string[];
+  mechanics: string[];
   howToPlayUrl: string | null;
   yearPublished: number | null;
   designers: string[];
+  publishers: string[];
 }
 
 export function weightTag(weight: number): 'Light' | 'Medium' | 'Heavy' {
@@ -399,17 +410,31 @@ function parseBGGItem(item: any, id: string): Omit<BGGGame, 'howToPlayUrl'> {
     .filter((l) => l['@_type'] === 'boardgameexpansion' && l['@_inbound'])
     .map((l) => ({ id: String(l['@_id']), name: decodeEntities(String(l['@_value'])) }))[0];
 
+  // Builds the combined `tags` (unchanged, capped at 5, deduped across both
+  // link types — read by the library-tagging system) alongside `categories`
+  // and `mechanics` split by link type for the challenge's clues (each capped
+  // at 3, own dedup — see generateClues in boardGameChallenge.ts). Scans every
+  // link rather than stopping at 5 combined tags like before, since stopping
+  // early could starve one of the two split buckets depending on link order.
   const seen = new Set<string>();
   const tags: string[] = [];
+  const categories: string[] = [];
+  const mechanics: string[] = [];
   for (const link of links) {
     const type: string = link['@_type'] ?? '';
     if (type !== 'boardgamecategory' && type !== 'boardgamemechanic') continue;
     const mapped = BGG_TO_TAG[String(link['@_value'] ?? '').toLowerCase()];
-    if (mapped && !seen.has(mapped)) {
+    if (!mapped) continue;
+    if (!seen.has(mapped)) {
       seen.add(mapped);
-      tags.push(mapped);
+      if (tags.length < 5) tags.push(mapped);
     }
-    if (tags.length >= 5) break;
+    if (type === 'boardgamecategory' && categories.length < 3 && !categories.includes(mapped)) {
+      categories.push(mapped);
+    }
+    if (type === 'boardgamemechanic' && mechanics.length < 3 && !mechanics.includes(mapped)) {
+      mechanics.push(mapped);
+    }
   }
 
   const rawWeight = item.statistics?.ratings?.averageweight?.['@_value'];
@@ -420,6 +445,11 @@ function parseBGGItem(item: any, id: string): Omit<BGGGame, 'howToPlayUrl'> {
 
   const designers = links
     .filter((l) => l['@_type'] === 'boardgamedesigner')
+    .map((l) => decodeEntities(String(l['@_value'])))
+    .slice(0, 5);
+
+  const publishers = links
+    .filter((l) => l['@_type'] === 'boardgamepublisher')
     .map((l) => decodeEntities(String(l['@_value'])))
     .slice(0, 5);
 
@@ -441,8 +471,11 @@ function parseBGGItem(item: any, id: string): Omit<BGGGame, 'howToPlayUrl'> {
     expansions,
     parentGame,
     tags,
+    categories,
+    mechanics,
     yearPublished,
     designers,
+    publishers,
   };
 }
 
