@@ -65,6 +65,9 @@ import {
   handleDenyBid,
   handleCounterButton,
   handleCounterModal,
+  handleReplyButton,
+  handleReplyModal,
+  handleMarketplaceEditModal,
   handleBuyerAcceptCounter,
   handlePriceUseSuggested,
   handlePriceNone,
@@ -227,6 +230,12 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         const rest = interaction.customId.slice('mp_counter_modal_'.length);
         const sep = rest.indexOf('_');
         await handleCounterModal(interaction as unknown as ModalSubmitInteraction, rest.slice(0, sep), rest.slice(sep + 1));
+      } else if (interaction.customId.startsWith('mp_reply_modal_')) {
+        const rest = interaction.customId.slice('mp_reply_modal_'.length);
+        const sep = rest.indexOf('_');
+        await handleReplyModal(interaction as unknown as ModalSubmitInteraction, rest.slice(0, sep), rest.slice(sep + 1));
+      } else if (interaction.customId.startsWith('mp_edit_modal_')) {
+        await handleMarketplaceEditModal(interaction as unknown as ModalSubmitInteraction, interaction.customId.slice('mp_edit_modal_'.length));
       } else if (interaction.customId.startsWith('mp_ref_modal_')) {
         await handleRefModal(interaction as unknown as ModalSubmitInteraction, interaction.customId.slice('mp_ref_modal_'.length));
       } else if (interaction.customId.startsWith('mp_match_research_modal_')) {
@@ -381,6 +390,10 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         const rest = id.slice('mp_counter_'.length);
         const sep = rest.indexOf('_');
         await handleCounterButton(interaction, rest.slice(0, sep), rest.slice(sep + 1));
+      } else if (id.startsWith('mp_reply_') && !id.startsWith('mp_reply_modal_')) {
+        const rest = id.slice('mp_reply_'.length);
+        const sep = rest.indexOf('_');
+        await handleReplyButton(interaction, rest.slice(0, sep), rest.slice(sep + 1));
       } else if (id.startsWith('mp_buyer_accept_')) {
         const rest = id.slice('mp_buyer_accept_'.length);
         const sep = rest.indexOf('_');

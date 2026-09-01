@@ -79,6 +79,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
           '`my` — View and manage your own listings',
           '`close` — Close one of your listings',
           '`reopen` — Reopen a closed or sold listing',
+          '`edit` — Edit the price/looking-for/notes on one of your own active or pending listings',
         ].join('\n'),
       },
       {
@@ -104,10 +105,10 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         ].join('\n'),
       },
       {
-        name: '🎲  /challenge — Weekly "Guess the Board Game"',
+        name: '🎲  /challenge — "Guess the Board Game"',
         value: [
-          '`leaderboard` — See who has the most weekly challenge points',
-          '`status` — See this week\'s hints so far, and when the next one posts. Reply with your guess in the configured channel — hint/reveal days and times are set per-server via `/admin challenge config`',
+          '`leaderboard` — See who has the most challenge points',
+          '`status` — See this cycle\'s hints so far, and when the next one posts. Reply with your guess in the configured channel — the schedule (daily, weekly, or bi-weekly) and hint/reveal times are set per-server via `/admin challenge config`',
         ].join('\n'),
       },
       ...(isHost
@@ -154,7 +155,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
                 '`/admin marketplace purge` — Delete old/closed marketplace listings',
                 '`/admin room config` — Set the Discord category used for /room private channels',
                 '`/admin general config` — Set the channel for the general chat "Quick Actions" button hub',
-                '`/admin challenge config` — Set the channel, on/off state, and hint/reveal schedule for the weekly board game challenge',
+                '`/admin challenge config` — Set the channel, frequency (daily/weekly/bi-weekly), on/off state, and hint/reveal schedule for the board game challenge',
                 '`/admin usage` — Show which commands are used on this server, and how often',
                 '`/admin bgstats` — Show BG Stats link open counts for the most recently locked event',
               ].join('\n'),

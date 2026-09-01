@@ -160,6 +160,27 @@ export async function updateListing(
   return listings[idx];
 }
 
+// Owner-editable content fields only — deliberately separate from
+// updateListing's patch (status/forumThreadId/etc. bookkeeping) so the two
+// can't be confused, and so this contract stays narrow as new editable
+// fields are added. asking price / looking-for / notes are all a listing's
+// author can currently change post-creation; type, bggId, condition, and
+// bidsAllowed are structural and not editable (see handleEditCommand).
+export async function editListing(
+  guildId: string,
+  listingId: string,
+  patch: Partial<Pick<MarketplaceListing, 'askingPrice' | 'lookingFor' | 'notes'>>,
+): Promise<MarketplaceListing | undefined> {
+  const store = await load();
+  const listings = store[guildId] ?? [];
+  const idx = listings.findIndex((l) => l.id === listingId);
+  if (idx === -1) return undefined;
+  listings[idx] = { ...listings[idx], ...patch, updatedAt: new Date().toISOString() };
+  store[guildId] = listings;
+  await save(store);
+  return listings[idx];
+}
+
 export async function addBid(
   guildId: string,
   listingId: string,

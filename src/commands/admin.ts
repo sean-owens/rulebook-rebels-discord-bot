@@ -437,22 +437,39 @@ export const data = new SlashCommandBuilder()
   .addSubcommandGroup((group) =>
     group
       .setName('challenge')
-      .setDescription('Weekly "Guess the Board Game" challenge administration')
+      .setDescription('"Guess the Board Game" challenge administration')
       .addSubcommand((sub) => {
         sub
           .setName('config')
-          .setDescription('Set the channel, on/off state, and hint/reveal schedule for the weekly board game challenge')
+          .setDescription('Set the channel, frequency, on/off state, and hint/reveal schedule for the board game challenge')
           .addChannelOption((opt) =>
             opt
               .setName('channel')
-              .setDescription('Text channel where hints post and guesses are read')
+              .setDescription('Channel for hints/guesses (auto-created if omitted and enabling)')
               .addChannelTypes(ChannelType.GuildText)
               .setRequired(false),
           )
           .addBooleanOption((opt) =>
             opt
               .setName('enabled')
-              .setDescription('Turn the weekly challenge on or off (default: off)')
+              .setDescription('Turn the challenge on or off (default: off)')
+              .setRequired(false),
+          )
+          .addStringOption((opt) =>
+            opt
+              .setName('frequency')
+              .setDescription('How often a new challenge cycle starts (default: weekly)')
+              .addChoices(
+                { name: 'Daily', value: 'daily' },
+                { name: 'Weekly', value: 'weekly' },
+                { name: 'Bi-weekly', value: 'biweekly' },
+              )
+              .setRequired(false),
+          )
+          .addStringOption((opt) =>
+            opt
+              .setName('start_date')
+              .setDescription('Bi-weekly only: which week is "on" (e.g. "August 22") — defaults to this week')
               .setRequired(false),
           );
         const scheduleFields: [string, string, string][] = [
@@ -466,7 +483,7 @@ export const data = new SlashCommandBuilder()
             .addStringOption((opt) =>
               opt
                 .setName(`${prefix}_day`)
-                .setDescription(`Day of week ${label.toLowerCase()} posts on (${defaultText})`)
+                .setDescription(`Day of week ${label.toLowerCase()} posts on, ignored in daily mode (${defaultText})`)
                 .addChoices(...WEEKDAY_CHOICES)
                 .setRequired(false),
             )

@@ -2,11 +2,13 @@ import { Client, EmbedBuilder, TextChannel } from 'discord.js';
 import { getBGGGame, weightTag, BGGGame } from './bgg';
 import { getTopRankedGames, editDistanceAtMost } from './bggCatalog';
 import { buildBggAttachment } from './gameEmbeds';
-import { getGuildConfig, getGuildIdsWithConfig } from './config';
-import { nowInTimeZone, mondayOfWeekInTimeZone } from './timezone';
+import { getGuildConfig, getGuildIdsWithConfig, GuildConfig } from './config';
+import { mondayOfWeekInTimeZone, todayInTimeZone, zonedTimeToUtc } from './timezone';
 import {
   WeeklyChallenge,
+  LeaderboardEntry,
   getActiveChallenge,
+  getChallengesForGuild,
   createWeeklyChallenge,
   recordHintPosted,
   revealChallenge,
@@ -42,32 +44,39 @@ function playtimeRangeText(game: BGGGame): string {
     : `~${game.minPlaytime}–${game.maxPlaytime} min`;
 }
 
-// Three tiers, vaguest to most specific, built entirely from BGG metadata —
-// never the title or thumbnail. Best-effort: individual facts are simply
-// omitted when BGG has no data for them (e.g. no weight rating yet), so a
-// thinly-documented game still gets a usable (if shorter) hint instead of an
-// error.
+// Three tiers, each holding up to 3 facts and progressing vaguest → most
+// specific, built entirely from BGG metadata — never the title or thumbnail:
+//   1. player count, duration, genre/category — broad "what kind of game is this"
+//   2. mechanics, weight/complexity, best player count — how it actually plays
+//   3. year released, designer(s), publisher — specific enough to place it
+// Best-effort throughout: an individual fact is simply omitted when BGG has
+// no data for it (e.g. no categories tagged), so a thinly-documented game
+// still gets a usable (if shorter) hint instead of an error. Hint 1's first
+// two facts (player count, duration) always have a value — bgg.ts defaults
+// min/max players/playtime rather than leaving them null — so hint 1 is
+// never empty even when genre data is missing; likewise hint 2's "best with"
+// fact always has a value. Hint 3 can end up empty for a very
+// thinly-documented catalog entry (no year/designer/publisher on file), so it
+// alone keeps a fallback line.
 export function generateClues(game: BGGGame): [string, string, string] {
-  const decade = game.yearPublished ? `${Math.floor(game.yearPublished / 10) * 10}s` : null;
   const clue1Facts = [
     playerRangeText(game),
     playtimeRangeText(game),
-    game.weight ? `${weightTag(game.weight)} weight/complexity` : null,
-    decade ? `first published in the ${decade}` : null,
+    game.categories.length > 0 ? `${game.categories.join('/')} genre` : null,
   ].filter((f): f is string => f !== null);
   const clue1 = clue1Facts.join(' • ');
 
-  const tagsForClue2 = game.tags.slice(0, 3);
-  const tagsForClue3 = game.tags.slice(3);
-  const clue2 =
-    tagsForClue2.length > 0
-      ? `Tagged with: ${tagsForClue2.join(', ')}`
-      : "No standout mechanics/categories on file for this one — save your guess for hint 3!";
+  const clue2Facts = [
+    game.mechanics.length > 0 ? `Mechanics: ${game.mechanics.join(', ')}` : null,
+    game.weight ? `${weightTag(game.weight)} weight/complexity` : null,
+    `Best with ${game.suggestedPlayers} player${game.suggestedPlayers === 1 ? '' : 's'}`,
+  ].filter((f): f is string => f !== null);
+  const clue2 = clue2Facts.join(' • ');
 
   const clue3Facts = [
+    game.yearPublished ? `Released in ${game.yearPublished}` : null,
     game.designers.length > 0 ? `Designed by ${game.designers.join(', ')}` : null,
-    game.yearPublished ? `Published in ${game.yearPublished}` : null,
-    tagsForClue3.length > 0 ? `Also tagged: ${tagsForClue3.join(', ')}` : null,
+    game.publishers.length > 0 ? `Published by ${game.publishers[0]}` : null,
   ].filter((f): f is string => f !== null);
   const clue3 = clue3Facts.length > 0 ? clue3Facts.join('. ') : "That's all the data we've got — good luck!";
 
@@ -103,6 +112,22 @@ export function isCorrectGuess(guess: string, title: string): boolean {
   return editDistanceAtMost(normGuess, normTitle, maxDist);
 }
 
+// Shared by /challenge leaderboard (commands/boardgamechallenge.ts) and the
+// auto-posted-and-pinned copy in postReveal below, so the two never drift.
+export function buildLeaderboardEmbed(entries: LeaderboardEntry[]): EmbedBuilder {
+  const lines =
+    entries.length > 0
+      ? entries
+          .slice(0, 10)
+          .map((e, i) => `**${i + 1}.** <@${e.userId}> — ${e.points} pt${e.points === 1 ? '' : 's'}`)
+      : ['No points on the board yet — guess correctly in the board game challenge to get started!'];
+
+  return new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle('🏆 Board Game Challenge — Leaderboard')
+    .setDescription(lines.join('\n'));
+}
+
 async function getTextChannel(client: Client, channelId: string): Promise<TextChannel | undefined> {
   try {
     const channel = await client.channels.fetch(channelId);
@@ -131,12 +156,26 @@ export async function postHint(
   const pointsByStage = { 1: 100, 2: 80, 3: 50 } as const;
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
-    .setTitle(`🎲 Weekly Board Game Challenge — Hint ${hintIndex}/3`)
+    .setTitle(`🎲 Board Game Challenge — Hint ${hintIndex}/3`)
     .setDescription(challenge.clues[hintIndex - 1])
     .setFooter({
-      text: `Reply in this channel with your guess! Correct right now = ${pointsByStage[hintIndex]} points. Answer revealed at week's end — see /challenge status for the exact time.`,
+      text: `Reply in this channel with your guess! Correct right now = ${pointsByStage[hintIndex]} points. Answer revealed at the end of this cycle — see /challenge status for the exact time.`,
     })
     .setImage('attachment://powered_by_BGG_01_SM.png');
+
+  // Full rules only on hint 1 — the weekly "first thing posted" moment new
+  // members are most likely to see, without repeating the same block on hints 2/3.
+  if (hintIndex === 1) {
+    embed.addFields({
+      name: 'How to play',
+      value:
+        'Reply right here in this channel with your guess for the mystery game — no command needed. ' +
+        'Wrong guesses get a ❌ reaction so you know to try again. A correct guess is deleted immediately ' +
+        "and confirmed privately by DM (with your point total), so the answer stays secret for everyone " +
+        "else until the reveal. Guessing earlier (fewer hints) is worth more points, and everyone " +
+        'who guesses right scores, not just the first person.',
+    });
+  }
 
   const message = await channel.send({ embeds: [embed], files: [buildBggAttachment()] });
   await recordHintPosted(challenge.guildId, challenge.id, hintIndex, message.id);
@@ -173,9 +212,34 @@ export async function postReveal(client: Client, challenge: WeeklyChallenge): Pr
 
   await channel.send({ embeds: [embed], files: [buildBggAttachment()] });
   await revealChallenge(challenge.guildId, challenge.id);
+  await postAndPinLeaderboard(client, channel, challenge.guildId);
 }
 
-async function startNewChallenge(client: Client, guildId: string, channelId: string, timezone: string): Promise<void> {
+// Keeps the leaderboard visible between weeks instead of requiring members to
+// remember /challenge leaderboard exists. Best-effort: a missing Pin Messages
+// permission (or any other failure) is logged and swallowed rather than
+// blocking the reveal, which has already happened by the time this runs.
+async function postAndPinLeaderboard(client: Client, channel: TextChannel, guildId: string): Promise<void> {
+  try {
+    const entries = await getLeaderboard(guildId);
+    const message = await channel.send({ embeds: [buildLeaderboardEmbed(entries)] });
+
+    const pins = await channel.messages.fetchPinned();
+    for (const [, pinned] of pins) {
+      if (pinned.author.id === client.user!.id) await pinned.unpin().catch(() => null);
+    }
+    await message.pin();
+  } catch (err) {
+    console.warn(`[BoardGameChallenge] Failed to post/pin leaderboard for guild ${guildId}:`, err);
+  }
+}
+
+async function startNewChallenge(
+  client: Client,
+  guildId: string,
+  channelId: string,
+  periodStart: string,
+): Promise<void> {
   const game = await selectWeeklyGame(guildId);
   if (!game) {
     console.warn(`[BoardGameChallenge] No BGG catalog entries available — skipping guild ${guildId}`);
@@ -183,7 +247,7 @@ async function startNewChallenge(client: Client, guildId: string, channelId: str
   }
 
   const challenge = await createWeeklyChallenge(guildId, {
-    weekStart: mondayOfWeekInTimeZone(timezone),
+    weekStart: periodStart,
     bggId: game.id,
     title: game.name,
     clues: generateClues(game),
@@ -194,6 +258,86 @@ async function startNewChallenge(client: Client, guildId: string, channelId: str
   await postHint(client, challenge, 1);
 }
 
+function daysSinceMonday(weekday: number): number {
+  return (weekday + 6) % 7; // Sun(0)->6, Mon(1)->0, Tue(2)->1, ... Sat(6)->5
+}
+
+// One challenge cycle's length in calendar days, by frequency — used both to
+// size the "no active challenge" -> "force-reveal a stale one" staleness
+// window and (for 'biweekly') to find which 14-day bucket "now" falls into.
+function periodLengthDays(frequency: GuildConfig['challengeFrequency']): number {
+  if (frequency === 'daily') return 1;
+  if (frequency === 'biweekly') return 14;
+  return 7;
+}
+
+// A stage's configured weekday only means anything when the cycle spans a
+// full week ('weekly'/'biweekly') — a 'daily' cycle has no "day of week" of
+// its own, so every stage falls on the cycle's own day (offset 0) regardless
+// of what's stored in *Weekday, and only the *Hour fields matter for it.
+function stageDayOffset(frequency: GuildConfig['challengeFrequency'], weekday: number): number {
+  return frequency === 'daily' ? 0 : daysSinceMonday(weekday);
+}
+
+// The Monday ("YYYY-MM-DD") of the current 14-day bucket for 'biweekly' mode,
+// counting in exact 14-day increments from `anchor` (itself always a Monday —
+// see mondayOfDateInTimeZone in /admin challenge config's start_date
+// handling). Returns undefined if `anchor` is still in the future (the
+// bi-weekly cycle hasn't started yet) so the caller knows not to create a
+// challenge yet. Landing in the "off" week of a bucket still resolves to that
+// bucket's Monday — the same one the "on" week's challenge was created
+// under — so the "already started this period" check below correctly finds
+// it and doesn't start a second one; a new challenge only becomes possible
+// again once a full 14 days have passed.
+function biweeklyPeriodStart(anchor: string, timeZone: string): string | undefined {
+  const thisMonday = mondayOfWeekInTimeZone(timeZone);
+  const [anchorYear, anchorMonth, anchorDay] = anchor.split('-').map(Number);
+  const [nowYear, nowMonth, nowDay] = thisMonday.split('-').map(Number);
+  const anchorMs = Date.UTC(anchorYear, anchorMonth - 1, anchorDay);
+  const thisMondayMs = Date.UTC(nowYear, nowMonth - 1, nowDay);
+  const daysSinceAnchor = Math.round((thisMondayMs - anchorMs) / (24 * 60 * 60 * 1000));
+  if (daysSinceAnchor < 0) return undefined;
+  const periodsElapsed = Math.floor(daysSinceAnchor / 14);
+  const periodStartMs = anchorMs + periodsElapsed * 14 * 24 * 60 * 60 * 1000;
+  return new Date(periodStartMs).toISOString().slice(0, 10);
+}
+
+// The date a new challenge cycle would start on right now, per `config`'s
+// frequency — undefined only for 'biweekly' before its anchor date has
+// arrived. 'daily' starts fresh every day; 'weekly' every Monday; 'biweekly'
+// every other Monday from challengeCycleAnchor (defaulting to "starting this
+// week" if no anchor has been set yet — see handleChallengeConfig).
+function currentPeriodStart(config: GuildConfig): string | undefined {
+  if (config.challengeFrequency === 'daily') {
+    const { year, month, day } = todayInTimeZone(config.timezone);
+    return new Date(Date.UTC(year, month, day)).toISOString().slice(0, 10);
+  }
+  if (config.challengeFrequency === 'biweekly') {
+    return config.challengeCycleAnchor
+      ? biweeklyPeriodStart(config.challengeCycleAnchor, config.timezone)
+      : mondayOfWeekInTimeZone(config.timezone);
+  }
+  return mondayOfWeekInTimeZone(config.timezone);
+}
+
+// The absolute instant (UTC) that `weekday`/`hour` falls on within the cycle
+// that starts on `periodStart` ("YYYY-MM-DD", as read on a clock in
+// `timeZone`) — `weekday` is pre-resolved to a day offset via
+// stageDayOffset so this works the same regardless of frequency. Comparing
+// real instants — rather than "is today's weekday exactly X" — is what lets
+// a stage catch up after an outage that spans past its scheduled day
+// entirely (e.g. the bot is down all of Wednesday and comes back Friday): a
+// same-day-only comparison would never match again once Wednesday has
+// passed, permanently skipping that hint and every stage after it that
+// depends on it, even though the challenge itself isn't stale enough yet to
+// hit the force-reveal safety net below.
+function stageInstant(periodStart: string, dayOffset: number, hour: number, timeZone: string): number {
+  const [year, month, day] = periodStart.split('-').map(Number);
+  const target = new Date(Date.UTC(year, month - 1, day));
+  target.setUTCDate(target.getUTCDate() + dayOffset);
+  return zonedTimeToUtc(target.getUTCFullYear(), target.getUTCMonth(), target.getUTCDate(), hour, 0, timeZone).getTime();
+}
+
 // Polled from the existing hourly ready.ts loop (idempotent — safe to call
 // every tick, and safe to catch up after a missed tick/restart, since every
 // decision is guarded by state already stored on the WeeklyChallenge record
@@ -201,20 +345,21 @@ async function startNewChallenge(client: Client, guildId: string, channelId: str
 // checkBggCatalogReminder for the precedent this follows).
 export async function checkAndAdvanceChallengeSchedule(client: Client): Promise<void> {
   const guildIds = await getGuildIdsWithConfig();
+  const now = Date.now();
 
   for (const guildId of guildIds) {
     const config = await getGuildConfig(guildId);
     if (!config.boardGameChallengeEnabled || !config.boardGameChallengeChannelId) continue;
 
-    const { weekday, hour } = nowInTimeZone(config.timezone);
     const channelId = config.boardGameChallengeChannelId;
     const active = await getActiveChallenge(guildId);
+    const periodMs = periodLengthDays(config.challengeFrequency) * 24 * 60 * 60 * 1000;
 
-    // Safety net: if a challenge is still unrevealed a full week after it
-    // started (e.g. the bot was down all Saturday evening), force the reveal
-    // now instead of leaving it stuck forever and blocking every future
-    // Monday's "!active" creation check.
-    if (active && Date.now() - new Date(active.weekStart).getTime() > 7 * 24 * 60 * 60 * 1000) {
+    // Safety net: if a challenge is still unrevealed a full cycle after it
+    // started (e.g. the bot was down for an extended stretch), force the
+    // reveal now instead of leaving it stuck forever and blocking every
+    // future cycle's "no active challenge" creation check.
+    if (active && now - new Date(active.weekStart).getTime() > periodMs) {
       await postReveal(client, active).catch((err) =>
         console.error(`[BoardGameChallenge] Catch-up reveal failed for guild ${guildId}:`, err),
       );
@@ -222,21 +367,59 @@ export async function checkAndAdvanceChallengeSchedule(client: Client): Promise<
     }
 
     try {
-      if (weekday === config.challengeClue1Weekday && hour >= config.challengeClue1Hour && !active) {
-        await startNewChallenge(client, guildId, channelId, config.timezone);
+      if (!active) {
+        const periodStart = currentPeriodStart(config);
+        if (
+          periodStart &&
+          now >= stageInstant(
+            periodStart,
+            stageDayOffset(config.challengeFrequency, config.challengeClue1Weekday),
+            config.challengeClue1Hour,
+            config.timezone,
+          )
+        ) {
+          // Guards against restarting the cycle later in the same period
+          // when the reveal is scheduled on/after hint 1's moment (e.g. a
+          // same-day testing schedule, or 'daily' mode where they're always
+          // the same day): right after a reveal, `active` is briefly
+          // undefined again, and hint 1's moment has already passed for the
+          // rest of the period, so the plain "!active" check above would
+          // otherwise fire again on the next tick and start a second
+          // challenge. Checking for an existing challenge this period
+          // (revealed or not) prevents that.
+          const startedThisPeriod = (await getChallengesForGuild(guildId)).some((c) => c.weekStart === periodStart);
+          if (!startedThisPeriod) {
+            await startNewChallenge(client, guildId, channelId, periodStart);
+          }
+        }
       } else if (
-        weekday === config.challengeClue2Weekday &&
-        hour >= config.challengeClue2Hour &&
-        active?.hintsPostedCount === 1
+        active.hintsPostedCount === 1 &&
+        now >= stageInstant(
+          active.weekStart,
+          stageDayOffset(config.challengeFrequency, config.challengeClue2Weekday),
+          config.challengeClue2Hour,
+          config.timezone,
+        )
       ) {
         await postHint(client, active, 2);
       } else if (
-        weekday === config.challengeClue3Weekday &&
-        hour >= config.challengeClue3Hour &&
-        active?.hintsPostedCount === 2
+        active.hintsPostedCount === 2 &&
+        now >= stageInstant(
+          active.weekStart,
+          stageDayOffset(config.challengeFrequency, config.challengeClue3Weekday),
+          config.challengeClue3Hour,
+          config.timezone,
+        )
       ) {
         await postHint(client, active, 3);
-      } else if (weekday === config.challengeRevealWeekday && hour >= config.challengeRevealHour && active) {
+      } else if (
+        now >= stageInstant(
+          active.weekStart,
+          stageDayOffset(config.challengeFrequency, config.challengeRevealWeekday),
+          config.challengeRevealHour,
+          config.timezone,
+        )
+      ) {
         await postReveal(client, active);
       }
     } catch (err) {

@@ -24,6 +24,7 @@ function makeMessage(overrides: Record<string, unknown> = {}) {
     author: { bot: false, id: 'user-1', send: vi.fn(async () => {}) },
     guildId: 'guild-1',
     channelId: 'channel-1',
+    channel: { send: vi.fn(async () => {}) },
     content: 'Catan',
     react: vi.fn(async () => {}),
     delete: vi.fn(async () => {}),
@@ -108,12 +109,14 @@ describe('handleMessageCreate', () => {
 
     expect(mockRecordCorrectGuess).toHaveBeenCalledWith('guild-1', CHALLENGE.id, 'user-1', 1);
     expect(message.delete).toHaveBeenCalled();
+    expect(message.channel.send).toHaveBeenCalledWith(expect.stringContaining('<@user-1>'));
+    expect(message.channel.send).toHaveBeenCalledWith(expect.stringContaining('+100 points'));
     expect(message.author.send).toHaveBeenCalledWith(expect.stringContaining('100 points'));
     expect(message.author.send).toHaveBeenCalledWith(expect.stringContaining('250 points'));
     expect(message.react).not.toHaveBeenCalled();
   });
 
-  it('does not delete/DM when recordCorrectGuess reports an already-scored race', async () => {
+  it('does not delete/DM/announce when recordCorrectGuess reports an already-scored race', async () => {
     mockIsCorrectGuess.mockReturnValue(true);
     mockRecordCorrectGuess.mockResolvedValue(undefined);
     const message = makeMessage({ content: 'Catan' });
@@ -121,6 +124,7 @@ describe('handleMessageCreate', () => {
     await handleMessageCreate(message);
 
     expect(message.delete).not.toHaveBeenCalled();
+    expect(message.channel.send).not.toHaveBeenCalled();
     expect(message.author.send).not.toHaveBeenCalled();
   });
 });

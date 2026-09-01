@@ -5,6 +5,7 @@ export type MarketplaceEventType =
   | 'listing_closed'
   | 'listing_sold'
   | 'listing_reopened'
+  | 'listing_edited'
   | 'bid_placed'
   | 'bid_accepted'
   | 'bid_denied'

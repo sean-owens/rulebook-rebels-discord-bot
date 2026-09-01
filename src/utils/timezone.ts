@@ -31,6 +31,31 @@ export function mondayOfWeekInTimeZone(timeZone: string): string {
   return monday.toISOString().slice(0, 10);
 }
 
+// ISO date (YYYY-MM-DD) of the Monday of the week containing `instant`, as it
+// would read on a clock in `timeZone` — the arbitrary-instant counterpart to
+// mondayOfWeekInTimeZone (which is always relative to "now"). Used to
+// normalize an admin-supplied bi-weekly challenge start date (see /admin
+// challenge config's `start_date`, boardgamechallenge.ts) to that week's
+// Monday, regardless of which day of the week they actually typed.
+export function mondayOfDateInTimeZone(instant: Date, timeZone: string): string {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    weekday: 'short',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  const parts: Record<string, string> = {};
+  for (const part of dtf.formatToParts(instant)) {
+    parts[part.type] = part.value;
+  }
+  const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const daysSinceMonday = (weekdays.indexOf(parts.weekday) + 6) % 7;
+  const monday = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)));
+  monday.setUTCDate(monday.getUTCDate() - daysSinceMonday);
+  return monday.toISOString().slice(0, 10);
+}
+
 // Accepts either 24-hour ("20") or 12-hour ("8pm") input for a single hour —
 // used by the weekly board game challenge's hint/reveal schedule (see
 // /admin challenge config in boardgamechallenge.ts), where hosts commonly
