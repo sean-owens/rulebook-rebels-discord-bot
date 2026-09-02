@@ -21,6 +21,7 @@ import {
   handleHubMarketplaceSellModal,
   handleHubMarketplaceTradeButton,
   handleHubMarketplaceTradeModal,
+  handleHubMarketplaceTradeLookingForModal,
   handleHubMarketplaceConditionSelect,
   handleHubMarketplaceOffersYes,
   handleHubMarketplaceBrowseButton,
@@ -622,6 +623,7 @@ describe('marketplace "Quick Actions" hub', () => {
       update: vi.fn(async () => {}),
       deferUpdate: vi.fn(async () => {}),
       editReply: vi.fn(async () => {}),
+      showModal: vi.fn(async () => {}),
     } as any;
   }
 
@@ -697,14 +699,58 @@ describe('marketplace "Quick Actions" hub', () => {
       expect(modal.custom_id).toBe('hub_mp_trade_modal');
     });
 
-    it('selecting a condition skips straight to the listing flow — no offers-allowed step for trades', async () => {
+    it('selecting a condition shows a "looking for" modal instead of going straight to the listing flow', async () => {
       await handleHubMarketplaceTradeModal(makeModalInteraction('u5', 'Some Totally Made Up Game', {}));
       const interaction = makeSelectInteraction('u5', 'good', {});
 
       await handleHubMarketplaceConditionSelect(interaction);
 
+      expect(interaction.showModal).toHaveBeenCalledTimes(1);
+      const modal = interaction.showModal.mock.calls[0][0].toJSON();
+      expect(modal.custom_id).toBe('hub_mp_trade_looking_for_modal');
+    });
+
+    it('submitting the "looking for" modal reaches the listing flow with that value captured', async () => {
+      await handleHubMarketplaceTradeModal(makeModalInteraction('u6', 'Some Totally Made Up Game', {}));
+      await handleHubMarketplaceConditionSelect(makeSelectInteraction('u6', 'good', {}));
+
+      const interaction = {
+        guildId: 'guild-1',
+        user: { id: 'u6', username: 'user-u6' },
+        member: null,
+        client: {},
+        fields: { getTextInputValue: (name: string) => (name === 'looking_for' ? 'Wingspan or Ark Nova' : '') },
+        reply: vi.fn(async () => {}),
+        deferReply: vi.fn(async () => {}),
+        editReply: vi.fn(async () => {}),
+      } as any;
+
+      await handleHubMarketplaceTradeLookingForModal(interaction);
+
+      // "Some Totally Made Up Game" has no BGG match, so the flow reaches the
+      // no-BGG-match prompt rather than a finished listing — but the pending
+      // draft (including lookingFor) survives into that prompt's follow-up.
       expect(interaction.editReply).toHaveBeenCalledWith(
         expect.objectContaining({ content: expect.stringContaining("wasn't found on BoardGameGeek") }),
+      );
+    });
+
+    it('shows an expired-session message if the "looking for" modal is submitted with no prior condition selection', async () => {
+      const interaction = {
+        guildId: 'guild-1',
+        user: { id: 'never-started-trade', username: 'user-x' },
+        member: null,
+        client: {},
+        fields: { getTextInputValue: () => '' },
+        reply: vi.fn(async () => {}),
+        deferReply: vi.fn(async () => {}),
+        editReply: vi.fn(async () => {}),
+      } as any;
+
+      await handleHubMarketplaceTradeLookingForModal(interaction);
+
+      expect(interaction.reply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('expired') }),
       );
     });
   });
@@ -721,6 +767,19 @@ describe('marketplace "Quick Actions" hub', () => {
       );
     });
 
+    it('Browse Listings includes a legend explaining the status/type icons', async () => {
+      await createListing('guild-1', { ...BASE_LISTING, itemName: 'Catan' });
+      const interaction = makeButtonInteraction('viewer-1', {});
+
+      await handleHubMarketplaceBrowseButton(interaction);
+
+      const content = interaction.editReply.mock.calls[0][0].content as string;
+      expect(content).toMatch(/🟢.*Active/);
+      expect(content).toMatch(/🟡.*Pending/);
+      expect(content).toMatch(/🔴.*Sold/);
+      expect(content).toMatch(/⚫.*Closed/);
+    });
+
     it('My Listings shows the tapping user\'s own listings', async () => {
       await createListing('guild-1', { ...BASE_LISTING, userId: 'owner-1', itemName: 'Azul' });
       const interaction = makeButtonInteraction('owner-1', {});
@@ -732,12 +791,54 @@ describe('marketplace "Quick Actions" hub', () => {
       );
     });
 
+    it('My Listings includes a legend explaining the status/type icons', async () => {
+      await createListing('guild-1', { ...BASE_LISTING, userId: 'owner-legend', itemName: 'Azul' });
+      const interaction = makeButtonInteraction('owner-legend', {});
+
+      await handleHubMarketplaceMyButton(interaction);
+
+      const content = interaction.editReply.mock.calls[0][0].content as string;
+      expect(content).toMatch(/🟢.*Active/);
+      expect(content).toMatch(/🔴.*Sold/);
+    });
+
     it('My Listings tells a user with no listings to use /marketplace post', async () => {
       const interaction = makeButtonInteraction('nobody-1', {});
       await handleHubMarketplaceMyButton(interaction);
 
       expect(interaction.editReply).toHaveBeenCalledWith(
         expect.objectContaining({ content: expect.stringContaining("don't have any listings") }),
+      );
+    });
+
+    it('My Listings hides a closed listing older than a week', async () => {
+      const listing = await createListing('guild-1', { ...BASE_LISTING, userId: 'owner-old', itemName: 'Ancient Trade' });
+      await closeListing('guild-1', listing.id);
+      // Back-date its updatedAt past the retention window — updateListing()
+      // always re-stamps updatedAt to "now", so write the store directly.
+      const { readJson, writeJson } = await import('../src/utils/db');
+      const stored = await readJson<Record<string, any[]>>('marketplace.json', {});
+      const target = stored['guild-1'].find((l) => l.id === listing.id)!;
+      target.updatedAt = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
+      await writeJson('marketplace.json', stored);
+
+      const interaction = makeButtonInteraction('owner-old', {});
+      await handleHubMarketplaceMyButton(interaction);
+
+      expect(interaction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining("don't have any active listings") }),
+      );
+    });
+
+    it('My Listings still shows a closed listing from within the last week', async () => {
+      const listing = await createListing('guild-1', { ...BASE_LISTING, userId: 'owner-recent', itemName: 'Recent Trade' });
+      await closeListing('guild-1', listing.id);
+
+      const interaction = makeButtonInteraction('owner-recent', {});
+      await handleHubMarketplaceMyButton(interaction);
+
+      expect(interaction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('Recent Trade') }),
       );
     });
   });

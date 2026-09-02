@@ -1828,6 +1828,10 @@ async function handleConditions(interaction: ChatInputCommandInteraction): Promi
   await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }
 
+// Shared legend for the status/type icons used in both /marketplace browse
+// and /marketplace my — neither list explained these anywhere otherwise.
+const MARKETPLACE_LEGEND = '🟢 Active · 🟡 Pending offer(s) · 🔴 Sold/Traded · ⚫ Closed  |  🏷️ For Sale · 🔄 For Trade';
+
 // ── /marketplace browse ─────────────────────────────────────────────────────
 
 async function handleBrowse(interaction: ChatInputCommandInteraction | ButtonInteraction): Promise<void> {
@@ -1864,20 +1868,32 @@ async function handleBrowse(interaction: ChatInputCommandInteraction | ButtonInt
     : '';
 
   await interaction.editReply({
-    content: `**Active Marketplace Listings**\n\n${lines.join('\n')}${moreNote}`,
+    content: `**Active Marketplace Listings**\n\n${lines.join('\n')}${moreNote}\n\n${MARKETPLACE_LEGEND}`,
   });
 }
 
 // ── /marketplace my ─────────────────────────────────────────────────────────
 
+// Sold/closed listings older than this just clutter "my listings" once
+// they're done — active/pending ones are always shown regardless of age.
+const MY_LISTINGS_FINALIZED_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
 async function handleMy(interaction: ChatInputCommandInteraction | ButtonInteraction): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const guildId = interaction.guildId!;
-  const listings = await getUserListings(guildId, interaction.user.id);
+  const allListings = await getUserListings(guildId, interaction.user.id);
+  const now = Date.now();
+  const listings = allListings.filter((l) => {
+    if (l.status === 'active' || l.status === 'pending') return true;
+    return now - new Date(l.updatedAt).getTime() < MY_LISTINGS_FINALIZED_RETENTION_MS;
+  });
 
   if (listings.length === 0) {
-    await interaction.editReply({ content: "You don't have any listings. Use `/marketplace post` to create one." });
+    const content = allListings.length > 0
+      ? "You don't have any active listings. (Sold/closed listings older than a week aren't shown here.)"
+      : "You don't have any listings. Use `/marketplace post` to create one.";
+    await interaction.editReply({ content });
     return;
   }
 
@@ -1892,7 +1908,7 @@ async function handleMy(interaction: ChatInputCommandInteraction | ButtonInterac
   });
 
   await interaction.editReply({
-    content: `**Your Listings**\n\n${lines.join('\n\n')}\n\nUse \`/marketplace close <id>\` to close a listing, or \`/marketplace reopen <id>\` to reopen one.`,
+    content: `**Your Listings**\n\n${lines.join('\n\n')}\n\nUse \`/marketplace close <id>\` to close a listing, or \`/marketplace reopen <id>\` to reopen one.\n\n${MARKETPLACE_LEGEND}`,
   });
 }
 
@@ -2375,18 +2391,22 @@ export async function handleHubMarketplaceConditionSelect(interaction: StringSel
   const condition = interaction.values[0] as Condition;
 
   if (pending.listingType === 'trade') {
-    pendingHubListings.delete(interaction.user.id);
-    await interaction.deferUpdate();
-    await createTradeDraftAndContinue(
-      interaction,
-      interaction.guildId!,
-      interaction.user.id,
-      hubDisplayName(interaction),
-      pending.itemName,
-      condition,
-      undefined,
-      undefined,
-    );
+    pendingHubListings.set(interaction.user.id, { ...pending, condition });
+    const modal = new ModalBuilder()
+      .setCustomId('hub_mp_trade_looking_for_modal')
+      .setTitle('Propose a Trade')
+      .addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId('looking_for')
+            .setLabel('What are you looking for in return?')
+            .setPlaceholder('e.g. Wingspan or Ark Nova (leave blank for open to offers)')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
+            .setMaxLength(200),
+        ),
+      );
+    await interaction.showModal(modal);
     return;
   }
 
@@ -2399,6 +2419,31 @@ export async function handleHubMarketplaceConditionSelect(interaction: StringSel
     content: 'Should other members be able to make offers, or is the price firm?',
     components: [row],
   });
+}
+
+export async function handleHubMarketplaceTradeLookingForModal(interaction: ModalSubmitInteraction): Promise<void> {
+  const pending = pendingHubListings.get(interaction.user.id);
+  if (!pending || pending.listingType !== 'trade' || !pending.condition) {
+    await interaction.reply({
+      content: 'This session has expired — tap a button in Quick Actions to start again.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  pendingHubListings.delete(interaction.user.id);
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const lookingFor = interaction.fields.getTextInputValue('looking_for').trim();
+  await createTradeDraftAndContinue(
+    interaction,
+    interaction.guildId!,
+    interaction.user.id,
+    hubDisplayName(interaction),
+    pending.itemName,
+    pending.condition,
+    undefined,
+    lookingFor || undefined,
+  );
 }
 
 async function handleHubMarketplaceOffers(interaction: ButtonInteraction, bidsAllowed: boolean): Promise<void> {

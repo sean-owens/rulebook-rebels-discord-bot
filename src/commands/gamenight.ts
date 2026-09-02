@@ -59,6 +59,7 @@ const MONTH_NAMES: Record<string, number> = {
   aug: 7,
   august: 7,
   sep: 8,
+  sept: 8,
   september: 8,
   oct: 9,
   october: 9,

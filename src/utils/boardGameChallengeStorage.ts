@@ -107,6 +107,29 @@ export async function recordHintPosted(
   return challenges[idx];
 }
 
+// Re-points a still-unstarted challenge (hint 1 never posted) at a
+// different channel — used when the channel it was created against turns
+// out to be unavailable (e.g. deleted moments after creation) and the admin
+// has since (re)configured a working one via /admin challenge config. Safe
+// specifically because nothing has been posted yet under the old channel;
+// once hint 1 succeeds, the channel is fixed for the rest of that cycle like
+// always. See checkAndAdvanceChallengeSchedule in boardGameChallenge.ts.
+export async function updateChallengeChannel(
+  guildId: string,
+  challengeId: string,
+  channelId: string,
+): Promise<WeeklyChallenge | undefined> {
+  const store = await load();
+  const challenges = store[guildId] ?? [];
+  const idx = challenges.findIndex((c) => c.id === challengeId);
+  if (idx === -1) return undefined;
+
+  challenges[idx].channelId = channelId;
+  store[guildId] = challenges;
+  await save(store);
+  return challenges[idx];
+}
+
 // Idempotent — a user who already scored this challenge gets undefined back
 // rather than a second point award, so a re-processed/duplicate message event
 // can never double-score them.

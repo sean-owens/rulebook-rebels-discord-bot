@@ -51,4 +51,15 @@ describe('/getting-started', () => {
 
     expect(interaction.reply.mock.calls[0][0].flags).toBeDefined();
   });
+
+  it('points to /help and a host/moderator for further help in the footer', async () => {
+    mockGetGuildConfig.mockResolvedValue({});
+    const interaction = makeInteraction();
+
+    await execute(interaction);
+
+    const embed = interaction.reply.mock.calls[0][0].embeds[0].toJSON();
+    expect(embed.footer.text).toContain('/help');
+    expect(embed.footer.text).toMatch(/host or moderator/i);
+  });
 });

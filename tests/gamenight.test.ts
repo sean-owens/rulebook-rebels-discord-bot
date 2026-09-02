@@ -141,6 +141,12 @@ describe('parseDateTime', () => {
     expect(d.getUTCDate()).toBe(22);
   });
 
+  it('parses the common 4-letter "Sept" abbreviation for September (not just "Sep")', () => {
+    const d = parseDateTime('Sept 2nd', '5pm');
+    expect(d.getUTCMonth()).toBe(8);
+    expect(d.getUTCDate()).toBe(2);
+  });
+
   it('parses an explicit 4-digit year', () => {
     const d = parseDateTime('September 5 2027', '7pm');
     expect(d.getUTCFullYear()).toBe(2027);
