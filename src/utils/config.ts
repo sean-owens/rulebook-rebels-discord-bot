@@ -133,6 +133,11 @@ export interface GuildConfig {
   // treated as an error). Off by default: some communities like keeping a
   // scrollback of past answers, so this is opt-in via /admin challenge config.
   challengeCleanupOldPosts: boolean;
+  // The pinned "current standings" leaderboard message in the challenge
+  // channel (see updateChallengeLeaderboardPin in boardGameChallenge.ts) —
+  // edited in place every time someone guesses correctly (not just at the
+  // reveal), same pin-tracking pattern as generalHubPinMessageId above.
+  challengeLeaderboardPinMessageId?: string;
 }
 
 const DEFAULT_CONFIG: GuildConfig = {

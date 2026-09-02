@@ -13,8 +13,10 @@ vi.mock('../src/utils/boardGameChallengeStorage', () => ({
 }));
 
 const mockIsCorrectGuess = vi.fn();
+const mockUpdateChallengeLeaderboardPin = vi.fn();
 vi.mock('../src/utils/boardGameChallenge', () => ({
   isCorrectGuess: (...args: unknown[]) => mockIsCorrectGuess(...args),
+  updateChallengeLeaderboardPin: (...args: unknown[]) => mockUpdateChallengeLeaderboardPin(...args),
 }));
 
 import { handleMessageCreate } from '../src/events/messageCreate';
@@ -25,6 +27,7 @@ function makeMessage(overrides: Record<string, unknown> = {}) {
     guildId: 'guild-1',
     channelId: 'channel-1',
     channel: { send: vi.fn(async () => {}) },
+    client: { user: { id: 'bot-1' } },
     content: 'Catan',
     react: vi.fn(async () => {}),
     delete: vi.fn(async () => {}),
@@ -114,6 +117,7 @@ describe('handleMessageCreate', () => {
     expect(message.author.send).toHaveBeenCalledWith(expect.stringContaining('100 points'));
     expect(message.author.send).toHaveBeenCalledWith(expect.stringContaining('250 points'));
     expect(message.react).not.toHaveBeenCalled();
+    expect(mockUpdateChallengeLeaderboardPin).toHaveBeenCalledWith(message.client, 'guild-1');
   });
 
   it('does not delete/DM/announce when recordCorrectGuess reports an already-scored race', async () => {
@@ -126,5 +130,15 @@ describe('handleMessageCreate', () => {
     expect(message.delete).not.toHaveBeenCalled();
     expect(message.channel.send).not.toHaveBeenCalled();
     expect(message.author.send).not.toHaveBeenCalled();
+    expect(mockUpdateChallengeLeaderboardPin).not.toHaveBeenCalled();
+  });
+
+  it('does not update the leaderboard pin on an incorrect guess', async () => {
+    mockIsCorrectGuess.mockReturnValue(false);
+    const message = makeMessage({ content: 'Wrong Game' });
+
+    await handleMessageCreate(message);
+
+    expect(mockUpdateChallengeLeaderboardPin).not.toHaveBeenCalled();
   });
 });

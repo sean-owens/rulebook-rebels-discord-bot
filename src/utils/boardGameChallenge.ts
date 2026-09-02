@@ -2,7 +2,8 @@ import { Client, EmbedBuilder, TextChannel } from 'discord.js';
 import { getBGGGame, weightTag, BGGGame } from './bgg';
 import { getTopRankedGames, editDistanceAtMost } from './bggCatalog';
 import { buildBggAttachment } from './gameEmbeds';
-import { getGuildConfig, getGuildIdsWithConfig, GuildConfig } from './config';
+import { getGuildConfig, getGuildIdsWithConfig, updateGuildConfig, GuildConfig } from './config';
+import { pinWithRetry } from './discordPin';
 import { mondayOfWeekInTimeZone, todayInTimeZone, zonedTimeToUtc } from './timezone';
 import {
   WeeklyChallenge,
@@ -155,10 +156,17 @@ export async function postHint(
   }
 
   const pointsByStage = { 1: 100, 2: 80, 3: 50 } as const;
+  // Cumulative — hint 2 also shows hint 1, hint 3 shows hints 1 and 2, so
+  // nobody has to scroll back to find an earlier one (same "Hint N:" labeled
+  // format /challenge status already uses).
+  const cumulativeHints = challenge.clues
+    .slice(0, hintIndex)
+    .map((clue, i) => `**Hint ${i + 1}:** ${clue}`)
+    .join('\n\n');
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
     .setTitle(`🎲 Board Game Challenge — Hint ${hintIndex}/3`)
-    .setDescription(challenge.clues[hintIndex - 1])
+    .setDescription(cumulativeHints)
     .setFooter({
       text: `Reply in this channel with your guess! Correct right now = ${pointsByStage[hintIndex]} points. Answer revealed at the end of this cycle — see /challenge status for the exact time.`,
     })
@@ -213,7 +221,7 @@ export async function postReveal(client: Client, challenge: WeeklyChallenge): Pr
 
   const message = await channel.send({ embeds: [embed], files: [buildBggAttachment()] });
   await revealChallenge(challenge.guildId, challenge.id, message.id);
-  await postAndPinLeaderboard(client, channel, challenge.guildId);
+  await updateChallengeLeaderboardPin(client, challenge.guildId);
 }
 
 // Best-effort: when a guild has opted into challengeCleanupOldPosts (see
@@ -243,22 +251,49 @@ async function cleanupPreviousChallengePosts(client: Client, guildId: string): P
   }
 }
 
-// Keeps the leaderboard visible between weeks instead of requiring members to
-// remember /challenge leaderboard exists. Best-effort: a missing Pin Messages
-// permission (or any other failure) is logged and swallowed rather than
-// blocking the reveal, which has already happened by the time this runs.
-async function postAndPinLeaderboard(client: Client, channel: TextChannel, guildId: string): Promise<void> {
+// Keeps a single pinned "current standings" leaderboard message live in the
+// challenge channel — edited in place every time it changes (a correct
+// guess, via messageCreate.ts, or the reveal above) rather than reposted, so
+// it never goes stale between reveals and doesn't spam a fresh pin each
+// time. Falls back to posting a new message and pinning it (unpinning any
+// of the bot's own other pins first) when there's no message id on record
+// yet, or the previously-pinned message has since been deleted — mirrors
+// updateGeneralHubPin's edit-or-repost pattern in generalHub.ts. Best-effort:
+// a missing Pin Messages permission (or any other failure) is logged and
+// swallowed rather than blocking whatever triggered this (a guess being
+// scored, or the reveal, both of which have already happened by this point).
+export async function updateChallengeLeaderboardPin(client: Client, guildId: string): Promise<void> {
   try {
+    const config = await getGuildConfig(guildId);
+    if (!config.boardGameChallengeChannelId) return;
+
+    const channel = await getTextChannel(client, config.boardGameChallengeChannelId);
+    if (!channel) return;
+
     const entries = await getLeaderboard(guildId);
-    const message = await channel.send({ embeds: [buildLeaderboardEmbed(entries)] });
+    const payload = { embeds: [buildLeaderboardEmbed(entries)] };
+
+    if (config.challengeLeaderboardPinMessageId) {
+      try {
+        const existing = await channel.messages.fetch(config.challengeLeaderboardPinMessageId);
+        const edited = await existing.edit(payload);
+        if (!edited.pinned) await pinWithRetry(edited, `leaderboard pin for guild ${guildId}`);
+        return;
+      } catch {
+        /* message was deleted — fall through and repost */
+      }
+    }
 
     const pins = await channel.messages.fetchPinned();
     for (const [, pinned] of pins) {
       if (pinned.author.id === client.user!.id) await pinned.unpin().catch(() => null);
     }
-    await message.pin();
+
+    const message = await channel.send(payload);
+    await pinWithRetry(message, `leaderboard pin for guild ${guildId}`);
+    await updateGuildConfig(guildId, { challengeLeaderboardPinMessageId: message.id });
   } catch (err) {
-    console.warn(`[BoardGameChallenge] Failed to post/pin leaderboard for guild ${guildId}:`, err);
+    console.warn(`[BoardGameChallenge] Failed to update leaderboard pin for guild ${guildId}:`, err);
   }
 }
 
