@@ -53,6 +53,35 @@ describe('boardGameChallengeStorage', () => {
       expect(await getChallengesForGuild('guild-1')).toHaveLength(1);
       expect(await getChallengesForGuild('guild-2')).toHaveLength(1);
     });
+
+    // Regression: a duplicate id (same guildId+weekStart) used to silently
+    // corrupt every future by-id lookup — recordHintPosted/revealChallenge/
+    // getChallenge all resolve to whichever matching record comes first,
+    // permanently orphaning the other with no error surfaced anywhere. This
+    // happened once in production (see checkAndAdvanceChallengeSchedule's
+    // "already started this period" guard, the primary defense — this is
+    // the backstop underneath it).
+    it('refuses to create a second challenge with the same id (same guild + weekStart)', async () => {
+      await createWeeklyChallenge('guild-1', BASE_CHALLENGE);
+
+      await expect(createWeeklyChallenge('guild-1', BASE_CHALLENGE)).rejects.toThrow(/duplicate/i);
+
+      // The original is untouched — still exactly one record, not overwritten or duplicated.
+      const challenges = await getChallengesForGuild('guild-1');
+      expect(challenges).toHaveLength(1);
+    });
+
+    it('does not consider a different weekStart or guild a duplicate', async () => {
+      await createWeeklyChallenge('guild-1', BASE_CHALLENGE);
+
+      await expect(
+        createWeeklyChallenge('guild-1', { ...BASE_CHALLENGE, weekStart: '2026-08-31' }),
+      ).resolves.toBeDefined();
+      await expect(createWeeklyChallenge('guild-2', BASE_CHALLENGE)).resolves.toBeDefined();
+
+      expect(await getChallengesForGuild('guild-1')).toHaveLength(2);
+      expect(await getChallengesForGuild('guild-2')).toHaveLength(1);
+    });
   });
 
   describe('getActiveChallenge', () => {

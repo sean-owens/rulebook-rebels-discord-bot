@@ -68,15 +68,31 @@ export async function getChallenge(
   return (await getChallengesForGuild(guildId)).find((c) => c.id === challengeId);
 }
 
+// Throws if a challenge with this id (guildId+weekStart) already exists,
+// rather than creating a duplicate. This is a belt-and-suspenders backstop:
+// checkAndAdvanceChallengeSchedule already checks for an existing challenge
+// this period before ever calling this, but a duplicate id — from some
+// other path, a race, or a bug in that guard — silently breaks every future
+// lookup by id (recordHintPosted, revealChallenge, getChallenge all resolve
+// to whichever matching record comes first in the array), leaving the other
+// one permanently orphaned with no error surfaced anywhere. This happened
+// once in production. Refuse outright instead of risking a repeat — the
+// caller's existing try/catch (see checkAndAdvanceChallengeSchedule) logs it.
 export async function createWeeklyChallenge(
   guildId: string,
   data: Pick<WeeklyChallenge, 'weekStart' | 'bggId' | 'title' | 'clues' | 'thumbnail' | 'bggLink' | 'channelId'>,
 ): Promise<WeeklyChallenge> {
   const store = await load();
   const challenges = store[guildId] ?? [];
+  const id = `${guildId}-${data.weekStart}`;
+
+  if (challenges.some((c) => c.id === id)) {
+    throw new Error(`Refusing to create a duplicate challenge ${id} for guild ${guildId} — one already exists for this period.`);
+  }
+
   const challenge: WeeklyChallenge = {
     ...data,
-    id: `${guildId}-${data.weekStart}`,
+    id,
     guildId,
     hintsPostedCount: 0,
     hintMessageIds: [],
