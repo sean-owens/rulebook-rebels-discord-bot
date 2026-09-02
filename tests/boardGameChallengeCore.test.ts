@@ -544,6 +544,47 @@ describe('checkAndAdvanceChallengeSchedule', () => {
     expect(mockCreateWeeklyChallenge).not.toHaveBeenCalled();
   });
 
+  // Regression: the staleness threshold used to read `weekStart` as UTC
+  // midnight (plain `new Date(weekStart)`) instead of midnight in the
+  // guild's own timezone. Every other test in this file uses timezone:
+  // 'UTC', where that bug is invisible (UTC midnight *is* local midnight) —
+  // these use a real zone behind UTC to actually exercise it. In daily mode
+  // (a 24h period) a multi-hour timezone offset is a large fraction of the
+  // period, so this fired hours before a true full day had passed, forcing
+  // a reveal before hint 2/3 ever got a chance to catch up.
+  describe('the staleness threshold accounts for the guild\'s own timezone (not UTC midnight)', () => {
+    it('does not force-reveal a daily challenge before a true full local day has passed, for a zone behind UTC', async () => {
+      mockGetGuildConfig.mockResolvedValue(
+        enabledConfig({ challengeFrequency: 'daily', timezone: 'America/New_York' }),
+      );
+      // weekStart "2026-08-24" at America/New_York midnight is 2026-08-24T04:00:00Z.
+      // The old (buggy) UTC-midnight reading would treat this challenge as already
+      // stale by 2026-08-25T00:00:00Z — 4 hours before a true local day has passed.
+      const active = makeChallenge({ weekStart: '2026-08-24', hintsPostedCount: 1 });
+      mockGetActiveChallenge.mockResolvedValue(active);
+      vi.setSystemTime(new Date('2026-08-24T23:00:00Z')); // 7pm ET — within the true local day, past the old buggy threshold
+      const client = makeClient();
+
+      await checkAndAdvanceChallengeSchedule(client as any);
+
+      expect(mockRevealChallenge).not.toHaveBeenCalled();
+    });
+
+    it('does force-reveal once a true full local day has actually passed, for a zone behind UTC', async () => {
+      mockGetGuildConfig.mockResolvedValue(
+        enabledConfig({ challengeFrequency: 'daily', timezone: 'America/New_York' }),
+      );
+      const stale = makeChallenge({ weekStart: '2026-08-24', hintsPostedCount: 1 });
+      mockGetActiveChallenge.mockResolvedValue(stale);
+      vi.setSystemTime(new Date('2026-08-25T05:00:00Z')); // 1am ET the next day — a true full local day has now passed
+      const client = makeClient();
+
+      await checkAndAdvanceChallengeSchedule(client as any);
+
+      expect(mockRevealChallenge).toHaveBeenCalledWith('guild-1', stale.id);
+    });
+  });
+
   describe('retrying a stuck hint 1 (channel unavailable at creation time)', () => {
     // Regression: startNewChallenge creates the WeeklyChallenge record first,
     // then calls postHint — if the channel it was created against turns out
