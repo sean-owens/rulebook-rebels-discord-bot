@@ -367,8 +367,14 @@ export async function checkAndAdvanceChallengeSchedule(client: Client): Promise<
     // Safety net: if a challenge is still unrevealed a full cycle after it
     // started (e.g. the bot was down for an extended stretch), force the
     // reveal now instead of leaving it stuck forever and blocking every
-    // future cycle's "no active challenge" creation check.
-    if (active && now - new Date(active.weekStart).getTime() > periodMs) {
+    // future cycle's "no active challenge" creation check. `weekStart` must
+    // be interpreted as midnight in the guild's *own* timezone (via
+    // stageInstant, same as every other stage) — plain `new Date(weekStart)`
+    // reads it as UTC midnight instead, which for a zone behind UTC (e.g.
+    // America/New_York) pulls this threshold hours earlier than a true full
+    // cycle, and in daily mode (a 24h period) that error is large enough to
+    // fire before hint 2/3 ever got a chance to catch up.
+    if (active && now - stageInstant(active.weekStart, 0, 0, config.timezone) > periodMs) {
       await postReveal(client, active).catch((err) =>
         console.error(`[BoardGameChallenge] Catch-up reveal failed for guild ${guildId}:`, err),
       );
