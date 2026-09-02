@@ -141,7 +141,7 @@ export const data = new SlashCommandBuilder()
           .addIntegerOption((opt) =>
             opt
               .setName('light_buffer_minutes')
-              .setDescription('Minutes added to Light games\' playtime for teach/overflow when scheduling (default: 20)')
+              .setDescription('Minutes added to Light games\' playtime for teach/overflow when scheduling (default: 15)')
               .setRequired(false)
               .setMinValue(0),
           )
@@ -155,7 +155,7 @@ export const data = new SlashCommandBuilder()
           .addIntegerOption((opt) =>
             opt
               .setName('heavy_buffer_minutes')
-              .setDescription('Minutes added to Heavy games\' playtime for teach/overflow when scheduling (default: 40)')
+              .setDescription('Minutes added to Heavy games\' playtime for teach/overflow when scheduling (default: 45)')
               .setRequired(false)
               .setMinValue(0),
           )
@@ -171,7 +171,7 @@ export const data = new SlashCommandBuilder()
             opt
               .setName('heavy_game_break_minutes')
               .setDescription(
-                'Minutes to pause before a table plays two Heavy games back-to-back (0 = disabled, default: 20)',
+                'Minutes to pause before a table plays two Heavy games back-to-back (0 = disabled, default: 30)',
               )
               .setRequired(false)
               .setMinValue(0),
