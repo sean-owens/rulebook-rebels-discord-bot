@@ -94,7 +94,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       },
       {
         name: '🎮  /hub',
-        value: 'Get the "Quick Actions" buttons for wherever you are — an event channel, private room, marketplace, or general chat — as an ephemeral reply only you can see, in case you missed the pinned one.',
+        value: 'Get the "Quick Actions" buttons for wherever you are — an event channel, private room, marketplace, general chat, or the board game challenge channel — as an ephemeral reply only you can see, in case you missed the pinned one.',
       },
       {
         name: '🍿  /snacks',

@@ -145,8 +145,36 @@ describe('/hub', () => {
     const reply = interaction.reply.mock.calls[0][0];
     expect(reply.flags).toBeDefined();
     expect(reply.content).toBe(
-      "There's no Quick Actions hub for this channel — try this in an event channel, a private room, the marketplace, or general chat.",
+      "There's no Quick Actions hub for this channel — try this in an event channel, a private room, the marketplace, general chat, or the board game challenge channel.",
     );
+  });
+
+  it('replies with the challenge hub when run inside the configured, enabled challenge channel', async () => {
+    await updateGuildConfig('guild-1', {
+      boardGameChallengeEnabled: true,
+      boardGameChallengeChannelId: 'challenge-channel-1',
+    });
+    const interaction = makeInteraction('challenge-channel-1');
+
+    await execute(interaction);
+
+    const reply = interaction.reply.mock.calls[0][0];
+    const customIds = reply.components[0].components.map((c: any) => c.toJSON().custom_id);
+    expect(customIds).toContain('hub_challenge_status');
+    expect(customIds).toContain('hub_challenge_leaderboard');
+  });
+
+  it('does not match the challenge channel when the feature is configured but disabled', async () => {
+    await updateGuildConfig('guild-1', {
+      boardGameChallengeEnabled: false,
+      boardGameChallengeChannelId: 'challenge-channel-1',
+    });
+    const interaction = makeInteraction('challenge-channel-1');
+
+    await execute(interaction);
+
+    const reply = interaction.reply.mock.calls[0][0];
+    expect(reply.content).toContain("no Quick Actions hub for this channel");
   });
 
   it('prefers the room hub over the event hub when a channel somehow matches both', async () => {

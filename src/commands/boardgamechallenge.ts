@@ -1,4 +1,8 @@
 import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonInteraction,
+  ButtonStyle,
   ChannelType,
   ChatInputCommandInteraction,
   EmbedBuilder,
@@ -69,7 +73,37 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   else if (sub === 'status') await handleStatus(interaction);
 }
 
-async function handleLeaderboard(interaction: ChatInputCommandInteraction): Promise<void> {
+// ── "Quick Actions" hub for the challenge channel (see /hub, commands/hub.ts) ──
+// No standing pinned message here (unlike event/room/marketplace/general
+// chat) — just the same two things /challenge already offers, as buttons for
+// anyone who'd rather tap than type.
+export function buildChallengeHubEmbed(): EmbedBuilder {
+  return new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle('🎲 Quick Actions')
+    .setDescription('Prefer tapping over typing? Use the buttons below instead of slash commands.')
+    .addFields(
+      { name: '📊 Status', value: "See this cycle's hints so far, and when the next one posts." },
+      { name: '🏆 Leaderboard', value: 'See who has the most challenge points.' },
+    );
+}
+
+export function buildChallengeHubButtons(): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId('hub_challenge_status').setLabel('📊 Status').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('hub_challenge_leaderboard').setLabel('🏆 Leaderboard').setStyle(ButtonStyle.Secondary),
+  );
+}
+
+export async function handleHubChallengeStatusButton(interaction: ButtonInteraction): Promise<void> {
+  await handleStatus(interaction);
+}
+
+export async function handleHubChallengeLeaderboardButton(interaction: ButtonInteraction): Promise<void> {
+  await handleLeaderboard(interaction);
+}
+
+async function handleLeaderboard(interaction: ChatInputCommandInteraction | ButtonInteraction): Promise<void> {
   const entries = await getLeaderboard(interaction.guildId!);
   if (entries.length === 0) {
     await interaction.reply({
@@ -250,7 +284,7 @@ export async function handleChallengeConfig(interaction: ChatInputCommandInterac
   });
 }
 
-async function handleStatus(interaction: ChatInputCommandInteraction): Promise<void> {
+async function handleStatus(interaction: ChatInputCommandInteraction | ButtonInteraction): Promise<void> {
   const guildId = interaction.guildId!;
   const config = await getGuildConfig(guildId);
   if (!config.boardGameChallengeEnabled || !config.boardGameChallengeChannelId) {

@@ -6,6 +6,7 @@ import { buildHubEmbed, buildHubButtons } from '../utils/requestPin';
 import { buildRoomHubEmbed, buildRoomHubButtons } from './room';
 import { buildGeneralHubEmbed, buildGeneralHubButtons } from '../utils/generalHub';
 import { buildMarketplaceHubEmbed, buildMarketplaceHubButtons } from './marketplace';
+import { buildChallengeHubEmbed, buildChallengeHubButtons } from './boardgamechallenge';
 
 export const data = new SlashCommandBuilder()
   .setName('hub')
@@ -69,9 +70,18 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     return;
   }
 
+  if (config.boardGameChallengeEnabled && config.boardGameChallengeChannelId && channelId === config.boardGameChallengeChannelId) {
+    await interaction.reply({
+      embeds: [buildChallengeHubEmbed()],
+      components: [buildChallengeHubButtons()],
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
   await interaction.reply({
     content:
-      "There's no Quick Actions hub for this channel — try this in an event channel, a private room, the marketplace, or general chat.",
+      "There's no Quick Actions hub for this channel — try this in an event channel, a private room, the marketplace, general chat, or the board game challenge channel.",
     flags: MessageFlags.Ephemeral,
   });
 }
