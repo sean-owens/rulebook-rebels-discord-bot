@@ -99,6 +99,7 @@ function makeChallenge(overrides: Partial<WeeklyChallenge> = {}): WeeklyChalleng
     hintMessageIds: [],
     channelId: 'channel-1',
     revealed: false,
+    revealMessageId: null,
     correctGuesses: [],
     ...overrides,
   };
@@ -108,7 +109,7 @@ function makeClient() {
   const channel = {
     isTextBased: () => true,
     send: vi.fn(async () => ({ id: 'msg-1', pin: vi.fn(async () => {}) })),
-    messages: { fetchPinned: vi.fn(async () => new Map()) },
+    messages: { fetchPinned: vi.fn(async () => new Map()), delete: vi.fn(async () => {}) },
   };
   return { user: { id: 'bot-1' }, channels: { fetch: vi.fn(async () => channel) }, _channel: channel };
 }
@@ -291,6 +292,7 @@ describe('checkAndAdvanceChallengeSchedule', () => {
       challengeRevealHour: 18,
       challengeFrequency: 'weekly' as const,
       challengeCycleAnchor: null as string | null,
+      challengeCleanupOldPosts: false,
       ...overrides,
     };
   }
@@ -330,6 +332,84 @@ describe('checkAndAdvanceChallengeSchedule', () => {
     );
     expect(client._channel.send).toHaveBeenCalledTimes(1);
     expect(mockRecordHintPosted).toHaveBeenCalledWith('guild-1', 'guild-1-2026-08-24', 1, 'msg-1');
+  });
+
+  describe('cleaning up the previous cycle\'s posts when a new one starts (challengeCleanupOldPosts)', () => {
+    it('deletes the previous challenge\'s hint + reveal messages when the setting is enabled', async () => {
+      mockGetGuildConfig.mockResolvedValue(enabledConfig({ challengeCleanupOldPosts: true }));
+      mockGetActiveChallenge.mockResolvedValue(undefined);
+      mockGetChallengesForGuild.mockResolvedValue([
+        makeChallenge({
+          weekStart: '2026-08-17',
+          revealed: true,
+          hintMessageIds: ['hint-1', 'hint-2', 'hint-3'],
+          revealMessageId: 'reveal-1',
+        }),
+      ]);
+      vi.setSystemTime(new Date('2026-08-24T08:00:00Z')); // Monday 8am
+      mockCreateWeeklyChallenge.mockResolvedValue(makeChallenge());
+      const client = makeClient();
+
+      await checkAndAdvanceChallengeSchedule(client as any);
+
+      expect(client._channel.messages.delete).toHaveBeenCalledTimes(4);
+      expect(client._channel.messages.delete).toHaveBeenCalledWith('hint-1');
+      expect(client._channel.messages.delete).toHaveBeenCalledWith('hint-2');
+      expect(client._channel.messages.delete).toHaveBeenCalledWith('hint-3');
+      expect(client._channel.messages.delete).toHaveBeenCalledWith('reveal-1');
+      expect(mockCreateWeeklyChallenge).toHaveBeenCalled();
+    });
+
+    it('does not delete anything when the setting is off (the default)', async () => {
+      mockGetGuildConfig.mockResolvedValue(enabledConfig());
+      mockGetActiveChallenge.mockResolvedValue(undefined);
+      mockGetChallengesForGuild.mockResolvedValue([
+        makeChallenge({ weekStart: '2026-08-17', revealed: true, hintMessageIds: ['hint-1'], revealMessageId: 'reveal-1' }),
+      ]);
+      vi.setSystemTime(new Date('2026-08-24T08:00:00Z'));
+      mockCreateWeeklyChallenge.mockResolvedValue(makeChallenge());
+      const client = makeClient();
+
+      await checkAndAdvanceChallengeSchedule(client as any);
+
+      expect(client._channel.messages.delete).not.toHaveBeenCalled();
+    });
+
+    it('does nothing when there is no previous revealed challenge to clean up', async () => {
+      mockGetGuildConfig.mockResolvedValue(enabledConfig({ challengeCleanupOldPosts: true }));
+      mockGetActiveChallenge.mockResolvedValue(undefined);
+      mockGetChallengesForGuild.mockResolvedValue([]);
+      vi.setSystemTime(new Date('2026-08-24T08:00:00Z'));
+      mockCreateWeeklyChallenge.mockResolvedValue(makeChallenge());
+      const client = makeClient();
+
+      await checkAndAdvanceChallengeSchedule(client as any);
+
+      expect(client._channel.messages.delete).not.toHaveBeenCalled();
+      expect(mockCreateWeeklyChallenge).toHaveBeenCalled();
+    });
+
+    it('still starts the new challenge even if deleting an old message fails (best-effort, logged and swallowed)', async () => {
+      mockGetGuildConfig.mockResolvedValue(enabledConfig({ challengeCleanupOldPosts: true }));
+      mockGetActiveChallenge.mockResolvedValue(undefined);
+      mockGetChallengesForGuild.mockResolvedValue([
+        makeChallenge({ weekStart: '2026-08-17', revealed: true, hintMessageIds: ['hint-1'], revealMessageId: 'reveal-1' }),
+      ]);
+      vi.setSystemTime(new Date('2026-08-24T08:00:00Z'));
+      mockCreateWeeklyChallenge.mockResolvedValue(makeChallenge());
+      const client = makeClient();
+      client._channel.messages.delete.mockRejectedValue(new Error('Unknown Message'));
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await expect(checkAndAdvanceChallengeSchedule(client as any)).resolves.not.toThrow();
+
+      expect(mockCreateWeeklyChallenge).toHaveBeenCalled();
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to delete old post'),
+        expect.any(Error),
+      );
+      consoleWarnSpy.mockRestore();
+    });
   });
 
   it('logs and moves on, without crashing, if the storage layer\'s duplicate-id guard is ever tripped', async () => {
@@ -484,7 +564,7 @@ describe('checkAndAdvanceChallengeSchedule', () => {
 
     // Reveal embed, then the leaderboard post
     expect(client._channel.send).toHaveBeenCalledTimes(2);
-    expect(mockRevealChallenge).toHaveBeenCalledWith('guild-1', active.id);
+    expect(mockRevealChallenge).toHaveBeenCalledWith('guild-1', active.id, 'msg-1');
     expect(mockGetLeaderboard).toHaveBeenCalledWith('guild-1');
     const leaderboardMessage = await client._channel.send.mock.results[1].value;
     expect(leaderboardMessage.pin).toHaveBeenCalled();
@@ -528,7 +608,7 @@ describe('checkAndAdvanceChallengeSchedule', () => {
 
     vi.setSystemTime(new Date('2026-08-30T12:00:00Z')); // configured time (Sunday noon) — should fire
     await checkAndAdvanceChallengeSchedule(client as any);
-    expect(mockRevealChallenge).toHaveBeenCalledWith('guild-1', active.id);
+    expect(mockRevealChallenge).toHaveBeenCalledWith('guild-1', active.id, 'msg-1');
   });
 
   it('force-reveals a stale challenge instead of blocking forever, regardless of weekday', async () => {
@@ -540,7 +620,7 @@ describe('checkAndAdvanceChallengeSchedule', () => {
 
     await checkAndAdvanceChallengeSchedule(client as any);
 
-    expect(mockRevealChallenge).toHaveBeenCalledWith('guild-1', stale.id);
+    expect(mockRevealChallenge).toHaveBeenCalledWith('guild-1', stale.id, 'msg-1');
     expect(mockCreateWeeklyChallenge).not.toHaveBeenCalled();
   });
 
@@ -581,7 +661,7 @@ describe('checkAndAdvanceChallengeSchedule', () => {
 
       await checkAndAdvanceChallengeSchedule(client as any);
 
-      expect(mockRevealChallenge).toHaveBeenCalledWith('guild-1', stale.id);
+      expect(mockRevealChallenge).toHaveBeenCalledWith('guild-1', stale.id, 'msg-1');
     });
   });
 
@@ -688,7 +768,7 @@ describe('checkAndAdvanceChallengeSchedule', () => {
 
       mockGetActiveChallenge.mockResolvedValue({ ...challenge, hintsPostedCount: 3 });
       await checkAndAdvanceChallengeSchedule(client as any); // tick 3: finally reveals
-      expect(mockRevealChallenge).toHaveBeenCalledWith('guild-1', challenge.id);
+      expect(mockRevealChallenge).toHaveBeenCalledWith('guild-1', challenge.id, 'msg-1');
     });
   });
 
@@ -755,7 +835,7 @@ describe('checkAndAdvanceChallengeSchedule', () => {
       mockGetActiveChallenge.mockResolvedValue(active);
       vi.setSystemTime(new Date('2026-08-25T20:00:00Z'));
       await checkAndAdvanceChallengeSchedule(client as any);
-      expect(mockRevealChallenge).toHaveBeenCalledWith('guild-1', active.id);
+      expect(mockRevealChallenge).toHaveBeenCalledWith('guild-1', active.id, 'msg-1');
     });
 
     it('does not start a second daily challenge later the same day right after a reveal', async () => {
@@ -778,7 +858,7 @@ describe('checkAndAdvanceChallengeSchedule', () => {
 
       await checkAndAdvanceChallengeSchedule(client as any);
 
-      expect(mockRevealChallenge).toHaveBeenCalledWith('guild-1', stale.id);
+      expect(mockRevealChallenge).toHaveBeenCalledWith('guild-1', stale.id, 'msg-1');
     });
   });
 
@@ -863,7 +943,7 @@ describe('checkAndAdvanceChallengeSchedule', () => {
 
       await checkAndAdvanceChallengeSchedule(client as any);
 
-      expect(mockRevealChallenge).toHaveBeenCalledWith('guild-1', active.id);
+      expect(mockRevealChallenge).toHaveBeenCalledWith('guild-1', active.id, 'msg-1');
     });
 
     it('force-reveals a bi-weekly challenge only after a full 14 days, not 7', async () => {
@@ -891,7 +971,7 @@ describe('checkAndAdvanceChallengeSchedule', () => {
 
       await checkAndAdvanceChallengeSchedule(client as any);
 
-      expect(mockRevealChallenge).toHaveBeenCalledWith('guild-1', stale.id);
+      expect(mockRevealChallenge).toHaveBeenCalledWith('guild-1', stale.id, 'msg-1');
     });
   });
 });

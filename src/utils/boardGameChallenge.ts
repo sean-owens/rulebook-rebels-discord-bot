@@ -211,9 +211,36 @@ export async function postReveal(client: Client, challenge: WeeklyChallenge): Pr
     .setImage('attachment://powered_by_BGG_01_SM.png');
   if (challenge.thumbnail) embed.setThumbnail(challenge.thumbnail);
 
-  await channel.send({ embeds: [embed], files: [buildBggAttachment()] });
-  await revealChallenge(challenge.guildId, challenge.id);
+  const message = await channel.send({ embeds: [embed], files: [buildBggAttachment()] });
+  await revealChallenge(challenge.guildId, challenge.id, message.id);
   await postAndPinLeaderboard(client, channel, challenge.guildId);
+}
+
+// Best-effort: when a guild has opted into challengeCleanupOldPosts (see
+// /admin challenge config), deletes the immediately preceding cycle's hint +
+// reveal messages right as a new cycle starts, so the channel doesn't
+// accumulate every past cycle's posts for communities that don't want that
+// history kept. Only the single most recently revealed challenge is cleaned
+// up (not every past one) — if a delete fails partway (message already gone,
+// lost Manage Messages), it's logged per-message and skipped rather than
+// blocking the new cycle from starting.
+async function cleanupPreviousChallengePosts(client: Client, guildId: string): Promise<void> {
+  const previous = (await getChallengesForGuild(guildId))
+    .filter((c) => c.revealed)
+    .sort((a, b) => (a.weekStart < b.weekStart ? 1 : -1))[0];
+  if (!previous) return;
+
+  const channel = await getTextChannel(client, previous.channelId);
+  if (!channel) return;
+
+  const messageIds = previous.revealMessageId
+    ? [...previous.hintMessageIds, previous.revealMessageId]
+    : previous.hintMessageIds;
+  for (const messageId of messageIds) {
+    await channel.messages.delete(messageId).catch((err) =>
+      console.warn(`[BoardGameChallenge] Failed to delete old post ${messageId} for guild ${guildId}:`, err),
+    );
+  }
 }
 
 // Keeps the leaderboard visible between weeks instead of requiring members to
@@ -240,12 +267,15 @@ async function startNewChallenge(
   guildId: string,
   channelId: string,
   periodStart: string,
+  cleanupOldPosts: boolean,
 ): Promise<void> {
   const game = await selectWeeklyGame(guildId);
   if (!game) {
     console.warn(`[BoardGameChallenge] No BGG catalog entries available — skipping guild ${guildId}`);
     return;
   }
+
+  if (cleanupOldPosts) await cleanupPreviousChallengePosts(client, guildId);
 
   const challenge = await createWeeklyChallenge(guildId, {
     weekStart: periodStart,
@@ -419,7 +449,7 @@ export async function checkAndAdvanceChallengeSchedule(client: Client): Promise<
           // (revealed or not) prevents that.
           const startedThisPeriod = (await getChallengesForGuild(guildId)).some((c) => c.weekStart === periodStart);
           if (!startedThisPeriod) {
-            await startNewChallenge(client, guildId, channelId, periodStart!);
+            await startNewChallenge(client, guildId, channelId, periodStart!, config.challengeCleanupOldPosts);
           }
         }
       } else if (
