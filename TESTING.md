@@ -57,12 +57,13 @@ Everything in this group (Parts 1–4, 6) can be completed solo by one tester ho
 
 ## 1.1a `/getting-started`
 
-**What it does:** Displays a short, ephemeral, ordered walkthrough for new members — RSVPing to a game night, setting preferences (`/myroles`), suggesting a game (`/game suggest`), and browsing the library (`/library list`) — plus a rules-channel step if one is configured. Deliberately omits `/library add` from the numbered steps' emphasis and BGG linking, marketplace, and rooms entirely, so a brand-new member isn't asked to commit to anything on day one; it points to `/help` for the rest.
+**What it does:** Displays a short, ephemeral, ordered walkthrough for new members — RSVPing to a game night, setting preferences (`/myroles`), suggesting a game (`/game suggest`), and browsing the library (`/library list`) — plus a rules-channel step if one is configured. Deliberately omits `/library add` from the numbered steps' emphasis and BGG linking, marketplace, and rooms entirely, so a brand-new member isn't asked to commit to anything on day one. The footer points to `/help` for the rest, and to a host/moderator if they get stuck.
 
 - [ ] Run `/getting-started` with no rules channel configured (`/admin welcome config`, 3.9j) — confirm the walkthrough starts at "RSVP to a game night" with no rules-channel step
 - [ ] Configure a rules channel (3.9j), run `/getting-started` again — confirm "Read the rules" is now step 1 and links to that channel, and the remaining steps renumber accordingly
 - [ ] Confirm the walkthrough mentions `/myroles`, `/game suggest`, and `/library list`
 - [ ] Confirm the response is ephemeral
+- [ ] Confirm the embed's footer mentions both `/help` and asking a host or moderator for help
 
 ## 1.2 `/event` — Event Viewing
 
@@ -574,7 +575,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.7e `/marketplace browse`
 
-**What it does:** Shows active listings in an ephemeral text list (up to 5 at a time).
+**What it does:** Shows active listings in an ephemeral text list (up to 5 at a time), followed by a legend explaining the status/type icons.
 
 - [ ] Run with no listings — confirm "No active listings found"
 - [ ] Run with active listings — confirm list shows item name, price/offer, and seller username
@@ -582,13 +583,18 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run with `type:sell` — confirm only sell listings appear
 - [ ] Run with `type:trade` — confirm only trade listings appear
 - [ ] Run with more than 5 active listings — confirm "Showing 5 of N. Check the marketplace channel for all listings."
+- [ ] Confirm the reply ends with a legend line: "🟢 Active · 🟡 Pending offer(s) · 🔴 Sold/Traded · ⚫ Closed  |  🏷️ For Sale · 🔄 For Trade" (browse itself only ever shows 🟢/🟡, since closed/sold listings aren't "active" — the legend still covers the full set members will see elsewhere, e.g. in `/marketplace my`)
 
 ### 1.7f `/marketplace my`
 
-**What it does:** Shows your own listings with their status, offers, and IDs.
+**What it does:** Shows your own listings with their status, offers, and IDs, followed by the same status/type legend as `/marketplace browse`. Sold/closed listings older than a week are left off the list entirely (they're done, and clutter this view once they've aged out) — active/pending listings always show regardless of age.
 
 - [ ] Run with no listings — confirm "You don't have any listings"
 - [ ] Run with listings — confirm all your listings are shown with status, price/offer, an "(N open offer(s))" annotation when offers are open, and listing ID
+- [ ] Confirm the reply ends with the status/type legend (see 1.7e)
+- [ ] Close or let a listing sell, then run this again right away — confirm it still appears (within the retention window)
+- [ ] Take a sold/closed listing older than a week (e.g. edit its `updatedAt` in `data/marketplace.json` back by 8+ days) — confirm it no longer appears in the list
+- [ ] With only old sold/closed listings (no active/pending ones), confirm the reply reads "You don't have any active listings. (Sold/closed listings older than a week aren't shown here.)" rather than the "no listings at all" message — since you do have listings, just none worth showing right now
 
 ### 1.7g "I'm Interested" button flow
 
@@ -633,7 +639,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.7m Quick Actions Hub (button panel)
 
-**What it does:** A pinned "🎮 Quick Actions" **forum post** (not a plain channel message — forum channels pin threads, not messages) in the configured marketplace channel, with buttons for 📦 Sell an Item, 🔄 Propose a Trade, 🔍 Browse Listings, and 📋 My Listings. Created (or refreshed) automatically whenever `/admin marketplace config` (3.9m) sets the channel. Sell/Trade need an item name, which a modal only supports as free text (no autocomplete like the slash command's `item` option) — so the wizard collects the name via modal, then condition via a native select, then (sell only) offers-allowed via buttons, before handing off to the exact same listing-creation flow (BGG lookup, expansion select, price screen) the slash commands use. Trades skip the offers-allowed step since trades are always open to offers, same as `/marketplace post trade`.
+**What it does:** A pinned "🎮 Quick Actions" **forum post** (not a plain channel message — forum channels pin threads, not messages) in the configured marketplace channel, with buttons for 📦 Sell an Item, 🔄 Propose a Trade, 🔍 Browse Listings, and 📋 My Listings. Created (or refreshed) automatically whenever `/admin marketplace config` (3.9m) sets the channel. Sell/Trade need an item name, which a modal only supports as free text (no autocomplete like the slash command's `item` option) — so the wizard collects the name via modal, then condition via a native select, then a second step specific to each type (sell: offers-allowed via buttons; trade: a "what are you looking for?" modal), before handing off to the exact same listing-creation flow (BGG lookup, expansion select, price screen) the slash commands use.
 
 **Prerequisites:** a marketplace channel configured via `/admin marketplace config` (3.9m).
 
@@ -643,10 +649,12 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Select a condition — confirm "✅ Allow Offers" / "🔒 Firm Price" buttons appear
 - [ ] Tap either offers button — confirm it proceeds exactly like `/marketplace post sell` would from that point (BGG match on a base game → expansion select; BGG match on an expansion → include-base-game prompt; otherwise → price screen; no BGG match → reference-link prompt)
 - [ ] Tap "🔄 Propose a Trade" — confirm a modal asks for an item name
-- [ ] Submit the modal and select a condition — confirm it proceeds directly to the listing flow with **no** offers-allowed step, unlike the Sell wizard
-- [ ] Tap "🔍 Browse Listings" — confirm it shows the same output as `/marketplace browse` with no type filter (all sell + trade listings)
-- [ ] Tap "📋 My Listings" — confirm it shows the same output as `/marketplace my` for the tapping user
-- [ ] Start the Sell (or Trade) wizard, then wait or restart the bot before finishing a step — confirm tapping a stale condition/offers button shows a "session has expired" message rather than an error or a crash
+- [ ] Submit the modal and select a condition — confirm a **second modal** appears asking "What are you looking for in return?" (regression: this step used to be skipped entirely, silently listing every hub-created trade as "Open to offers")
+- [ ] Submit the "looking for" modal with a value (e.g. "Wingspan or Ark Nova") — confirm the resulting listing's "Looking For" field shows that value, then proceeds through the listing flow exactly like `/marketplace post trade` would (BGG match → expansion select / include-base-game prompt; no match → reference-link prompt)
+- [ ] Submit the "looking for" modal blank — confirm the listing shows "Open to offers", same as leaving `/marketplace post trade`'s `looking_for` option unset
+- [ ] Tap "🔍 Browse Listings" — confirm it shows the same output as `/marketplace browse` with no type filter (all sell + trade listings), including the status/type legend (1.7e)
+- [ ] Tap "📋 My Listings" — confirm it shows the same output as `/marketplace my` for the tapping user, including the legend and the one-week retention filter on old sold/closed listings (1.7f)
+- [ ] Start the Sell (or Trade) wizard, then wait or restart the bot before finishing a step — confirm tapping a stale condition/offers button, or submitting the "looking for" modal after the session expired, shows a "session has expired" message rather than an error or a crash
 
 ### 1.7n `/marketplace edit`
 
@@ -1336,7 +1344,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.7e `/marketplace browse`
 
-**What it does:** Shows active listings in an ephemeral text list (up to 5 at a time).
+**What it does:** Shows active listings in an ephemeral text list (up to 5 at a time), followed by a legend explaining the status/type icons.
 
 - [ ] Run with no listings — confirm "No active listings found"
 - [ ] Run with active listings — confirm list shows item name, price/offer, and seller username
@@ -1344,13 +1352,18 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run with `type:sell` — confirm only sell listings appear
 - [ ] Run with `type:trade` — confirm only trade listings appear
 - [ ] Run with more than 5 active listings — confirm "Showing 5 of N. Check the marketplace channel for all listings."
+- [ ] Confirm the reply ends with a legend line: "🟢 Active · 🟡 Pending offer(s) · 🔴 Sold/Traded · ⚫ Closed  |  🏷️ For Sale · 🔄 For Trade" (browse itself only ever shows 🟢/🟡, since closed/sold listings aren't "active" — the legend still covers the full set members will see elsewhere, e.g. in `/marketplace my`)
 
 ### 2.7f `/marketplace my`
 
-**What it does:** Shows your own listings with their status, offers, and IDs.
+**What it does:** Shows your own listings with their status, offers, and IDs, followed by the same status/type legend as `/marketplace browse`. Sold/closed listings older than a week are left off the list entirely (they're done, and clutter this view once they've aged out) — active/pending listings always show regardless of age.
 
 - [ ] Run with no listings — confirm "You don't have any listings"
 - [ ] Run with listings — confirm all your listings are shown with status, price/offer, an "(N open offer(s))" annotation when offers are open, and listing ID
+- [ ] Confirm the reply ends with the status/type legend (see 1.7e)
+- [ ] Close or let a listing sell, then run this again right away — confirm it still appears (within the retention window)
+- [ ] Take a sold/closed listing older than a week (e.g. edit its `updatedAt` in `data/marketplace.json` back by 8+ days) — confirm it no longer appears in the list
+- [ ] With only old sold/closed listings (no active/pending ones), confirm the reply reads "You don't have any active listings. (Sold/closed listings older than a week aren't shown here.)" rather than the "no listings at all" message — since you do have listings, just none worth showing right now
 
 ### 2.7g "I'm Interested" button flow
 
@@ -1395,7 +1408,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.7m Quick Actions Hub (button panel)
 
-**What it does:** A pinned "🎮 Quick Actions" **forum post** (not a plain channel message — forum channels pin threads, not messages) in the configured marketplace channel, with buttons for 📦 Sell an Item, 🔄 Propose a Trade, 🔍 Browse Listings, and 📋 My Listings. Created (or refreshed) automatically whenever `/admin marketplace config` (3.9m) sets the channel. Sell/Trade need an item name, which a modal only supports as free text (no autocomplete like the slash command's `item` option) — so the wizard collects the name via modal, then condition via a native select, then (sell only) offers-allowed via buttons, before handing off to the exact same listing-creation flow (BGG lookup, expansion select, price screen) the slash commands use. Trades skip the offers-allowed step since trades are always open to offers, same as `/marketplace post trade`.
+**What it does:** A pinned "🎮 Quick Actions" **forum post** (not a plain channel message — forum channels pin threads, not messages) in the configured marketplace channel, with buttons for 📦 Sell an Item, 🔄 Propose a Trade, 🔍 Browse Listings, and 📋 My Listings. Created (or refreshed) automatically whenever `/admin marketplace config` (3.9m) sets the channel. Sell/Trade need an item name, which a modal only supports as free text (no autocomplete like the slash command's `item` option) — so the wizard collects the name via modal, then condition via a native select, then a second step specific to each type (sell: offers-allowed via buttons; trade: a "what are you looking for?" modal), before handing off to the exact same listing-creation flow (BGG lookup, expansion select, price screen) the slash commands use.
 
 **Prerequisites:** a marketplace channel configured via `/admin marketplace config` (3.9m).
 
@@ -1405,10 +1418,12 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Select a condition — confirm "✅ Allow Offers" / "🔒 Firm Price" buttons appear
 - [ ] Tap either offers button — confirm it proceeds exactly like `/marketplace post sell` would from that point (BGG match on a base game → expansion select; BGG match on an expansion → include-base-game prompt; otherwise → price screen; no BGG match → reference-link prompt)
 - [ ] Tap "🔄 Propose a Trade" — confirm a modal asks for an item name
-- [ ] Submit the modal and select a condition — confirm it proceeds directly to the listing flow with **no** offers-allowed step, unlike the Sell wizard
-- [ ] Tap "🔍 Browse Listings" — confirm it shows the same output as `/marketplace browse` with no type filter (all sell + trade listings)
-- [ ] Tap "📋 My Listings" — confirm it shows the same output as `/marketplace my` for the tapping user
-- [ ] Start the Sell (or Trade) wizard, then wait or restart the bot before finishing a step — confirm tapping a stale condition/offers button shows a "session has expired" message rather than an error or a crash
+- [ ] Submit the modal and select a condition — confirm a **second modal** appears asking "What are you looking for in return?" (regression: this step used to be skipped entirely, silently listing every hub-created trade as "Open to offers")
+- [ ] Submit the "looking for" modal with a value (e.g. "Wingspan or Ark Nova") — confirm the resulting listing's "Looking For" field shows that value, then proceeds through the listing flow exactly like `/marketplace post trade` would (BGG match → expansion select / include-base-game prompt; no match → reference-link prompt)
+- [ ] Submit the "looking for" modal blank — confirm the listing shows "Open to offers", same as leaving `/marketplace post trade`'s `looking_for` option unset
+- [ ] Tap "🔍 Browse Listings" — confirm it shows the same output as `/marketplace browse` with no type filter (all sell + trade listings), including the status/type legend (1.7e)
+- [ ] Tap "📋 My Listings" — confirm it shows the same output as `/marketplace my` for the tapping user, including the legend and the one-week retention filter on old sold/closed listings (1.7f)
+- [ ] Start the Sell (or Trade) wizard, then wait or restart the bot before finishing a step — confirm tapping a stale condition/offers button, or submitting the "looking for" modal after the session expired, shows a "session has expired" message rather than an error or a crash
 
 ### 2.7n `/marketplace edit`
 
@@ -1438,7 +1453,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] With the announcements channel set to a Forum Channel (3.9a), create an event — confirm a new forum thread is posted with the "Upcoming" tag applied
 - [ ] Attempt to create an event without `title` — confirm Discord rejects it as a missing required option
 - [ ] Create an event with all fields (end_time, location, link, description) — confirm all appear in the embed
-- [ ] Confirm date formats work: `aug 22`, `August 22`, `august 22, 2026`
+- [ ] Confirm date formats work: `aug 22`, `August 22`, `august 22, 2026`, `Sept 2nd` (regression: the 4-letter "Sept" abbreviation previously failed to parse — only 3-letter "Sep" and the full "September" worked)
 - [ ] Confirm time formats work: `7pm`, `7:00 PM`, `19:00`
 - [ ] Attempt to create an event with a date/time already in the past — confirm the bot handles it gracefully (rejects with a clear error, or accepts per design) rather than silently creating a broken past event
 
@@ -2115,7 +2130,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.7e `/marketplace browse`
 
-**What it does:** Shows active listings in an ephemeral text list (up to 5 at a time).
+**What it does:** Shows active listings in an ephemeral text list (up to 5 at a time), followed by a legend explaining the status/type icons.
 
 - [ ] Run with no listings — confirm "No active listings found"
 - [ ] Run with active listings — confirm list shows item name, price/offer, and seller username
@@ -2123,13 +2138,18 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run with `type:sell` — confirm only sell listings appear
 - [ ] Run with `type:trade` — confirm only trade listings appear
 - [ ] Run with more than 5 active listings — confirm "Showing 5 of N. Check the marketplace channel for all listings."
+- [ ] Confirm the reply ends with a legend line: "🟢 Active · 🟡 Pending offer(s) · 🔴 Sold/Traded · ⚫ Closed  |  🏷️ For Sale · 🔄 For Trade" (browse itself only ever shows 🟢/🟡, since closed/sold listings aren't "active" — the legend still covers the full set members will see elsewhere, e.g. in `/marketplace my`)
 
 ### 3.7f `/marketplace my`
 
-**What it does:** Shows your own listings with their status, offers, and IDs.
+**What it does:** Shows your own listings with their status, offers, and IDs, followed by the same status/type legend as `/marketplace browse`. Sold/closed listings older than a week are left off the list entirely (they're done, and clutter this view once they've aged out) — active/pending listings always show regardless of age.
 
 - [ ] Run with no listings — confirm "You don't have any listings"
 - [ ] Run with listings — confirm all your listings are shown with status, price/offer, an "(N open offer(s))" annotation when offers are open, and listing ID
+- [ ] Confirm the reply ends with the status/type legend (see 1.7e)
+- [ ] Close or let a listing sell, then run this again right away — confirm it still appears (within the retention window)
+- [ ] Take a sold/closed listing older than a week (e.g. edit its `updatedAt` in `data/marketplace.json` back by 8+ days) — confirm it no longer appears in the list
+- [ ] With only old sold/closed listings (no active/pending ones), confirm the reply reads "You don't have any active listings. (Sold/closed listings older than a week aren't shown here.)" rather than the "no listings at all" message — since you do have listings, just none worth showing right now
 
 ### 3.7g "I'm Interested" button flow
 
@@ -2194,7 +2214,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] With the announcements channel set to a Forum Channel (3.9a), create an event — confirm a new forum thread is posted with the "Upcoming" tag applied
 - [ ] Attempt to create an event without `title` — confirm Discord rejects it as a missing required option
 - [ ] Create an event with all fields (end_time, location, link, description) — confirm all appear in the embed
-- [ ] Confirm date formats work: `aug 22`, `August 22`, `august 22, 2026`
+- [ ] Confirm date formats work: `aug 22`, `August 22`, `august 22, 2026`, `Sept 2nd` (regression: the 4-letter "Sept" abbreviation previously failed to parse — only 3-letter "Sep" and the full "September" worked)
 - [ ] Confirm time formats work: `7pm`, `7:00 PM`, `19:00`
 - [ ] Attempt to create an event with a date/time already in the past — confirm the bot handles it gracefully (rejects with a clear error, or accepts per design) rather than silently creating a broken past event
 
@@ -2880,6 +2900,11 @@ The effective table count used at lock time is `max(headcount floor, preference-
 - [ ] Continuing from the same scenario, confirm the *next* hourly check posts hint 3 (not the reveal) — each check advances exactly one stage, never skipping ahead
 - [ ] Let checks continue normally from there — confirm the reveal eventually posts once hint 3 has gone out, completing the week with all 3 hints intact rather than a truncated one
 - [ ] Confirm a normal, brief restart (seconds to minutes) is unaffected by this — hints still post at essentially their configured time, not measurably delayed by this change
+
+**Recovering from hint 1 never posting at all (channel unavailable at creation time):** `startNewChallenge` creates the challenge record, then tries to post hint 1 — if the configured channel is unresolvable at that exact moment (e.g. deleted right after, or a stale value), the post silently fails and, without this fix, the challenge would sit stuck at `hintsPostedCount: 0` forever (`/challenge status` shows no hint text and a broken `#unknown` channel mention), since nothing else ever retries it. The scheduler now retries hint 1 on every check until it succeeds, and if the admin has since pointed `/admin challenge config` at a different channel, retries there instead of the channel that already failed (nothing was posted yet, so there's no consistency to preserve).
+- [ ] Force this state to reproduce it: configure the channel to one you're about to delete, enable the feature, let hint 1's time pass with the channel already gone (or deny the bot's access to it) — confirm `/challenge status` shows a blank hint section and a broken channel mention, matching the bug
+- [ ] Reconfigure `/admin challenge config` with a valid channel — confirm the *next* hourly check successfully posts hint 1 in the newly configured channel (not the old broken one), and `/challenge status` now shows it correctly
+- [ ] Confirm subsequent hints/reveal proceed normally from there, using the corrected channel
 
 ---
 

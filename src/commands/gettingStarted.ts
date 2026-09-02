@@ -33,7 +33,9 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     .setColor(0x57f287)
     .setTitle('👋 Getting Started')
     .setDescription(steps.join('\n\n'))
-    .setFooter({ text: 'Run /help any time to see everything else the bot can do.' });
+    .setFooter({
+      text: 'Run /help any time to see everything else the bot can do — or ask a host or moderator if you get stuck.',
+    });
 
   await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }

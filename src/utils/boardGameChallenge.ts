@@ -14,6 +14,7 @@ import {
   revealChallenge,
   getRecentGameIds,
   getLeaderboard,
+  updateChallengeChannel,
 } from './boardGameChallengeStorage';
 
 // Picks a random game from BGG's top-ranked pool that this guild hasn't
@@ -392,6 +393,27 @@ export async function checkAndAdvanceChallengeSchedule(client: Client): Promise<
             await startNewChallenge(client, guildId, channelId, periodStart);
           }
         }
+      } else if (
+        active.hintsPostedCount === 0 &&
+        now >= stageInstant(
+          active.weekStart,
+          stageDayOffset(config.challengeFrequency, config.challengeClue1Weekday),
+          config.challengeClue1Hour,
+          config.timezone,
+        )
+      ) {
+        // Hint 1 was recorded as started but never actually posted — most
+        // likely the channel it was created against was unavailable at that
+        // moment (e.g. deleted right after, or a stale config value). Retry
+        // rather than leaving the challenge stuck forever with a blank
+        // /challenge status and nothing posted. If the admin has since
+        // pointed the config at a different channel, re-point this
+        // still-unstarted challenge there too — nothing has posted yet, so
+        // there's no prior channel to stay consistent with.
+        const target = active.channelId === channelId
+          ? active
+          : (await updateChallengeChannel(guildId, active.id, channelId)) ?? active;
+        await postHint(client, target, 1);
       } else if (
         active.hintsPostedCount === 1 &&
         now >= stageInstant(

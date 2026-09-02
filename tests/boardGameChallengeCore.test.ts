@@ -14,6 +14,7 @@ const mockRecordHintPosted = vi.fn();
 const mockRevealChallenge = vi.fn();
 const mockGetRecentGameIds = vi.fn();
 const mockGetLeaderboard = vi.fn();
+const mockUpdateChallengeChannel = vi.fn();
 vi.mock('../src/utils/boardGameChallengeStorage', () => ({
   getActiveChallenge: (...args: unknown[]) => mockGetActiveChallenge(...args),
   getChallengesForGuild: (...args: unknown[]) => mockGetChallengesForGuild(...args),
@@ -22,6 +23,7 @@ vi.mock('../src/utils/boardGameChallengeStorage', () => ({
   revealChallenge: (...args: unknown[]) => mockRevealChallenge(...args),
   getRecentGameIds: (...args: unknown[]) => mockGetRecentGameIds(...args),
   getLeaderboard: (...args: unknown[]) => mockGetLeaderboard(...args),
+  updateChallengeChannel: (...args: unknown[]) => mockUpdateChallengeChannel(...args),
 }));
 
 const mockGetBGGGame = vi.fn();
@@ -489,6 +491,60 @@ describe('checkAndAdvanceChallengeSchedule', () => {
 
     expect(mockRevealChallenge).toHaveBeenCalledWith('guild-1', stale.id);
     expect(mockCreateWeeklyChallenge).not.toHaveBeenCalled();
+  });
+
+  describe('retrying a stuck hint 1 (channel unavailable at creation time)', () => {
+    // Regression: startNewChallenge creates the WeeklyChallenge record first,
+    // then calls postHint — if the channel it was created against turns out
+    // to be unresolvable at that moment, postHint just logs a warning and
+    // returns, leaving hintsPostedCount stuck at 0 forever with nothing ever
+    // retrying it (the hint-2/3/reveal branches all require a specific
+    // hintsPostedCount that never arrives). /challenge status then shows a
+    // blank hint section and a broken channel mention forever, even after
+    // the admin reconfigures a working channel — because postHint always
+    // uses the channel stored on the challenge, not the live config.
+    it('retries hint 1 on the same configured channel when it still matches', async () => {
+      mockGetGuildConfig.mockResolvedValue(enabledConfig({ boardGameChallengeChannelId: 'channel-1' }));
+      const stuck = makeChallenge({ hintsPostedCount: 0, channelId: 'channel-1' });
+      mockGetActiveChallenge.mockResolvedValue(stuck);
+      vi.setSystemTime(new Date('2026-08-24T09:00:00Z')); // Monday 9am — past hint 1's 8am
+      const client = makeClient();
+
+      await checkAndAdvanceChallengeSchedule(client as any);
+
+      expect(client._channel.send).toHaveBeenCalledTimes(1);
+      expect(mockRecordHintPosted).toHaveBeenCalledWith('guild-1', stuck.id, 1, 'msg-1');
+      expect(mockUpdateChallengeChannel).not.toHaveBeenCalled();
+    });
+
+    it('re-points the stuck challenge at the currently configured channel when it has since changed', async () => {
+      mockGetGuildConfig.mockResolvedValue(enabledConfig({ boardGameChallengeChannelId: 'channel-new' }));
+      const stuck = makeChallenge({ hintsPostedCount: 0, channelId: 'channel-old' });
+      mockGetActiveChallenge.mockResolvedValue(stuck);
+      mockUpdateChallengeChannel.mockResolvedValue({ ...stuck, channelId: 'channel-new' });
+      vi.setSystemTime(new Date('2026-08-24T09:00:00Z'));
+      const client = makeClient();
+
+      await checkAndAdvanceChallengeSchedule(client as any);
+
+      expect(mockUpdateChallengeChannel).toHaveBeenCalledWith('guild-1', stuck.id, 'channel-new');
+      // postHint fetches whatever channel id it's handed — confirm it was handed the new one.
+      expect(client.channels.fetch).toHaveBeenCalledWith('channel-new');
+      expect(client._channel.send).toHaveBeenCalledTimes(1);
+      expect(mockRecordHintPosted).toHaveBeenCalledWith('guild-1', stuck.id, 1, 'msg-1');
+    });
+
+    it('does not retry hint 1 before its scheduled hour', async () => {
+      mockGetGuildConfig.mockResolvedValue(enabledConfig());
+      const stuck = makeChallenge({ hintsPostedCount: 0 });
+      mockGetActiveChallenge.mockResolvedValue(stuck);
+      vi.setSystemTime(new Date('2026-08-24T06:00:00Z')); // Monday 6am — before hint 1's 8am
+      const client = makeClient();
+
+      await checkAndAdvanceChallengeSchedule(client as any);
+
+      expect(client._channel.send).not.toHaveBeenCalled();
+    });
   });
 
   describe('catching up after a multi-day outage (bot down across an entire scheduled hint day)', () => {

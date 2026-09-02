@@ -86,6 +86,7 @@ import {
   handleHubMarketplaceSellModal,
   handleHubMarketplaceTradeButton,
   handleHubMarketplaceTradeModal,
+  handleHubMarketplaceTradeLookingForModal,
   handleHubMarketplaceConditionSelect,
   handleHubMarketplaceOffersYes,
   handleHubMarketplaceOffersNo,
@@ -221,6 +222,7 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
       else if (interaction.customId === 'hub_room_persist_modal') await handleHubRoomPersistModal(interaction);
       else if (interaction.customId === 'hub_mp_sell_modal') await handleHubMarketplaceSellModal(interaction);
       else if (interaction.customId === 'hub_mp_trade_modal') await handleHubMarketplaceTradeModal(interaction);
+      else if (interaction.customId === 'hub_mp_trade_looking_for_modal') await handleHubMarketplaceTradeLookingForModal(interaction);
       else if (interaction.customId === 'hub_snacks_add_modal') await handleHubSnacksAddModal(interaction);
       else if (interaction.customId.startsWith('mp_bid_')) {
         await handleBidModal(interaction as unknown as ModalSubmitInteraction, interaction.customId.slice('mp_bid_'.length));
