@@ -2906,6 +2906,10 @@ The effective table count used at lock time is `max(headcount floor, preference-
 - [ ] Reconfigure `/admin challenge config` with a valid channel — confirm the *next* hourly check successfully posts hint 1 in the newly configured channel (not the old broken one), and `/challenge status` now shows it correctly
 - [ ] Confirm subsequent hints/reveal proceed normally from there, using the corrected channel
 
+**Duplicate-challenge guard (defense in depth):** a challenge's id is deterministic (`<guildId>-<weekStart>`), and every lookup by id (`recordHintPosted`, `revealChallenge`, `getChallenge`) resolves to whichever matching record comes first — so two challenges ever sharing an id would silently orphan one of them with no error anywhere (this happened once in production, from a since-fixed bug). The scheduler's own "already started this period" check is the primary defense; `createWeeklyChallenge` itself now also refuses outright to create a second record with an id that already exists, throwing instead — a backstop in case that primary check is ever bypassed by some other bug or race.
+- [ ] This is normally unreachable through the bot's own UI (there's no way to force two challenges into the same period through legitimate use) — verified at the unit level instead: `createWeeklyChallenge` called twice for the same guild+weekStart rejects the second call rather than creating a duplicate or silently overwriting the first
+- [ ] If this guard is ever tripped in practice (e.g. surfaced via a future bug), confirm it shows up as a clear `[BoardGameChallenge] Schedule check failed for guild <id>` error in the logs rather than crashing the bot or silently corrupting data
+
 ---
 
 # Part 6 — General Edge Cases (Any Role)

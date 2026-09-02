@@ -332,6 +332,29 @@ describe('checkAndAdvanceChallengeSchedule', () => {
     expect(mockRecordHintPosted).toHaveBeenCalledWith('guild-1', 'guild-1-2026-08-24', 1, 'msg-1');
   });
 
+  it('logs and moves on, without crashing, if the storage layer\'s duplicate-id guard is ever tripped', async () => {
+    // Belt-and-suspenders: this scheduler-level "already started this period"
+    // check is the primary defense, but if it were ever bypassed,
+    // createWeeklyChallenge itself refuses duplicates and throws — confirm
+    // that surfaces as a caught, logged error rather than an unhandled
+    // rejection that could take down the whole per-guild loop.
+    mockGetGuildConfig.mockResolvedValue(enabledConfig());
+    mockGetActiveChallenge.mockResolvedValue(undefined);
+    vi.setSystemTime(new Date('2026-08-24T08:00:00Z'));
+    mockCreateWeeklyChallenge.mockRejectedValue(new Error('Refusing to create a duplicate challenge guild-1-2026-08-24'));
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const client = makeClient();
+
+    await expect(checkAndAdvanceChallengeSchedule(client as any)).resolves.not.toThrow();
+
+    expect(client._channel.send).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Schedule check failed for guild guild-1'),
+      expect.any(Error),
+    );
+    consoleErrorSpy.mockRestore();
+  });
+
   it('does not start a second challenge later the same day when reveal shares hint 1\'s weekday (same-day schedule)', async () => {
     // Regression: a schedule where every stage falls on Monday (e.g. 8am/10am/12pm/5pm)
     // used to restart the whole cycle the moment the 5pm reveal fired, because
