@@ -141,7 +141,11 @@ import {
   handleHubSnacksRemoveButton,
   handleHubSnacksRemoveSelect,
 } from '../commands/snacks';
-import { execute as executeChallenge } from '../commands/boardgamechallenge';
+import {
+  execute as executeChallenge,
+  handleHubChallengeStatusButton,
+  handleHubChallengeLeaderboardButton,
+} from '../commands/boardgamechallenge';
 import { extractCommandUsage, recordCommandUsage } from '../utils/commandUsageStorage';
 
 export async function handleInteraction(interaction: Interaction): Promise<void> {
@@ -329,6 +333,10 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handleHubMarketplaceBrowseButton(interaction);
       } else if (id === 'hub_mp_my') {
         await handleHubMarketplaceMyButton(interaction);
+      } else if (id === 'hub_challenge_status') {
+        await handleHubChallengeStatusButton(interaction);
+      } else if (id === 'hub_challenge_leaderboard') {
+        await handleHubChallengeLeaderboardButton(interaction);
       } else if (id === 'hub_snacks') {
         await handleHubSnacksButton(interaction);
       } else if (id === 'hub_snacks_add') {

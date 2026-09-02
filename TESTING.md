@@ -777,7 +777,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ## 1.10 `/hub` — On-Demand Quick Actions
 
-**What it does:** Every pinned "Quick Actions" hub (event, 1.3h; room, 1.8f; marketplace, 1.7m; general chat, 1.9a) is a standing message someone can scroll past or lose track of. `/hub` reposts the same buttons on demand as an ephemeral reply only the runner can see, by detecting which context the channel it's run in matches — no arguments needed. Reuses the exact same embed/button-building functions as each pinned hub, so the buttons behave identically (same customIds, same handlers).
+**What it does:** Every pinned "Quick Actions" hub (event, 1.3h; room, 1.8f; marketplace, 1.7m; general chat, 1.9a) is a standing message someone can scroll past or lose track of. `/hub` reposts the same buttons on demand as an ephemeral reply only the runner can see, by detecting which context the channel it's run in matches — no arguments needed. Reuses the exact same embed/button-building functions as each pinned hub, so the buttons behave identically (same customIds, same handlers). The board game challenge channel (3.9s) is the one exception with no standing pinned message of its own — `/hub` there surfaces `/challenge status` and `/challenge leaderboard` (1.12a/b) as buttons instead.
 
 - [ ] Run `/hub` inside a private room — confirm an ephemeral reply with the same embed/buttons as that room's pinned hub (1.8f)
 - [ ] Run `/hub` inside an active event channel — confirm an ephemeral reply with the same embed/buttons as that event's pinned hub (1.3h)
@@ -785,8 +785,10 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run `/hub` inside the marketplace's pinned hub thread (Forum mode) — confirm an ephemeral reply with the same embed/buttons as the marketplace hub (1.7m)
 - [ ] Run `/hub` directly in the marketplace channel (Text mode — no separate hub thread, so this must match on the channel itself) — confirm the same ephemeral marketplace hub reply
 - [ ] Run `/hub` inside the configured general-chat hub channel (3.9q) — confirm an ephemeral reply with the same embed/buttons as the general hub (1.9a)
-- [ ] Run `/hub` in any other channel (not a room, event, marketplace hub thread, or configured general channel) — confirm a graceful ephemeral message explaining no hub applies here, rather than an error
-- [ ] Confirm every button on the `/hub` reply works exactly the same as tapping it on the pinned message (same handlers, same customIds)
+- [ ] Run `/hub` inside the configured board game challenge channel (3.9s), with the feature enabled — confirm an ephemeral reply with "📊 Status" and "🏆 Leaderboard" buttons, and confirm each behaves exactly like the matching `/challenge` subcommand (1.12a/b)
+- [ ] Run `/hub` in the configured challenge channel while the feature is set to **disabled** — confirm it falls through to the "no hub for this channel" message rather than showing the challenge hub
+- [ ] Run `/hub` in any other channel (not a room, event, marketplace hub thread, configured general channel, or configured challenge channel) — confirm a graceful ephemeral message explaining no hub applies here, rather than an error
+- [ ] Confirm every button on the `/hub` reply works exactly the same as tapping it on the pinned message (same handlers, same customIds) — for the challenge channel, the same as running the matching `/challenge` subcommand directly
 
 ---
 

@@ -3,7 +3,14 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { ChannelType } from 'discord.js';
-import { execute, handleChallengeConfig } from '../src/commands/boardgamechallenge';
+import {
+  execute,
+  handleChallengeConfig,
+  buildChallengeHubEmbed,
+  buildChallengeHubButtons,
+  handleHubChallengeStatusButton,
+  handleHubChallengeLeaderboardButton,
+} from '../src/commands/boardgamechallenge';
 import { getGuildConfig, updateGuildConfig } from '../src/utils/config';
 import { createWeeklyChallenge, recordCorrectGuess } from '../src/utils/boardGameChallengeStorage';
 import { mondayOfWeekInTimeZone } from '../src/utils/timezone';
@@ -479,6 +486,36 @@ describe('/challenge command', () => {
 
         expect(guild.channels.create).not.toHaveBeenCalled();
       });
+    });
+  });
+
+  describe('challenge hub (see /hub)', () => {
+    it('embed/buttons match /challenge\'s own two subcommands', () => {
+      const embed = buildChallengeHubEmbed().toJSON();
+      expect(embed.fields?.map((f) => f.name)).toEqual(
+        expect.arrayContaining([expect.stringContaining('Status'), expect.stringContaining('Leaderboard')]),
+      );
+
+      const customIds = buildChallengeHubButtons()
+        .toJSON()
+        .components.map((c: any) => c.custom_id);
+      expect(customIds).toEqual(['hub_challenge_status', 'hub_challenge_leaderboard']);
+    });
+
+    it('the status hub button behaves exactly like /challenge status', async () => {
+      const interaction = makeInteraction('status') as any;
+      await handleHubChallengeStatusButton(interaction);
+      expect(interaction.reply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining("isn't set up") }),
+      );
+    });
+
+    it('the leaderboard hub button behaves exactly like /challenge leaderboard', async () => {
+      const interaction = makeInteraction('leaderboard') as any;
+      await handleHubChallengeLeaderboardButton(interaction);
+      expect(interaction.reply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('No points on the board') }),
+      );
     });
   });
 });
