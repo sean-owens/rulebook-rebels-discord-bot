@@ -127,6 +127,12 @@ export interface GuildConfig {
   // `start_date`; defaults to the current week the first time 'biweekly' is
   // turned on without one (see handleChallengeConfig), so it's optional.
   challengeCycleAnchor: string | null;
+  // If true, starting a new cycle first deletes the immediately preceding
+  // cycle's hint + reveal posts from the channel (best-effort — a missing
+  // message or lost Manage Messages permission is logged and skipped, not
+  // treated as an error). Off by default: some communities like keeping a
+  // scrollback of past answers, so this is opt-in via /admin challenge config.
+  challengeCleanupOldPosts: boolean;
 }
 
 const DEFAULT_CONFIG: GuildConfig = {
@@ -172,6 +178,7 @@ const DEFAULT_CONFIG: GuildConfig = {
   challengeRevealHour: 18,
   challengeFrequency: 'weekly',
   challengeCycleAnchor: null,
+  challengeCleanupOldPosts: false,
 };
 
 type ConfigStore = Record<string, GuildConfig>;

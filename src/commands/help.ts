@@ -155,7 +155,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
                 '`/admin marketplace purge` — Delete old/closed marketplace listings',
                 '`/admin room config` — Set the Discord category used for /room private channels',
                 '`/admin general config` — Set the channel for the general chat "Quick Actions" button hub',
-                '`/admin challenge config` — Set the channel, frequency (daily/weekly/bi-weekly), on/off state, and hint/reveal schedule for the board game challenge',
+                '`/admin challenge config` — Set the channel, frequency (daily/weekly/bi-weekly), on/off state, hint/reveal schedule, and whether old posts get cleaned up when a new cycle starts, for the board game challenge',
                 '`/admin usage` — Show which commands are used on this server, and how often',
                 '`/admin bgstats` — Show BG Stats link open counts for the most recently locked event',
               ].join('\n'),

@@ -27,6 +27,7 @@ export interface WeeklyChallenge {
   hintMessageIds: string[];
   channelId: string;
   revealed: boolean;
+  revealMessageId: string | null;
   correctGuesses: CorrectGuess[];
 }
 
@@ -97,6 +98,7 @@ export async function createWeeklyChallenge(
     hintsPostedCount: 0,
     hintMessageIds: [],
     revealed: false,
+    revealMessageId: null,
     correctGuesses: [],
   };
   challenges.push(challenge);
@@ -184,6 +186,7 @@ export async function recordCorrectGuess(
 export async function revealChallenge(
   guildId: string,
   challengeId: string,
+  messageId?: string,
 ): Promise<WeeklyChallenge | undefined> {
   const store = await load();
   const challenges = store[guildId] ?? [];
@@ -191,6 +194,7 @@ export async function revealChallenge(
   if (idx === -1) return undefined;
 
   challenges[idx].revealed = true;
+  if (messageId) challenges[idx].revealMessageId = messageId;
   store[guildId] = challenges;
   await save(store);
   return challenges[idx];

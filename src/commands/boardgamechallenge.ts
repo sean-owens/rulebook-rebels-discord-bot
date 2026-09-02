@@ -155,6 +155,7 @@ export async function handleChallengeConfig(interaction: ChatInputCommandInterac
   const enabled = interaction.options.getBoolean('enabled');
   const frequencyRaw = interaction.options.getString('frequency') as GuildConfig['challengeFrequency'] | null;
   const startDateRaw = interaction.options.getString('start_date');
+  const cleanupOldPosts = interaction.options.getBoolean('cleanup_old_posts');
 
   const patch: Record<string, unknown> = {};
   let autoCreatedChannel: TextChannel | undefined;
@@ -195,6 +196,7 @@ export async function handleChallengeConfig(interaction: ChatInputCommandInterac
     if (autoCreatedChannel) patch.boardGameChallengeChannelId = autoCreatedChannel.id;
   }
   if (enabled !== null) patch.boardGameChallengeEnabled = enabled;
+  if (cleanupOldPosts !== null) patch.challengeCleanupOldPosts = cleanupOldPosts;
 
   const scheduleOptions: [string, string, string][] = [
     ['clue1_day', 'clue1_hour', 'challengeClue1'],
@@ -237,6 +239,7 @@ export async function handleChallengeConfig(interaction: ChatInputCommandInterac
       `• ${scheduleLine('Hint 3', config.challengeClue3Weekday, config.challengeClue3Hour, config.challengeFrequency)}`,
       `• ${scheduleLine('Reveal', config.challengeRevealWeekday, config.challengeRevealHour, config.challengeFrequency)}`,
       `• Timezone: **${config.timezone}** (set via /admin event config)`,
+      `• Cleanup old posts on new cycle: **${config.challengeCleanupOldPosts ? 'Yes' : 'No'}**`,
       autoCreatedChannel ? `\n📌 Created <#${autoCreatedChannel.id}> since no channel was configured.` : '',
       !config.boardGameChallengeChannelId
         ? '\n⚠️ Set a channel before enabling — hints have nowhere to post otherwise.'

@@ -171,6 +171,18 @@ describe('boardGameChallengeStorage', () => {
       const revealed = await revealChallenge('guild-1', c.id);
       expect(revealed?.revealed).toBe(true);
     });
+
+    it('stores the reveal message id when given one — used later to clean up old posts', async () => {
+      const c = await createWeeklyChallenge('guild-1', BASE_CHALLENGE);
+      const revealed = await revealChallenge('guild-1', c.id, 'reveal-msg-1');
+      expect(revealed?.revealMessageId).toBe('reveal-msg-1');
+    });
+
+    it('leaves revealMessageId null when no message id is given (e.g. the channel was unavailable)', async () => {
+      const c = await createWeeklyChallenge('guild-1', BASE_CHALLENGE);
+      const revealed = await revealChallenge('guild-1', c.id);
+      expect(revealed?.revealMessageId).toBeNull();
+    });
   });
 
   describe('getRecentGameIds', () => {

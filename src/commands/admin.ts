@@ -471,6 +471,12 @@ export const data = new SlashCommandBuilder()
               .setName('start_date')
               .setDescription('Bi-weekly only: which week is "on" (e.g. "August 22") — defaults to this week')
               .setRequired(false),
+          )
+          .addBooleanOption((opt) =>
+            opt
+              .setName('cleanup_old_posts')
+              .setDescription('Delete the previous cycle\'s hints/reveal when a new one starts (default: off)')
+              .setRequired(false),
           );
         const scheduleFields: [string, string, string][] = [
           ['clue1', 'Hint 1', 'default Monday 8am'],
