@@ -397,6 +397,34 @@ describe('checkAndAdvanceChallengeSchedule', () => {
     expect(mockCreateWeeklyChallenge).not.toHaveBeenCalled();
   });
 
+  it('does not retroactively start a new challenge hours after hint 1\'s moment has passed — waits for the next occurrence instead', async () => {
+    // Starting a brand-new cycle is deliberately NOT "catch up whenever" the
+    // way an already-running cycle's later stages are — if the moment's
+    // already well past (bot was off, data got reset, an admin just
+    // reconfigured mid-afternoon, etc.), members expect it to wait for the
+    // next real occurrence rather than suddenly posting right now.
+    mockGetGuildConfig.mockResolvedValue(enabledConfig());
+    mockGetActiveChallenge.mockResolvedValue(undefined);
+    vi.setSystemTime(new Date('2026-08-24T21:00:00Z')); // Monday 9pm — 13 hours after hint 1's 8am
+    const client = makeClient();
+
+    await checkAndAdvanceChallengeSchedule(client as any);
+
+    expect(mockCreateWeeklyChallenge).not.toHaveBeenCalled();
+  });
+
+  it('still starts a new challenge within a short grace window right after hint 1\'s moment (absorbs the hourly check\'s own timing jitter)', async () => {
+    mockGetGuildConfig.mockResolvedValue(enabledConfig());
+    mockGetActiveChallenge.mockResolvedValue(undefined);
+    vi.setSystemTime(new Date('2026-08-24T08:45:00Z')); // Monday 8:45am — 45 minutes late, well within the window
+    mockCreateWeeklyChallenge.mockResolvedValue(makeChallenge());
+    const client = makeClient();
+
+    await checkAndAdvanceChallengeSchedule(client as any);
+
+    expect(mockCreateWeeklyChallenge).toHaveBeenCalled();
+  });
+
   it('is idempotent — does not recreate a challenge that is already active on Monday', async () => {
     mockGetGuildConfig.mockResolvedValue(enabledConfig());
     mockGetActiveChallenge.mockResolvedValue(makeChallenge({ hintsPostedCount: 1 }));
@@ -645,6 +673,21 @@ describe('checkAndAdvanceChallengeSchedule', () => {
         'guild-1',
         expect.objectContaining({ weekStart: '2026-08-25' }),
       );
+    });
+
+    it('does not retroactively start today\'s challenge hours after hint 1\'s hour has passed — waits for tomorrow instead', async () => {
+      // The exact bug reported live: data got reset with frequency still set
+      // to 'daily' and hint 1 at 8am; the next check ran well into the
+      // evening and immediately posted a "today" challenge hours late,
+      // instead of waiting for the next real 8am.
+      mockGetGuildConfig.mockResolvedValue(enabledConfig({ challengeFrequency: 'daily', challengeClue1Hour: 8 }));
+      mockGetActiveChallenge.mockResolvedValue(undefined);
+      vi.setSystemTime(new Date('2026-08-25T21:00:00Z')); // Tuesday 9pm — 13 hours after 8am
+      const client = makeClient();
+
+      await checkAndAdvanceChallengeSchedule(client as any);
+
+      expect(mockCreateWeeklyChallenge).not.toHaveBeenCalled();
     });
 
     it('posts hint 2, hint 3, and the reveal on the same calendar day, at their configured hours', async () => {
