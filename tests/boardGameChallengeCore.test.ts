@@ -2,9 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mockGetGuildConfig = vi.fn();
 const mockGetGuildIdsWithConfig = vi.fn();
+const mockUpdateGuildConfig = vi.fn();
 vi.mock('../src/utils/config', () => ({
   getGuildConfig: (...args: unknown[]) => mockGetGuildConfig(...args),
   getGuildIdsWithConfig: (...args: unknown[]) => mockGetGuildIdsWithConfig(...args),
+  updateGuildConfig: (...args: unknown[]) => mockUpdateGuildConfig(...args),
 }));
 
 const mockGetActiveChallenge = vi.fn();
@@ -57,6 +59,7 @@ import {
   checkAndAdvanceChallengeSchedule,
   postHint,
   postReveal,
+  updateChallengeLeaderboardPin,
 } from '../src/utils/boardGameChallenge';
 import { BGGGame } from '../src/utils/bgg';
 import { WeeklyChallenge } from '../src/utils/boardGameChallengeStorage';
@@ -109,7 +112,11 @@ function makeClient() {
   const channel = {
     isTextBased: () => true,
     send: vi.fn(async () => ({ id: 'msg-1', pin: vi.fn(async () => {}) })),
-    messages: { fetchPinned: vi.fn(async () => new Map()), delete: vi.fn(async () => {}) },
+    messages: {
+      fetchPinned: vi.fn(async () => new Map()),
+      delete: vi.fn(async () => {}),
+      fetch: vi.fn(async () => { throw new Error('unknown message'); }),
+    },
   };
   return { user: { id: 'bot-1' }, channels: { fetch: vi.fn(async () => channel) }, _channel: channel };
 }
@@ -988,10 +995,32 @@ describe('postHint', () => {
     const embed2 = client._channel.send.mock.calls[0][0].embeds[0];
     expect(embed2.data.fields?.some((f: { name: string }) => f.name === 'How to play')).toBeFalsy();
   });
+
+  it('hint 1 shows only hint 1, labeled', async () => {
+    const client = makeClient();
+    await postHint(client as any, makeChallenge(), 1);
+    const embed = client._channel.send.mock.calls[0][0].embeds[0];
+    expect(embed.data.description).toBe('**Hint 1:** clue1');
+  });
+
+  it('hint 2 also shows hint 1, so nobody has to scroll back to find it', async () => {
+    const client = makeClient();
+    await postHint(client as any, makeChallenge({ hintsPostedCount: 1 }), 2);
+    const embed = client._channel.send.mock.calls[0][0].embeds[0];
+    expect(embed.data.description).toBe('**Hint 1:** clue1\n\n**Hint 2:** clue2');
+  });
+
+  it('hint 3 shows all three hints cumulatively', async () => {
+    const client = makeClient();
+    await postHint(client as any, makeChallenge({ hintsPostedCount: 2 }), 3);
+    const embed = client._channel.send.mock.calls[0][0].embeds[0];
+    expect(embed.data.description).toBe('**Hint 1:** clue1\n\n**Hint 2:** clue2\n\n**Hint 3:** clue3');
+  });
 });
 
 describe('postReveal / leaderboard pin', () => {
   it('posts the leaderboard after the reveal and pins it', async () => {
+    mockGetGuildConfig.mockResolvedValue({ boardGameChallengeChannelId: 'channel-1' });
     mockGetLeaderboard.mockResolvedValue([{ userId: 'user-1', points: 100 }]);
     const client = makeClient();
 
@@ -1005,6 +1034,7 @@ describe('postReveal / leaderboard pin', () => {
   });
 
   it('unpins the bot\'s previous leaderboard pin before pinning the new one, leaving other pins alone', async () => {
+    mockGetGuildConfig.mockResolvedValue({ boardGameChallengeChannelId: 'channel-1' });
     mockGetLeaderboard.mockResolvedValue([]);
     const client = makeClient();
     const botPin = { author: { id: 'bot-1' }, unpin: vi.fn(async () => {}) };
@@ -1023,10 +1053,99 @@ describe('postReveal / leaderboard pin', () => {
   });
 
   it('does not let a leaderboard post/pin failure block the reveal itself', async () => {
+    mockGetGuildConfig.mockResolvedValue({ boardGameChallengeChannelId: 'channel-1' });
     mockGetLeaderboard.mockRejectedValue(new Error('storage down'));
     const client = makeClient();
 
     await expect(postReveal(client as any, makeChallenge({ hintsPostedCount: 3 }))).resolves.not.toThrow();
     expect(mockRevealChallenge).toHaveBeenCalled();
+  });
+});
+
+describe('updateChallengeLeaderboardPin', () => {
+  it('edits the existing pinned message in place instead of posting a new one', async () => {
+    mockGetGuildConfig.mockResolvedValue({
+      boardGameChallengeChannelId: 'channel-1',
+      challengeLeaderboardPinMessageId: 'pin-msg-1',
+    });
+    mockGetLeaderboard.mockResolvedValue([{ userId: 'user-1', points: 100 }]);
+    const client = makeClient();
+    const existing = { pinned: true, edit: vi.fn(async (payload: unknown) => ({ ...existing, ...(payload as object) })) };
+    client._channel.messages.fetch.mockResolvedValue(existing);
+
+    await updateChallengeLeaderboardPin(client as any, 'guild-1');
+
+    expect(client._channel.messages.fetch).toHaveBeenCalledWith('pin-msg-1');
+    expect(existing.edit).toHaveBeenCalledWith(expect.objectContaining({ embeds: expect.any(Array) }));
+    expect(client._channel.send).not.toHaveBeenCalled();
+  });
+
+  it('pins the existing message if it was somehow unpinned', async () => {
+    mockGetGuildConfig.mockResolvedValue({
+      boardGameChallengeChannelId: 'channel-1',
+      challengeLeaderboardPinMessageId: 'pin-msg-1',
+    });
+    mockGetLeaderboard.mockResolvedValue([]);
+    const client = makeClient();
+    const pin = vi.fn(async () => {});
+    const existing = { pinned: false, pin, edit: vi.fn(async () => ({ pinned: false, pin })) };
+    client._channel.messages.fetch.mockResolvedValue(existing);
+
+    await updateChallengeLeaderboardPin(client as any, 'guild-1');
+
+    expect(pin).toHaveBeenCalled();
+  });
+
+  it('falls back to posting and pinning a fresh message when the stored message id is stale (deleted)', async () => {
+    mockGetGuildConfig.mockResolvedValue({
+      boardGameChallengeChannelId: 'channel-1',
+      challengeLeaderboardPinMessageId: 'deleted-msg',
+    });
+    mockGetLeaderboard.mockResolvedValue([]);
+    const client = makeClient();
+    client._channel.messages.fetch.mockRejectedValue(new Error('Unknown Message'));
+
+    await updateChallengeLeaderboardPin(client as any, 'guild-1');
+
+    expect(client._channel.send).toHaveBeenCalledTimes(1);
+    const posted = await client._channel.send.mock.results[0].value;
+    expect(posted.pin).toHaveBeenCalled();
+    expect(mockUpdateGuildConfig).toHaveBeenCalledWith('guild-1', { challengeLeaderboardPinMessageId: 'msg-1' });
+  });
+
+  it('posts and pins a fresh message when no pin message id has ever been recorded (first correct guess of a fresh setup)', async () => {
+    mockGetGuildConfig.mockResolvedValue({ boardGameChallengeChannelId: 'channel-1' });
+    mockGetLeaderboard.mockResolvedValue([{ userId: 'user-1', points: 100 }]);
+    const client = makeClient();
+
+    await updateChallengeLeaderboardPin(client as any, 'guild-1');
+
+    expect(client._channel.messages.fetch).not.toHaveBeenCalled();
+    expect(client._channel.send).toHaveBeenCalledTimes(1);
+    expect(mockUpdateGuildConfig).toHaveBeenCalledWith('guild-1', { challengeLeaderboardPinMessageId: 'msg-1' });
+  });
+
+  it('does nothing when the challenge channel is not configured', async () => {
+    mockGetGuildConfig.mockResolvedValue({ boardGameChallengeChannelId: null });
+    const client = makeClient();
+
+    await updateChallengeLeaderboardPin(client as any, 'guild-1');
+
+    expect(client._channel.send).not.toHaveBeenCalled();
+    expect(mockGetLeaderboard).not.toHaveBeenCalled();
+  });
+
+  it('is best-effort — swallows any failure rather than throwing', async () => {
+    mockGetGuildConfig.mockRejectedValue(new Error('storage down'));
+    const client = makeClient();
+    const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await expect(updateChallengeLeaderboardPin(client as any, 'guild-1')).resolves.not.toThrow();
+
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to update leaderboard pin'),
+      expect.any(Error),
+    );
+    consoleWarnSpy.mockRestore();
   });
 });

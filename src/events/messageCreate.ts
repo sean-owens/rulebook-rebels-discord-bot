@@ -1,7 +1,7 @@
 import { Message, TextChannel } from 'discord.js';
 import { getGuildConfig } from '../utils/config';
 import { getActiveChallenge, recordCorrectGuess } from '../utils/boardGameChallengeStorage';
-import { isCorrectGuess } from '../utils/boardGameChallenge';
+import { isCorrectGuess, updateChallengeLeaderboardPin } from '../utils/boardGameChallenge';
 
 // Guesses for the weekly board game challenge (see boardGameChallenge.ts)
 // arrive as plain messages in the guild's configured channel rather than a
@@ -55,4 +55,6 @@ export async function handleMessageCreate(message: Message): Promise<void> {
   } catch (err) {
     console.warn(`[BoardGameChallenge] Failed to DM ${message.author.id} their guess result:`, err);
   }
+
+  await updateChallengeLeaderboardPin(message.client, message.guildId);
 }
