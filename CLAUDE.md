@@ -155,7 +155,27 @@ If `railway status`/`railway logs` ever report "No linked project found," re-lin
 `.github/workflows/ci.yml` runs `npm run build` + `npx vitest run` on every push and PR targeting `main` or `production`. This is **not** enforced as a merge gate — this repo is private on a plan where GitHub's branch protection / rulesets require GitHub Pro (confirmed by testing both the classic protection API and the newer rulesets API — both return `403 Upgrade to GitHub Pro`). Until/unless that changes, "no direct pushes, PR + green CI before merging" is a **convention**, not a server-enforced rule — follow it deliberately, and don't skip the build/test cycle just because nothing will technically stop you.
 
 ### Promoting to production
-1. Confirm `main` is in the state you want to ship (built, tested, and ideally already running fine on the dev environment for a bit).
-2. Open a PR merging `main` into `production` (or cherry-pick a hotfix if `main` has unrelated in-flight work you don't want to ship yet).
-3. Merging that PR **is** the production deploy — Railway picks it up automatically. There is no separate manual "promote" click anymore now that production tracks its own branch.
-4. Verify with `railway status -e 5217f7a9-e487-4b6f-ad4d-9084e0b29681` and `railway logs -e 5217f7a9-e487-4b6f-ad4d-9084e0b29681 --deployment --lines 30` immediately after.
+1. Decide the version bump (patch/minor/major — see Versioning & Releases below), bump `package.json`'s `version` field on a short-lived branch off `main`, PR it in, and merge — like any other change to `main`. Do this before step 3, so the bump travels into `production` along with everything else.
+2. Confirm `main` is otherwise in the state you want to ship (built, tested, and ideally already running fine on the dev environment for a bit).
+3. Open a PR merging `main` into `production` (or cherry-pick a hotfix if `main` has unrelated in-flight work you don't want to ship yet).
+4. Merging that PR **is** the production deploy — Railway picks it up automatically. There is no separate manual "promote" click anymore now that production tracks its own branch.
+5. Verify with `railway status -e 5217f7a9-e487-4b6f-ad4d-9084e0b29681` and `railway logs -e 5217f7a9-e487-4b6f-ad4d-9084e0b29681 --deployment --lines 30` immediately after.
+6. Once verified live, tag the commit and cut a GitHub Release — see Versioning & Releases below. Never tag/release a commit that hasn't been confirmed running on production yet.
+
+### Versioning & Releases
+Every production promotion gets a semantic version (`vMAJOR.MINOR.PATCH`) and a corresponding GitHub Release, so there's a durable, browsable record of what's actually live in production and when — distinct from `main`'s own history, which moves faster and includes dev-only staging that may not be ready to ship. `main` itself is never tagged, only `production`, at the point each promotion is verified live.
+
+**Choosing the bump**, based on everything shipping in this promotion since the last one:
+- **MAJOR** — a breaking change to an existing command's signature or output format (see 1c) that users would need to notice or adjust for. Expected to be rare.
+- **MINOR** — a new feature, command, or option — anything adding user-facing capability without breaking existing behavior.
+- **PATCH** — a bug fix, internal refactor, or doc-only change, with no new user-facing capability.
+
+If a promotion mixes several changes, the bump is whichever category is highest (one breaking change makes it MAJOR even alongside ten bug fixes).
+
+**Mechanics**, after step 5 above has confirmed the deploy is live:
+```
+git tag -a v1.2.0 -m "v1.2.0"
+git push origin v1.2.0
+gh release create v1.2.0 --target production --generate-notes
+```
+`--generate-notes` has GitHub auto-build the release notes from PRs merged since the previous tag — no changelog to hand-maintain. Use the version now in `production`'s `package.json` for the tag name (`v` + that version).
