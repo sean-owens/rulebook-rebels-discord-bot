@@ -410,32 +410,34 @@ function parseBGGItem(item: any, id: string): Omit<BGGGame, 'howToPlayUrl'> {
     .filter((l) => l['@_type'] === 'boardgameexpansion' && l['@_inbound'])
     .map((l) => ({ id: String(l['@_id']), name: decodeEntities(String(l['@_value'])) }))[0];
 
-  // Builds the combined `tags` (unchanged, capped at 5, deduped across both
-  // link types — read by the library-tagging system) alongside `categories`
-  // and `mechanics` split by link type for the challenge's clues (each capped
-  // at 3, own dedup — see generateClues in boardGameChallenge.ts). Scans every
-  // link rather than stopping at 5 combined tags like before, since stopping
-  // early could starve one of the two split buckets depending on link order.
+  // `tags` maps through BGG_TO_TAG's small curated vocabulary — deliberately
+  // narrow, since it's read by the library-tagging system as a fixed set of
+  // member-facing preference tags. `categories`/`mechanics` are the raw BGG
+  // category/mechanic names instead (same plain filter+map+slice pattern as
+  // designers/publishers below) — using the curated vocabulary here too
+  // would leave "genre" blank for most games, since BGG_TO_TAG only covers a
+  // handful of the dozens of real BGG category names (e.g. "Fantasy",
+  // "Card Game", "Exploration" have no entry) and was never meant to be
+  // exhaustive. See generateClues in boardGameChallenge.ts.
   const seen = new Set<string>();
   const tags: string[] = [];
-  const categories: string[] = [];
-  const mechanics: string[] = [];
   for (const link of links) {
     const type: string = link['@_type'] ?? '';
     if (type !== 'boardgamecategory' && type !== 'boardgamemechanic') continue;
     const mapped = BGG_TO_TAG[String(link['@_value'] ?? '').toLowerCase()];
-    if (!mapped) continue;
-    if (!seen.has(mapped)) {
+    if (mapped && !seen.has(mapped)) {
       seen.add(mapped);
       if (tags.length < 5) tags.push(mapped);
     }
-    if (type === 'boardgamecategory' && categories.length < 3 && !categories.includes(mapped)) {
-      categories.push(mapped);
-    }
-    if (type === 'boardgamemechanic' && mechanics.length < 3 && !mechanics.includes(mapped)) {
-      mechanics.push(mapped);
-    }
   }
+  const categories = links
+    .filter((l) => l['@_type'] === 'boardgamecategory')
+    .map((l) => decodeEntities(String(l['@_value'])))
+    .slice(0, 3);
+  const mechanics = links
+    .filter((l) => l['@_type'] === 'boardgamemechanic')
+    .map((l) => decodeEntities(String(l['@_value'])))
+    .slice(0, 3);
 
   const rawWeight = item.statistics?.ratings?.averageweight?.['@_value'];
   const weight = rawWeight != null && Number(rawWeight) > 0 ? Number(rawWeight) : null;

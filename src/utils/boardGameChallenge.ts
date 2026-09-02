@@ -339,6 +339,14 @@ function stageInstant(periodStart: string, dayOffset: number, hour: number, time
   return zonedTimeToUtc(target.getUTCFullYear(), target.getUTCMonth(), target.getUTCDate(), hour, 0, timeZone).getTime();
 }
 
+// How long after hint 1's scheduled moment the scheduler will still start a
+// brand-new cycle for it — comfortably longer than the hourly check's own
+// cadence (so normal jitter never causes a miss) but short enough that a
+// genuinely-missed moment (bot off, data reset, etc.) waits for the next
+// real occurrence instead of firing late. See the "start a new challenge"
+// branch below.
+const START_NEW_CHALLENGE_GRACE_MS = 90 * 60 * 1000;
+
 // Polled from the existing hourly ready.ts loop (idempotent — safe to call
 // every tick, and safe to catch up after a missed tick/restart, since every
 // decision is guarded by state already stored on the WeeklyChallenge record
@@ -370,14 +378,29 @@ export async function checkAndAdvanceChallengeSchedule(client: Client): Promise<
     try {
       if (!active) {
         const periodStart = currentPeriodStart(config);
+        const hint1Instant = periodStart
+          ? stageInstant(
+              periodStart,
+              stageDayOffset(config.challengeFrequency, config.challengeClue1Weekday),
+              config.challengeClue1Hour,
+              config.timezone,
+            )
+          : undefined;
+        // Starting a brand-new cycle deliberately does NOT catch up like the
+        // stages below do — only fires within a short window of hint 1's
+        // actual moment (long enough to absorb the hourly check's own timing
+        // jitter, per the "Note on timing precision" in TESTING.md 4.9), not
+        // "any time after it, indefinitely." Once a cycle is already running,
+        // losing it to an outage is worse than posting late, so hint 2/3/
+        // reveal/hint-1-retry below still catch up no matter how overdue —
+        // but deciding whether to START one is different: if the moment's
+        // already passed (the bot was off, config/data just got reset, etc.),
+        // members reasonably expect it to wait for the next real occurrence,
+        // not suddenly post right now at an unexpected time.
         if (
-          periodStart &&
-          now >= stageInstant(
-            periodStart,
-            stageDayOffset(config.challengeFrequency, config.challengeClue1Weekday),
-            config.challengeClue1Hour,
-            config.timezone,
-          )
+          hint1Instant !== undefined &&
+          now >= hint1Instant &&
+          now - hint1Instant <= START_NEW_CHALLENGE_GRACE_MS
         ) {
           // Guards against restarting the cycle later in the same period
           // when the reveal is scheduled on/after hint 1's moment (e.g. a
@@ -390,7 +413,7 @@ export async function checkAndAdvanceChallengeSchedule(client: Client): Promise<
           // (revealed or not) prevents that.
           const startedThisPeriod = (await getChallengesForGuild(guildId)).some((c) => c.weekStart === periodStart);
           if (!startedThisPeriod) {
-            await startNewChallenge(client, guildId, channelId, periodStart);
+            await startNewChallenge(client, guildId, channelId, periodStart!);
           }
         }
       } else if (

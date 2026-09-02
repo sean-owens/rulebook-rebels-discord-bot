@@ -225,6 +225,31 @@ describe('getBGGGame', () => {
     expect(game.mechanics).toEqual(['Engine Building', 'Hand Management']);
   });
 
+  // Regression: categories/mechanics previously only populated for the small
+  // set of BGG names BGG_TO_TAG happens to curate for the library-tagging
+  // system — most real BGG category names (e.g. "Fantasy", "Card Game",
+  // below) have no entry there at all, so genre was blank for most games.
+  it('includes raw BGG category/mechanic names with no entry in the curated tag vocabulary', async () => {
+    mockFetch(`<?xml version="1.0" encoding="utf-8"?>
+<items>
+  <item type="boardgame" id="999">
+    <name type="primary" sortindex="1" value="Untagged Game"/>
+    <minplayers value="2"/>
+    <maxplayers value="4"/>
+    <minplaytime value="30"/>
+    <maxplaytime value="60"/>
+    <link type="boardgamecategory" id="1" value="Fantasy"/>
+    <link type="boardgamecategory" id="2" value="Card Game"/>
+    <link type="boardgamemechanic" id="3" value="Dice Rolling"/>
+  </item>
+</items>`);
+    const game = await getBGGGame('999');
+    expect(game.categories).toEqual(['Fantasy', 'Card Game']);
+    expect(game.mechanics).toEqual(['Dice Rolling']);
+    // None of these map through BGG_TO_TAG, so the curated `tags` field stays empty.
+    expect(game.tags).toEqual([]);
+  });
+
   it('extracts designers', async () => {
     mockFetch(WINGSPAN_XML);
     const game = await getBGGGame('266192');
