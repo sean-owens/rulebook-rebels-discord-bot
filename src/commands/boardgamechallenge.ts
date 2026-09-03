@@ -321,7 +321,9 @@ async function handleStatus(interaction: ChatInputCommandInteraction | ButtonInt
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
     .setTitle('🎲 Current Board Game Challenge')
-    .setDescription(`${hintLines.join('\n\n')}\n\n${next}\n\nReply with your guess in <#${challenge.channelId}>.`);
+    .setDescription(
+      `${hintLines.join('\n\n')}\n\n${next}\n\nReply with your guess in <#${challenge.channelId}>.\n\n-# The mystery game is always one of BGG's top 500 ranked base games — never an expansion.`,
+    );
 
   await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }

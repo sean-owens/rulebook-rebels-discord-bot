@@ -132,6 +132,7 @@ describe('/challenge command', () => {
       expect(embed.data.description).toContain('first clue');
       expect(embed.data.description).not.toContain('second clue');
       expect(embed.data.description).toContain('Wednesday 8am');
+      expect(embed.data.description).toContain("BGG's top 500 ranked base games");
     });
 
     it('shows just the hour (no weekday) for the next hint time in daily mode', async () => {
