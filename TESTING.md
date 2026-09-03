@@ -852,6 +852,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run when the feature isn't configured/enabled — confirm "The board game challenge isn't set up on this server yet"
 - [ ] Run when enabled but no challenge is currently active (e.g. Sunday, between reveal and the next Monday), with the default (weekly) schedule — confirm "No challenge is active right now — the next one starts Monday at 8am in #channel"
 - [ ] Run after hint 1 has posted, with the default schedule — confirm only hint 1's text is shown, plus "Next hint: Wednesday 8am"
+- [ ] Confirm the embed ends with a small-text note that the mystery game is always one of BGG's top 500 ranked base games, never an expansion
 - [ ] Run after all 3 hints have posted, with the default schedule — confirm all 3 hints are shown, plus "the answer reveals Saturday 6pm"
 - [ ] After changing the schedule via `/admin challenge config` (3.9s), e.g. hint 1 to Tuesday 9am — confirm the "next one starts" / "Next hint" text reflects the new day/time, not the old default
 - [ ] With `frequency:daily` set, run status at any point in the cycle — confirm the schedule text shows just the hour (e.g. "Next hint: **12pm**"), with no day-of-week name anywhere in it
