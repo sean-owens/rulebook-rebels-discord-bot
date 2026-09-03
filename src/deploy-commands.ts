@@ -7,8 +7,13 @@ import { data as hostCommand } from './commands/host';
 import { data as myrolesCommand } from './commands/myroles';
 import { data as libraryCommand } from './commands/library';
 import { data as helpCommand } from './commands/help';
+import { data as gettingStartedCommand } from './commands/gettingStarted';
 import { data as bggCommand } from './commands/bgg';
 import { data as marketplaceCommand } from './commands/marketplace';
+import { data as roomCommand } from './commands/room';
+import { data as hubCommand } from './commands/hub';
+import { data as snacksCommand } from './commands/snacks';
+import { data as challengeCommand } from './commands/boardgamechallenge';
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.DISCORD_CLIENT_ID;
@@ -27,8 +32,13 @@ const commands = [
   myrolesCommand.toJSON(),
   libraryCommand.toJSON(),
   helpCommand.toJSON(),
+  gettingStartedCommand.toJSON(),
   bggCommand.toJSON(),
   marketplaceCommand.toJSON(),
+  roomCommand.toJSON(),
+  hubCommand.toJSON(),
+  snacksCommand.toJSON(),
+  challengeCommand.toJSON(),
 ];
 const rest = new REST().setToken(token);
 

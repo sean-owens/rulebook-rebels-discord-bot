@@ -1,11 +1,25 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   searchCatalog,
+  searchCatalogWithFallback,
+  addCatalogEntry,
   isCatalogLoaded,
   normalizeName,
+  getCatalogEntryById,
   _loadFromCsvText,
   _resetCatalog,
 } from '../src/utils/bggCatalog';
+
+vi.mock('../src/utils/bgg', () => ({
+  searchBGG: vi.fn(),
+}));
+vi.mock('../src/utils/db', () => ({
+  readJson: vi.fn(async (_: string, fallback: unknown) => fallback),
+  writeJson: vi.fn(async () => {}),
+}));
+
+import { searchBGG } from '../src/utils/bgg';
+import { writeJson } from '../src/utils/db';
 
 const TEST_CSV = `id,name,yearpublished,rank,bayesaverage,average,usersrated,is_expansion,abstracts_rank
 224517,"Brass: Birmingham",2018,1,8.39,8.56,58991,0,
@@ -124,5 +138,99 @@ describe('searchCatalog', () => {
     const expResults = searchCatalog('wingspan european expansion');
     const exp = expResults.find((r) => r.isExpansion);
     expect(exp?.rank).toBeNull();
+  });
+});
+
+describe('getCatalogEntryById', () => {
+  beforeEach(() => {
+    _resetCatalog();
+    _loadFromCsvText(TEST_CSV);
+  });
+
+  it('finds an entry by its exact BGG id, regardless of name collisions', () => {
+    const entry = getCatalogEntryById('174430');
+    expect(entry?.name).toBe('Gloomhaven');
+  });
+
+  it('returns undefined for an id not in the catalog', () => {
+    expect(getCatalogEntryById('999999999')).toBeUndefined();
+  });
+
+  it('returns undefined when the catalog is not loaded', () => {
+    _resetCatalog();
+    expect(getCatalogEntryById('174430')).toBeUndefined();
+  });
+});
+
+describe('addCatalogEntry', () => {
+  beforeEach(() => {
+    _resetCatalog();
+    _loadFromCsvText(TEST_CSV);
+  });
+
+  it('makes a new entry findable by exact name', () => {
+    addCatalogEntry({ id: '111', name: 'Brand New Game', year: 2026, isExpansion: false, rank: null });
+    const results = searchCatalog('Brand New Game');
+    expect(results).toHaveLength(1);
+    expect(results[0].id).toBe('111');
+  });
+
+  it('does not duplicate an entry for an id that already exists', () => {
+    const before = searchCatalog('wingspan', 10).length;
+    addCatalogEntry({ id: '266192', name: 'Wingspan', year: 2019, isExpansion: false, rank: 5 });
+    expect(searchCatalog('wingspan', 10)).toHaveLength(before);
+  });
+
+  it('keeps prefix search correct after inserting a word that sorts before every existing word', () => {
+    addCatalogEntry({ id: '222', name: 'Aardvark Adventures', year: 2026, isExpansion: false, rank: null });
+    expect(searchCatalog('Aardvark Adventures')).toHaveLength(1);
+    expect(searchCatalog('Wingspan')[0]?.name).toBe('Wingspan');
+  });
+
+  it('keeps prefix search correct after inserting a word that sorts after every existing word', () => {
+    addCatalogEntry({ id: '333', name: 'Zzztop Party Game', year: 2026, isExpansion: false, rank: null });
+    expect(searchCatalog('Zzztop Party Game')).toHaveLength(1);
+    expect(searchCatalog('Catan')[0]?.name).toBe('Catan');
+  });
+});
+
+describe('searchCatalogWithFallback', () => {
+  beforeEach(() => {
+    _resetCatalog();
+    _loadFromCsvText(TEST_CSV);
+    vi.clearAllMocks();
+  });
+
+  it('returns the local match without calling searchBGG', async () => {
+    const results = await searchCatalogWithFallback('Wingspan');
+    expect(results).toHaveLength(1);
+    expect(searchBGG).not.toHaveBeenCalled();
+  });
+
+  it('falls back to a live search and merges a hit into the catalog when the local search misses', async () => {
+    vi.mocked(searchBGG).mockResolvedValue([{ id: '555', name: 'Brand New 2026 Game', yearPublished: 2026 }]);
+
+    const results = await searchCatalogWithFallback('Brand New 2026 Game');
+    expect(results).toHaveLength(1);
+    expect(results[0].id).toBe('555');
+    expect(searchBGG).toHaveBeenCalledWith('Brand New 2026 Game');
+
+    // Merged into the in-memory catalog so the next lookup is served locally
+    expect(searchCatalog('Brand New 2026 Game')).toHaveLength(1);
+
+    // Persisted (fire-and-forget) so it survives a restart
+    await vi.waitFor(() => expect(writeJson).toHaveBeenCalled());
+  });
+
+  it('returns an empty array when both local and live search miss', async () => {
+    vi.mocked(searchBGG).mockResolvedValue([]);
+    const results = await searchCatalogWithFallback('Totally Unknown Game Xyzzy');
+    expect(results).toEqual([]);
+  });
+
+  it('returns an empty array without throwing when the live search fails', async () => {
+    vi.mocked(searchBGG).mockRejectedValue(new Error('BGG unreachable'));
+    const results = await searchCatalogWithFallback('Totally Unknown Game Xyzzy');
+    expect(results).toEqual([]);
   });
 });

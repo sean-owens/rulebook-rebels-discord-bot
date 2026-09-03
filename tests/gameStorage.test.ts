@@ -9,6 +9,7 @@ import {
   findGamesByChannel,
   findGamesByEvent,
   removeGamesByEvent,
+  getLastScheduledAt,
   GameSuggestion,
 } from '../src/utils/gameStorage';
 
@@ -149,6 +150,41 @@ describe('gameStorage', () => {
       await upsertGame(makeGame({ eventId: 'event-1' }));
       await removeGamesByEvent('event-1');
       expect(await loadGames()).toHaveLength(0);
+    });
+  });
+
+  // ── getLastScheduledAt ────────────────────────────────────────────────────
+
+  describe('getLastScheduledAt', () => {
+    it('ignores suggestions that never got scheduled onto a lineup', async () => {
+      await upsertGame(makeGame({ id: 'game-1', title: 'Wingspan', scheduledTable: undefined }));
+      const result = await getLastScheduledAt('guild-1');
+      expect(result.has('wingspan')).toBe(false);
+    });
+
+    it('keys by lowercased title and scopes to the given guild', async () => {
+      await upsertGame(
+        makeGame({ id: 'game-1', title: 'Wingspan', guildId: 'guild-1', scheduledTable: 1 }),
+      );
+      await upsertGame(
+        makeGame({ id: 'game-2', title: 'Wingspan', guildId: 'guild-2', scheduledTable: 1 }),
+      );
+      const result = await getLastScheduledAt('guild-1');
+      expect(result.has('wingspan')).toBe(true);
+      expect(result.size).toBe(1);
+    });
+
+    it('keeps the most recent createdAt when a title was scheduled more than once', async () => {
+      const older = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      const newer = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString();
+      await upsertGame(
+        makeGame({ id: 'game-1', title: 'Catan', scheduledTable: 1, createdAt: older }),
+      );
+      await upsertGame(
+        makeGame({ id: 'game-2', title: 'Catan', scheduledTable: 1, createdAt: newer }),
+      );
+      const result = await getLastScheduledAt('guild-1');
+      expect(result.get('catan')).toBe(newer);
     });
   });
 });

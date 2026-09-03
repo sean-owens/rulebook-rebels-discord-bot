@@ -1,6 +1,10 @@
 import AdmZip from 'adm-zip';
 import * as fs from 'fs';
 import * as path from 'path';
+import { readJson, writeJson } from './db';
+import { searchBGG } from './bgg';
+
+const DISCOVERED_ENTRIES_FILE = 'bgg_discovered_entries.json';
 
 export interface BGGCatalogEntry {
   id: string;
@@ -12,6 +16,7 @@ export interface BGGCatalogEntry {
 
 let entries: BGGCatalogEntry[] = [];
 let exactIndex = new Map<string, BGGCatalogEntry[]>();
+let idIndex = new Map<string, BGGCatalogEntry>();
 let wordIndex = new Map<string, number[]>();
 let sortedWords: string[] = [];
 let _loaded = false;
@@ -46,11 +51,51 @@ export function normalizeName(s: string): string {
     .trim();
 }
 
+// Bounded edit distance (Levenshtein) — short-circuits once it's clear the
+// distance will exceed maxDist, so a handful of wildly different tokens
+// (the common case) never runs the full O(n*m) comparison.
+export function editDistanceAtMost(a: string, b: string, maxDist: number): boolean {
+  if (Math.abs(a.length - b.length) > maxDist) return false;
+  const n = b.length;
+  let prevRow = new Array<number>(n + 1);
+  for (let j = 0; j <= n; j++) prevRow[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    const currRow = new Array<number>(n + 1);
+    currRow[0] = i;
+    let rowMin = currRow[0];
+    for (let j = 1; j <= n; j++) {
+      currRow[j] =
+        a[i - 1] === b[j - 1]
+          ? prevRow[j - 1]
+          : 1 + Math.min(prevRow[j - 1], prevRow[j], currRow[j - 1]);
+      rowMin = Math.min(rowMin, currRow[j]);
+    }
+    if (rowMin > maxDist) return false; // every cell this row already exceeds the bound
+    prevRow = currRow;
+  }
+  return prevRow[n] <= maxDist;
+}
+
+// A query token counts as matching a name token either the existing way
+// (exact prefix — "wing" → "Wingspan") or, for tokens long enough that a
+// single-letter slip is unambiguous, when it's a near-miss of the name
+// token's own leading prefix (e.g. "dual" → "Duel of ...", a common
+// dual/duel homophone typo the strict prefix check can't see at all).
+// Short tokens (3 letters or fewer — "of", "a", "war") skip the fallback
+// entirely, since a 1-edit tolerance on something that short matches almost
+// anything and would defeat the point of "fuzzy" filtering results down.
+function tokenMatches(queryToken: string, nameToken: string): boolean {
+  if (nameToken.startsWith(queryToken)) return true;
+  if (queryToken.length <= 3) return false;
+  const candidate = nameToken.slice(0, Math.min(nameToken.length, queryToken.length + 1));
+  return editDistanceAtMost(queryToken, candidate, 1);
+}
+
 export function matchesFuzzy(query: string, name: string): boolean {
   const qTokens = tokenize(query);
   if (qTokens.length === 0) return false;
   const nTokens = tokenize(name);
-  return qTokens.every((qt) => nTokens.some((nt) => nt.startsWith(qt)));
+  return qTokens.every((qt) => nTokens.some((nt) => tokenMatches(qt, nt)));
 }
 
 function tokenize(s: string): string[] {
@@ -94,6 +139,7 @@ function buildIndexes(csvText: string): void {
 
   entries = [];
   exactIndex = new Map();
+  idIndex = new Map();
   wordIndex = new Map();
 
   for (let i = 1; i < lines.length; i++) {
@@ -117,6 +163,7 @@ function buildIndexes(csvText: string): void {
     const key = normalizeName(name);
     if (!exactIndex.has(key)) exactIndex.set(key, []);
     exactIndex.get(key)!.push(entry);
+    idIndex.set(id, entry);
 
     for (const word of tokenize(name)) {
       if (!wordIndex.has(word)) wordIndex.set(word, []);
@@ -170,6 +217,16 @@ export async function loadBGGCatalog(): Promise<void> {
   } catch (err) {
     console.error('[BGGCatalog] Failed to load catalog:', err);
   }
+
+  // Union in games discovered via live-search fallback on a prior run (see
+  // searchCatalogWithFallback) — kept in its own try/catch so a transient S3
+  // hiccup here can't undo a catalog that already loaded fine from the zip.
+  try {
+    const discovered = await readJson<BGGCatalogEntry[]>(DISCOVERED_ENTRIES_FILE, []);
+    for (const entry of discovered) addCatalogEntry(entry);
+  } catch (err) {
+    console.error('[BGGCatalog] Failed to load discovered entries:', err);
+  }
 }
 
 function sortResults(arr: BGGCatalogEntry[]): BGGCatalogEntry[] {
@@ -179,6 +236,23 @@ function sortResults(arr: BGGCatalogEntry[]): BGGCatalogEntry[] {
     const rb = b.rank ?? Infinity;
     return ra - rb;
   });
+}
+
+// Non-expansion entries with a real rank, sorted best-first, capped at
+// `limit` — the pool the weekly board game challenge picks from.
+export function getTopRankedGames(limit = 500): BGGCatalogEntry[] {
+  return entries
+    .filter((e) => !e.isExpansion && e.rank !== null)
+    .sort((a, b) => (a.rank as number) - (b.rank as number))
+    .slice(0, limit);
+}
+
+// Looks up a specific entry by BGG id — used to resolve an explicit
+// autocomplete pick (marketplace.ts encodes the id into the suggestion's
+// value) without re-running a name search, which could return a different
+// entry than the one actually offered/clicked.
+export function getCatalogEntryById(id: string): BGGCatalogEntry | undefined {
+  return idIndex.get(id);
 }
 
 export function searchCatalog(query: string, limit = 5): BGGCatalogEntry[] {
@@ -209,6 +283,79 @@ export function searchCatalog(query: string, limit = 5): BGGCatalogEntry[] {
   return sortResults([...candidates].map((idx) => entries[idx])).slice(0, limit);
 }
 
+// Incrementally adds one entry to every index without a full rebuild — used
+// to fold a live BGG search result into the catalog (see
+// searchCatalogWithFallback) so the next lookup for the same game is served
+// locally. Cheap: only called on an occasional live-search hit, not a hot loop.
+export function addCatalogEntry(entry: BGGCatalogEntry): void {
+  if (idIndex.has(entry.id)) return;
+
+  const idx = entries.length;
+  entries.push(entry);
+  idIndex.set(entry.id, entry);
+
+  const key = normalizeName(entry.name);
+  if (!exactIndex.has(key)) exactIndex.set(key, []);
+  exactIndex.get(key)!.push(entry);
+
+  for (const word of tokenize(entry.name)) {
+    if (!wordIndex.has(word)) {
+      wordIndex.set(word, [idx]);
+      const pos = lowerBound(sortedWords, word);
+      sortedWords.splice(pos, 0, word);
+    } else {
+      wordIndex.get(word)!.push(idx);
+    }
+  }
+
+  _loaded = true;
+}
+
+async function persistDiscoveredEntry(entry: BGGCatalogEntry): Promise<void> {
+  const discovered = await readJson<BGGCatalogEntry[]>(DISCOVERED_ENTRIES_FILE, []);
+  if (discovered.some((e) => e.id === entry.id)) return;
+  discovered.push(entry);
+  await writeJson(DISCOVERED_ENTRIES_FILE, discovered);
+}
+
+// Falls back to a live BGG search when the local catalog has no match —
+// covers new/obscure games added to BGG since the bundled zip was built, or
+// simply missed by the fuzzy matcher. A hit is folded into the in-memory
+// catalog (and persisted) so future lookups for the same game are served
+// locally without hitting BGG again. isExpansion/rank are placeholders here
+// (BGG's search endpoint doesn't return them) — callers that resolve full
+// game details afterward (e.g. resolveCatalogDetails) already correct these.
+export async function searchCatalogWithFallback(query: string, limit = 5): Promise<BGGCatalogEntry[]> {
+  const local = searchCatalog(query, limit);
+  if (local.length > 0) return local;
+
+  try {
+    const live = await searchBGG(query);
+    if (live.length === 0) return [];
+
+    const converted: BGGCatalogEntry[] = live.slice(0, limit).map((r) => ({
+      id: r.id,
+      name: r.name,
+      year: r.yearPublished,
+      isExpansion: false,
+      rank: null,
+    }));
+
+    for (const entry of converted) {
+      if (!getCatalogEntryById(entry.id)) {
+        addCatalogEntry(entry);
+        persistDiscoveredEntry(entry).catch((err) =>
+          console.warn('[BGGCatalog] Failed to persist discovered entry:', err),
+        );
+      }
+    }
+
+    return converted;
+  } catch {
+    return [];
+  }
+}
+
 // For tests only — load catalog from raw CSV text without needing a zip file
 export function _loadFromCsvText(csvText: string): void {
   buildIndexes(csvText);
@@ -217,6 +364,7 @@ export function _loadFromCsvText(csvText: string): void {
 export function _resetCatalog(): void {
   entries = [];
   exactIndex = new Map();
+  idIndex = new Map();
   wordIndex = new Map();
   sortedWords = [];
   _loaded = false;

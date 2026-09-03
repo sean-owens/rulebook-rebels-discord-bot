@@ -9,18 +9,28 @@ import {
   findGamesByName,
   findGameNamesByPartial,
   getGamesByUser,
+  getGamesByUserAndLinked,
   clearUserLibrary,
   loadLibrary,
   addRequest,
   getRequestsForEvent,
+  getRequestById,
   removeRequests,
+  removeZeroSignupRequests,
   removeAllRequestsForEvent,
   updateRequestCopies,
   confirmBring,
+  declineBring,
+  addPendingAsk,
+  removePendingAsk,
+  resolveAttendingOwnerIds,
+  pickPreferredOwner,
+  buildExpansionNote,
   getGameInfo,
   upsertGameInfo,
   upsertGameInfosBulk,
   loadGameInfos,
+  GameRequest,
 } from '../src/utils/libraryStorage';
 
 describe('libraryStorage', () => {
@@ -233,6 +243,25 @@ describe('libraryStorage', () => {
       await addGame('guild-2', 'user1', 'Wingspan');
       expect(await findGameNamesByPartial('guild-1', 'wing')).toHaveLength(0);
     });
+
+    it('tolerates a single-letter typo per word (dual/duel homophone)', async () => {
+      await addGame('guild-1', 'user1', 'Duel of Ages');
+      expect(await findGameNamesByPartial('guild-1', 'dual of ages')).toEqual(['Duel of Ages']);
+    });
+
+    it('does not loosen matching for short words (avoids false positives)', async () => {
+      await addGame('guild-1', 'user1', 'War of the Ring');
+      await addGame('guild-1', 'user1', 'Catan');
+      // "of" is too short for the edit-distance fallback to apply — it must
+      // still only match by real prefix, not fuzz-match against "on"/"at"/etc.
+      expect(await findGameNamesByPartial('guild-1', 'of')).toEqual(['War of the Ring']);
+    });
+
+    it('excludes expansions — only base games are offered for suggest/request', async () => {
+      await addGame('guild-1', 'user1', 'Wingspan');
+      await addGame('guild-1', 'user1', 'Wingspan: European Expansion', undefined, true);
+      expect(await findGameNamesByPartial('guild-1', 'wing')).toEqual(['Wingspan']);
+    });
   });
 
   // ── getGamesByUser ─────────────────────────────────────────────────────────
@@ -254,6 +283,31 @@ describe('libraryStorage', () => {
     it('does not return games from other guilds', async () => {
       await addGame('guild-2', 'user1', 'Wingspan');
       expect(await getGamesByUser('guild-1', 'user1')).toHaveLength(0);
+    });
+  });
+
+  // ── getGamesByUserAndLinked ────────────────────────────────────────────────
+
+  describe('getGamesByUserAndLinked', () => {
+    it('includes games owned by anyone who has linked the caller as a delegate', async () => {
+      const { addLibraryLink } = await import('../src/utils/libraryLinkStorage');
+      await addGame('guild-1', 'alice', 'Wingspan');
+      await addGame('guild-1', 'bob', 'Catan');
+      await addLibraryLink('guild-1', 'alice', 'bob'); // alice shares her library with bob
+
+      const bobsView = await getGamesByUserAndLinked('guild-1', 'bob');
+      expect(bobsView.map((g) => g.gameName).sort()).toEqual(['Catan', 'Wingspan']);
+
+      // Not reciprocal — alice hasn't been granted access to bob's library.
+      const alicesView = await getGamesByUserAndLinked('guild-1', 'alice');
+      expect(alicesView.map((g) => g.gameName)).toEqual(['Wingspan']);
+    });
+
+    it('behaves exactly like getGamesByUser when there are no links', async () => {
+      await addGame('guild-1', 'alice', 'Wingspan');
+      expect(await getGamesByUserAndLinked('guild-1', 'alice')).toEqual(
+        await getGamesByUser('guild-1', 'alice'),
+      );
     });
   });
 
@@ -283,8 +337,12 @@ describe('libraryStorage', () => {
   // ── addRequest / getRequestsForEvent ──────────────────────────────────────
 
   describe('addRequest', () => {
-    it('adds a request and returns "added"', async () => {
-      expect(await addRequest('event1', 'Wingspan', 'user1')).toBe('added');
+    it('adds a request and returns the created record', async () => {
+      const result = await addRequest('event1', 'Wingspan', 'user1');
+      expect(result).not.toBe('duplicate');
+      expect((result as GameRequest).gameName).toBe('Wingspan');
+      expect((result as GameRequest).eventId).toBe('event1');
+      expect((result as GameRequest).id).toBeTruthy();
     });
 
     it('returns "duplicate" if the same game is already requested for the same event', async () => {
@@ -294,7 +352,7 @@ describe('libraryStorage', () => {
 
     it('allows the same game to be requested for different events', async () => {
       await addRequest('event1', 'Wingspan', 'user1');
-      expect(await addRequest('event2', 'Wingspan', 'user1')).toBe('added');
+      expect(await addRequest('event2', 'Wingspan', 'user1')).not.toBe('duplicate');
     });
 
     it('is case-insensitive for duplicate detection', async () => {
@@ -326,6 +384,203 @@ describe('libraryStorage', () => {
       expect(await removeRequests([r1.id])).toBe(1);
       expect(await getRequestsForEvent('event1')).toHaveLength(1);
       expect((await getRequestsForEvent('event1'))[0].gameName).toBe(r2.gameName);
+    });
+  });
+
+  describe('removeZeroSignupRequests', () => {
+    it('removes a request whose title matches a zero-signup game and returns the removed record', async () => {
+      await addRequest('event1', 'Wingspan', 'user1');
+      const removed = await removeZeroSignupRequests('event1', ['Wingspan']);
+      expect(removed).toHaveLength(1);
+      expect(removed[0].gameName).toBe('Wingspan');
+      expect(await getRequestsForEvent('event1')).toHaveLength(0);
+    });
+
+    it('leaves requests whose title is not in the zero-signup list', async () => {
+      await addRequest('event1', 'Wingspan', 'user1');
+      await addRequest('event1', 'Catan', 'user1');
+      expect(await removeZeroSignupRequests('event1', ['Catan'])).toHaveLength(1);
+      const remaining = await getRequestsForEvent('event1');
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].gameName).toBe('Wingspan');
+    });
+
+    it('leaves a request untouched when it has no matching suggestion at all', async () => {
+      // e.g. a "bring along to teach" request that was never suggested as a
+      // game to play — should not be treated as zero-signup.
+      await addRequest('event1', 'Azul', 'user1');
+      expect(await removeZeroSignupRequests('event1', ['Wingspan'])).toHaveLength(0);
+      expect(await getRequestsForEvent('event1')).toHaveLength(1);
+    });
+
+    it('is case-insensitive when matching titles', async () => {
+      await addRequest('event1', 'wingspan', 'user1');
+      expect(await removeZeroSignupRequests('event1', ['Wingspan'])).toHaveLength(1);
+      expect(await getRequestsForEvent('event1')).toHaveLength(0);
+    });
+
+    it('removes a request even if the owner already confirmed bringing it', async () => {
+      await addGame('guild-1', 'owner1', 'Wingspan');
+      await addRequest('event1', 'Wingspan', 'user1');
+      expect(await confirmBring('guild-1', 'event1', 'Wingspan', 'owner1')).toMatchObject({ status: 'confirmed' });
+      expect(await removeZeroSignupRequests('event1', ['Wingspan'])).toHaveLength(1);
+      expect(await getRequestsForEvent('event1')).toHaveLength(0);
+    });
+
+    it('only removes requests for the specified event', async () => {
+      await addRequest('event1', 'Wingspan', 'user1');
+      await addRequest('event2', 'Wingspan', 'user1');
+      expect(await removeZeroSignupRequests('event1', ['Wingspan'])).toHaveLength(1);
+      expect(await getRequestsForEvent('event1')).toHaveLength(0);
+      expect(await getRequestsForEvent('event2')).toHaveLength(1);
+    });
+
+    it('returns an empty array and does nothing when the zero-signup list is empty', async () => {
+      await addRequest('event1', 'Wingspan', 'user1');
+      expect(await removeZeroSignupRequests('event1', [])).toHaveLength(0);
+      expect(await getRequestsForEvent('event1')).toHaveLength(1);
+    });
+
+    it('includes pending-ask dm fields on removed records so the caller can invalidate them', async () => {
+      const req = await addRequest('event1', 'Wingspan', 'user1');
+      await addPendingAsk((req as GameRequest).id, 'owner1', 'dm-channel-1', 'dm-message-1');
+      const removed = await removeZeroSignupRequests('event1', ['Wingspan']);
+      expect(removed[0].pendingAsks).toEqual([
+        expect.objectContaining({ ownerId: 'owner1', dmChannelId: 'dm-channel-1', dmMessageId: 'dm-message-1' }),
+      ]);
+    });
+  });
+
+  describe('getRequestById', () => {
+    it('returns the matching request', async () => {
+      const req = await addRequest('event1', 'Wingspan', 'user1');
+      const found = await getRequestById((req as GameRequest).id);
+      expect(found?.gameName).toBe('Wingspan');
+    });
+
+    it('returns undefined for an unknown id', async () => {
+      expect(await getRequestById('no-such-id')).toBeUndefined();
+    });
+  });
+
+  describe('addPendingAsk', () => {
+    it('adds a pending ask for the owner', async () => {
+      const req = await addRequest('event1', 'Wingspan', 'user1');
+      await addPendingAsk((req as GameRequest).id, 'owner1', 'channel-1', 'message-1');
+      const found = await getRequestById((req as GameRequest).id);
+      expect(found?.pendingAsks).toEqual([
+        expect.objectContaining({ ownerId: 'owner1', dmChannelId: 'channel-1', dmMessageId: 'message-1' }),
+      ]);
+    });
+
+    it('upserts — re-asking the same owner updates their existing entry instead of duplicating it', async () => {
+      const req = await addRequest('event1', 'Wingspan', 'user1');
+      await addPendingAsk((req as GameRequest).id, 'owner1', 'channel-1', 'message-1');
+      await addPendingAsk((req as GameRequest).id, 'owner1', 'channel-1', 'message-2');
+      const found = await getRequestById((req as GameRequest).id);
+      expect(found?.pendingAsks).toHaveLength(1);
+      expect(found?.pendingAsks[0].dmMessageId).toBe('message-2');
+    });
+
+    it('does nothing when the request id does not exist', async () => {
+      await expect(addPendingAsk('no-such-id', 'owner1', 'channel-1', 'message-1')).resolves.toBeUndefined();
+    });
+  });
+
+  describe('removePendingAsk', () => {
+    it('removes and returns the matching ask', async () => {
+      const req = await addRequest('event1', 'Wingspan', 'user1');
+      await addPendingAsk((req as GameRequest).id, 'owner1', 'channel-1', 'message-1');
+      const removed = await removePendingAsk((req as GameRequest).id, 'owner1');
+      expect(removed).toMatchObject({ ownerId: 'owner1', dmChannelId: 'channel-1', dmMessageId: 'message-1' });
+      const found = await getRequestById((req as GameRequest).id);
+      expect(found?.pendingAsks).toHaveLength(0);
+    });
+
+    it('returns undefined when the owner has no pending ask', async () => {
+      const req = await addRequest('event1', 'Wingspan', 'user1');
+      expect(await removePendingAsk((req as GameRequest).id, 'owner1')).toBeUndefined();
+    });
+
+    it('returns undefined when the request id does not exist', async () => {
+      expect(await removePendingAsk('no-such-id', 'owner1')).toBeUndefined();
+    });
+  });
+
+  describe('declineBring', () => {
+    it('moves the owner from pendingAsks to declinedOwnerIds', async () => {
+      const req = await addRequest('event1', 'Wingspan', 'user1');
+      await addPendingAsk((req as GameRequest).id, 'owner1', 'channel-1', 'message-1');
+      expect(await declineBring((req as GameRequest).id, 'owner1')).toBe('declined');
+      const found = await getRequestById((req as GameRequest).id);
+      expect(found?.pendingAsks).toHaveLength(0);
+      expect(found?.declinedOwnerIds).toEqual(['owner1']);
+    });
+
+    it('returns "not_asked" when the owner was never asked', async () => {
+      const req = await addRequest('event1', 'Wingspan', 'user1');
+      expect(await declineBring((req as GameRequest).id, 'owner1')).toBe('not_asked');
+    });
+
+    it('returns "not_requested" when the request does not exist', async () => {
+      expect(await declineBring('no-such-id', 'owner1')).toBe('not_requested');
+    });
+  });
+
+  describe('resolveAttendingOwnerIds', () => {
+    it('includes an owner who RSVPd yes or maybe', async () => {
+      const ids = await resolveAttendingOwnerIds('guild-1', ['alice', 'bob'], { yes: ['alice'], maybe: ['bob'] });
+      expect(ids.sort()).toEqual(['alice', 'bob']);
+    });
+
+    it('excludes an owner who did not RSVP and has no attending delegate', async () => {
+      const ids = await resolveAttendingOwnerIds('guild-1', ['alice'], { yes: [], maybe: [] });
+      expect(ids).toEqual([]);
+    });
+  });
+
+  describe('pickPreferredOwner', () => {
+    it('picks the eligible owner with the fewest confirmed brings for the event', async () => {
+      await addGame('guild-1', 'alice', 'Catan');
+      const req = await addRequest('event1', 'Catan', 'user1');
+      await confirmBring('guild-1', 'event1', 'Catan', 'alice');
+      // alice has 1 confirmed bring, bob has 0 — bob should be picked next.
+      const chosen = await pickPreferredOwner('event1', ['alice', 'bob']);
+      expect(chosen).toBe('bob');
+    });
+
+    it('excludes ids passed in excludeIds', async () => {
+      const chosen = await pickPreferredOwner('event1', ['alice', 'bob'], ['alice']);
+      expect(chosen).toBe('bob');
+    });
+
+    it('returns undefined when every eligible owner has been excluded', async () => {
+      expect(await pickPreferredOwner('event1', ['alice'], ['alice'])).toBeUndefined();
+    });
+  });
+
+  describe('buildExpansionNote', () => {
+    it('returns an empty string when the base game has no BGG expansions on record', async () => {
+      expect(await buildExpansionNote('guild-1', 'user1', 'Wingspan')).toBe('');
+    });
+
+    it('returns a note listing expansions the user (or a linked delegate) owns', async () => {
+      await upsertGameInfo({
+        gameName: 'Wingspan',
+        bggExpansions: ['Wingspan: European Expansion'],
+        updatedAt: new Date().toISOString(),
+      });
+      await addGame('guild-1', 'user1', 'Wingspan: European Expansion', undefined, true);
+      expect(await buildExpansionNote('guild-1', 'user1', 'Wingspan')).toBe(' (with Wingspan: European Expansion)');
+    });
+
+    it('returns an empty string when the user owns none of the listed expansions', async () => {
+      await upsertGameInfo({
+        gameName: 'Wingspan',
+        bggExpansions: ['Wingspan: European Expansion'],
+        updatedAt: new Date().toISOString(),
+      });
+      expect(await buildExpansionNote('guild-1', 'user1', 'Wingspan')).toBe('');
     });
   });
 
@@ -428,42 +683,76 @@ describe('libraryStorage', () => {
   // ── confirmBring ───────────────────────────────────────────────────────────
 
   describe('confirmBring', () => {
-    it('returns "confirmed" and sets confirmedBy when the owner confirms a requested game', async () => {
+    it('returns "confirmed" and adds a confirmation when the owner confirms a requested game', async () => {
       await addGame('guild-1', 'user1', 'Wingspan');
       await addRequest('event1', 'Wingspan', 'user2');
-      expect(await confirmBring('guild-1', 'event1', 'Wingspan', 'user1')).toBe('confirmed');
-      expect((await getRequestsForEvent('event1'))[0].confirmedBy).toBe('user1');
+      expect(await confirmBring('guild-1', 'event1', 'Wingspan', 'user1')).toMatchObject({ status: 'confirmed' });
+      expect((await getRequestsForEvent('event1'))[0].confirmations).toEqual([
+        expect.objectContaining({ ownerId: 'user1' }),
+      ]);
+    });
+
+    it('returns the removed pending ask as invalidatedAsk when the confirming owner had one', async () => {
+      await addGame('guild-1', 'user1', 'Wingspan');
+      const req = await addRequest('event1', 'Wingspan', 'user2');
+      await addPendingAsk((req as GameRequest).id, 'user1', 'channel-1', 'message-1');
+      const result = await confirmBring('guild-1', 'event1', 'Wingspan', 'user1');
+      expect(result).toMatchObject({
+        status: 'confirmed',
+        invalidatedAsk: { ownerId: 'user1', dmChannelId: 'channel-1', dmMessageId: 'message-1' },
+      });
+      expect((await getRequestsForEvent('event1'))[0].pendingAsks).toHaveLength(0);
+    });
+
+    it('returns no invalidatedAsk when the confirming owner had no pending ask (e.g. a volunteer)', async () => {
+      await addGame('guild-1', 'user1', 'Wingspan');
+      await addRequest('event1', 'Wingspan', 'user2');
+      const result = await confirmBring('guild-1', 'event1', 'Wingspan', 'user1');
+      expect(result).toMatchObject({ status: 'confirmed' });
+      expect((result as { invalidatedAsk?: unknown }).invalidatedAsk).toBeUndefined();
     });
 
     it('returns "not_requested" when the game has not been requested for that event', async () => {
       await addGame('guild-1', 'user1', 'Wingspan');
-      expect(await confirmBring('guild-1', 'event1', 'Wingspan', 'user1')).toBe('not_requested');
+      expect(await confirmBring('guild-1', 'event1', 'Wingspan', 'user1')).toEqual({ status: 'not_requested' });
     });
 
     it('returns "not_owner" when the user does not own the game', async () => {
       await addGame('guild-1', 'user1', 'Wingspan');
       await addRequest('event1', 'Wingspan', 'user2');
-      expect(await confirmBring('guild-1', 'event1', 'Wingspan', 'user2')).toBe('not_owner');
+      expect(await confirmBring('guild-1', 'event1', 'Wingspan', 'user2')).toEqual({ status: 'not_owner' });
     });
 
     it('is case-insensitive for the game name lookup', async () => {
       await addGame('guild-1', 'user1', 'Wingspan');
       await addRequest('event1', 'wingspan', 'user2');
-      expect(await confirmBring('guild-1', 'event1', 'WINGSPAN', 'user1')).toBe('confirmed');
+      expect(await confirmBring('guild-1', 'event1', 'WINGSPAN', 'user1')).toMatchObject({ status: 'confirmed' });
     });
 
-    it('allows re-confirmation (idempotent)', async () => {
+    it('allows re-confirmation (idempotent — no duplicate confirmation entries)', async () => {
       await addGame('guild-1', 'user1', 'Wingspan');
       await addRequest('event1', 'Wingspan', 'user2');
       await confirmBring('guild-1', 'event1', 'Wingspan', 'user1');
-      expect(await confirmBring('guild-1', 'event1', 'Wingspan', 'user1')).toBe('confirmed');
-      expect((await getRequestsForEvent('event1'))[0].confirmedBy).toBe('user1');
+      expect(await confirmBring('guild-1', 'event1', 'Wingspan', 'user1')).toMatchObject({ status: 'confirmed' });
+      expect((await getRequestsForEvent('event1'))[0].confirmations).toHaveLength(1);
     });
 
     it('returns "not_owner" when the user owns the game in a different guild', async () => {
       await addGame('guild-2', 'user1', 'Wingspan');
       await addRequest('event1', 'Wingspan', 'user2');
-      expect(await confirmBring('guild-1', 'event1', 'Wingspan', 'user1')).toBe('not_owner');
+      expect(await confirmBring('guild-1', 'event1', 'Wingspan', 'user1')).toEqual({ status: 'not_owner' });
+    });
+
+    it("lets a linked delegate confirm bring for the owner's game", async () => {
+      const { addLibraryLink } = await import('../src/utils/libraryLinkStorage');
+      await addGame('guild-1', 'alice', 'Wingspan');
+      await addLibraryLink('guild-1', 'alice', 'bob'); // alice shares her library with bob
+      await addRequest('event1', 'Wingspan', 'carol');
+
+      expect(await confirmBring('guild-1', 'event1', 'Wingspan', 'bob')).toMatchObject({ status: 'confirmed' });
+      expect((await getRequestsForEvent('event1'))[0].confirmations).toEqual([
+        expect.objectContaining({ ownerId: 'bob' }),
+      ]);
     });
   });
 });

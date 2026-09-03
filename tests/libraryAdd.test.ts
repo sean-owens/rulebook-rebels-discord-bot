@@ -15,6 +15,7 @@ vi.mock('../src/utils/bggCatalog', async (importOriginal) => {
   return {
     ...actual,
     searchCatalog: vi.fn(() => []),
+    searchCatalogWithFallback: vi.fn(async () => []),
     isCatalogLoaded: vi.fn(() => true),
   };
 });
@@ -50,9 +51,10 @@ vi.mock('../src/utils/pins', () => ({
 
 import { execute } from '../src/commands/library';
 import { addGame, getGamesByUser } from '../src/utils/libraryStorage';
-import { searchCatalog, isCatalogLoaded } from '../src/utils/bggCatalog';
+import { searchCatalog, searchCatalogWithFallback, isCatalogLoaded } from '../src/utils/bggCatalog';
 
 const mockSearchCatalog = vi.mocked(searchCatalog);
+const mockSearchCatalogWithFallback = vi.mocked(searchCatalogWithFallback);
 const mockIsCatalogLoaded = vi.mocked(isCatalogLoaded);
 
 function makeAddInteraction(gameName: string, guildId = 'g1', userId = 'u1') {
@@ -84,6 +86,7 @@ describe('/library add — step ordering', () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-add-test-'));
     cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
     mockSearchCatalog.mockReturnValue([]);
+    mockSearchCatalogWithFallback.mockResolvedValue([]);
     mockIsCatalogLoaded.mockReturnValue(true);
   });
 
@@ -142,6 +145,24 @@ describe('/library add — step ordering', () => {
     );
   });
 
+  // --- Step 1a (linked accounts): shared library recognition ---
+
+  it('step 1a: recognizes a linked delegate\'s game as already "in your library" instead of offering to add a duplicate copy', async () => {
+    const { addLibraryLink } = await import('../src/utils/libraryLinkStorage');
+    await addGame('g1', 'u2', 'Wingspan');
+    await addLibraryLink('g1', 'u2', 'u1'); // u2 shares their library with u1
+    const interaction = makeAddInteraction('Wingspan', 'g1', 'u1');
+    await execute(interaction);
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('already in your library (shared from'),
+      }),
+    );
+    expect(interaction.reply).not.toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('already in the group library') }),
+    );
+  });
+
   // --- Step 2: partial match in guild library ---
 
   it('step 2: shows library partial select when similar game exists', async () => {
@@ -159,7 +180,7 @@ describe('/library add — step ordering', () => {
   it('step 2: partial select is shown before BGG catalog', async () => {
     await addGame('g1', 'u2', 'Wingspan');
     // BGG would also find Wingspan — library partial should win
-    mockSearchCatalog.mockReturnValue([
+    mockSearchCatalogWithFallback.mockResolvedValue([
       { id: '266192', name: 'Wingspan', year: 2019, isExpansion: false, rank: 10 },
     ]);
     const interaction = makeAddInteraction('wing', 'g1', 'u1');
@@ -174,7 +195,7 @@ describe('/library add — step ordering', () => {
   // --- Step 3a: BGG exact canonical match ---
 
   it('step 3a: BGG exact match shows confirm prompt before adding', async () => {
-    mockSearchCatalog.mockReturnValue([
+    mockSearchCatalogWithFallback.mockResolvedValue([
       { id: '266192', name: 'Wingspan', year: 2019, isExpansion: false, rank: 10 },
     ]);
     const interaction = makeAddInteraction('Wingspan', 'g1', 'u1');
@@ -191,7 +212,7 @@ describe('/library add — step ordering', () => {
 
   it('step 3a: BGG exact match re-checks library via normalized name (caught by step 2 normalized path)', async () => {
     await addGame('g1', 'u2', 'Brass: Birmingham');
-    mockSearchCatalog.mockReturnValue([
+    mockSearchCatalogWithFallback.mockResolvedValue([
       { id: '224517', name: 'Brass: Birmingham', year: 2018, isExpansion: false, rank: 5 },
     ]);
     // "brass birmingham" normalizes to "brassbirmingham" which is a substring of "brassbirmingham"
@@ -206,7 +227,7 @@ describe('/library add — step ordering', () => {
   // --- Step 3b: BGG partial matches ---
 
   it('step 3b: shows BGG select for multiple partial matches', async () => {
-    mockSearchCatalog.mockReturnValue([
+    mockSearchCatalogWithFallback.mockResolvedValue([
       { id: '266192', name: 'Wingspan', year: 2019, isExpansion: false, rank: 10 },
       { id: '300877', name: 'Wingspan: Asia', year: 2022, isExpansion: true, rank: null },
     ]);
@@ -221,7 +242,7 @@ describe('/library add — step ordering', () => {
   });
 
   it('step 3b: shows single BGG confirm for one partial match', async () => {
-    mockSearchCatalog.mockReturnValue([
+    mockSearchCatalogWithFallback.mockResolvedValue([
       { id: '266192', name: 'Wingspan', year: 2019, isExpansion: false, rank: 10 },
     ]);
     const interaction = makeAddInteraction('wingsspan', 'g1', 'u1'); // typo, not exact match
@@ -237,7 +258,7 @@ describe('/library add — step ordering', () => {
   // --- Step 4: no matches anywhere → custom game ---
 
   it('step 4: adds custom game and shows detail modal when nothing matches', async () => {
-    mockSearchCatalog.mockReturnValue([]);
+    mockSearchCatalogWithFallback.mockResolvedValue([]);
     const interaction = makeAddInteraction('My Custom Game', 'g1', 'u1');
     await execute(interaction);
     expect(interaction.showModal).toHaveBeenCalled();
@@ -250,6 +271,29 @@ describe('/library add — step ordering', () => {
     await execute(interaction);
     expect(interaction.showModal).toHaveBeenCalled();
     expect((await getGamesByUser('g1', 'u1')).some((e) => e.gameName === 'Some Game')).toBe(true);
+  });
+
+  // --- Step 3: live BGG search fallback when the local catalog misses ---
+
+  it('step 3: a live-search fallback hit resolves the same way a direct catalog match would', async () => {
+    // searchCatalogWithFallback already encapsulates "local catalog missed, but
+    // a live BGG search found it" — from handleAdd's perspective this looks
+    // identical to a direct catalog hit, so it should show the confirm prompt
+    // rather than falling through to step 4's custom-game path.
+    mockSearchCatalogWithFallback.mockResolvedValue([
+      { id: '999999', name: 'Some New 2026 Release', year: 2026, isExpansion: false, rank: null },
+    ]);
+    const interaction = makeAddInteraction('Some New 2026 Release', 'g1', 'u1');
+    await execute(interaction);
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('Some New 2026 Release'),
+      }),
+    );
+    expect(interaction.showModal).not.toHaveBeenCalled();
+    expect(
+      (await getGamesByUser('g1', 'u1')).some((e) => e.gameName === 'Some New 2026 Release'),
+    ).toBe(false);
   });
 
   // --- Guild isolation ---

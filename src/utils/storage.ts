@@ -4,6 +4,9 @@ const FILE = 'gamenights.json';
 
 export interface GameNight {
   id: string;
+  // Optional because events created before this field existed won't have it —
+  // display code should fall back to something like "Game Night".
+  title?: string;
   date: string;
   time: string;
   location: string;
@@ -30,7 +33,18 @@ export interface GameNight {
   createdAt: string;
   requestPinMessageId?: string;
   gameListPinMessageId?: string;
+  // "Quick Actions" button hub (see src/utils/requestPin.ts's updateHubPin) —
+  // Suggest a Game / Request a Game to Bring / My Games to Bring buttons,
+  // posted once at event-channel creation for members who'd rather tap a
+  // button than type a slash command.
+  hubPinMessageId?: string;
   openChannel?: boolean;
+  // Lineup lock + scheduler (see src/utils/scheduler.ts).
+  suggestionsLocked?: boolean;
+  scheduledAt?: string;
+  // Greeter role (see src/utils/greeters.ts) — up to 2 user IDs, set via
+  // `/host event greeters` and rotated by the host each event.
+  greeters?: string[];
 }
 
 export async function loadGameNights(): Promise<GameNight[]> {

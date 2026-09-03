@@ -24,8 +24,21 @@ export interface BGGGame {
   thumbnail: string | null;
   expansions: BGGExpansion[];
   parentGame?: BGGExpansion;
+  // Combined categories+mechanics through BGG_TO_TAG's curated vocabulary —
+  // this is the field the library-tagging system (game.ts/library.ts) reads;
+  // don't repurpose it for the challenge's clues, which need category and
+  // mechanic kept separate (see categories/mechanics below) to progress from
+  // vague to specific across hints 1/2.
   tags: string[];
+  // Same curated vocabulary as `tags`, split by BGG link type — categories
+  // read as a "genre" (hint 1, vaguest), mechanics as gameplay systems
+  // (hint 2, more specific). Used by generateClues (boardGameChallenge.ts) only.
+  categories: string[];
+  mechanics: string[];
   howToPlayUrl: string | null;
+  yearPublished: number | null;
+  designers: string[];
+  publishers: string[];
 }
 
 export function weightTag(weight: number): 'Light' | 'Medium' | 'Heavy' {
@@ -112,6 +125,12 @@ async function fetchBGGVideos(bggId: string): Promise<BGGVideoEntry[]> {
     }));
 }
 
+// Discord select menus cap out at 25 options; we paginate the suggest-flow
+// dropdown at 24 results per page (leaving room for the "enter manually"
+// option), so keeping a couple of pages' worth covers "not in the first 10"
+// without hanging on to an unbounded list for a very generic query.
+const MAX_SEARCH_RESULTS = 50;
+
 export async function searchBGG(query: string): Promise<BGGSearchResult[]> {
   const url = `https://boardgamegeek.com/xmlapi2/search?query=${encodeURIComponent(query)}&type=boardgame`;
   const xml = await fetchXML(url);
@@ -120,15 +139,20 @@ export async function searchBGG(query: string): Promise<BGGSearchResult[]> {
   const raw = parsed?.items?.item ?? [];
   const items: any[] = Array.isArray(raw) ? raw : [raw];
 
-  return items.slice(0, 10).map((item) => {
+  const results = items.map((item) => {
     const names: any[] = Array.isArray(item.name) ? item.name : [item.name];
     const primary = names.find((n) => n['@_type'] === 'primary');
     return {
       id: String(item['@_id']),
-      name: primary?.['@_value'] ?? names[0]?.['@_value'] ?? 'Unknown',
+      name: decodeEntities(primary?.['@_value'] ?? names[0]?.['@_value'] ?? 'Unknown'),
       yearPublished: item.yearpublished?.['@_value'] ? Number(item.yearpublished['@_value']) : null,
     };
   });
+
+  // Newest first; unknown publish years sort last rather than first.
+  results.sort((a, b) => (b.yearPublished ?? -Infinity) - (a.yearPublished ?? -Infinity));
+
+  return results.slice(0, MAX_SEARCH_RESULTS);
 }
 
 export interface BGGUser {
@@ -348,7 +372,7 @@ export async function validateBggUser(username: string): Promise<BGGUser | null>
 
 function parseBGGItem(item: any, id: string): Omit<BGGGame, 'howToPlayUrl'> {
   const names: any[] = Array.isArray(item.name) ? item.name : [item.name];
-  const primaryName = names.find((n) => n['@_type'] === 'primary')?.['@_value'] ?? 'Unknown';
+  const primaryName = decodeEntities(names.find((n) => n['@_type'] === 'primary')?.['@_value'] ?? 'Unknown');
 
   const polls: any[] = Array.isArray(item.poll) ? item.poll : item.poll ? [item.poll] : [];
   const numPlayersPoll = polls.find((p) => p['@_name'] === 'suggested_numplayers');
@@ -379,13 +403,22 @@ function parseBGGItem(item: any, id: string): Omit<BGGGame, 'howToPlayUrl'> {
   const links: any[] = Array.isArray(item.link) ? item.link : item.link ? [item.link] : [];
   const expansions: BGGExpansion[] = links
     .filter((l) => l['@_type'] === 'boardgameexpansion' && !l['@_inbound'])
-    .map((l) => ({ id: String(l['@_id']), name: String(l['@_value']) }))
+    .map((l) => ({ id: String(l['@_id']), name: decodeEntities(String(l['@_value'])) }))
     .slice(0, 25);
 
   const parentGame: BGGExpansion | undefined = links
     .filter((l) => l['@_type'] === 'boardgameexpansion' && l['@_inbound'])
-    .map((l) => ({ id: String(l['@_id']), name: String(l['@_value']) }))[0];
+    .map((l) => ({ id: String(l['@_id']), name: decodeEntities(String(l['@_value'])) }))[0];
 
+  // `tags` maps through BGG_TO_TAG's small curated vocabulary — deliberately
+  // narrow, since it's read by the library-tagging system as a fixed set of
+  // member-facing preference tags. `categories`/`mechanics` are the raw BGG
+  // category/mechanic names instead (same plain filter+map+slice pattern as
+  // designers/publishers below) — using the curated vocabulary here too
+  // would leave "genre" blank for most games, since BGG_TO_TAG only covers a
+  // handful of the dozens of real BGG category names (e.g. "Fantasy",
+  // "Card Game", "Exploration" have no entry) and was never meant to be
+  // exhaustive. See generateClues in boardGameChallenge.ts.
   const seen = new Set<string>();
   const tags: string[] = [];
   for (const link of links) {
@@ -394,13 +427,33 @@ function parseBGGItem(item: any, id: string): Omit<BGGGame, 'howToPlayUrl'> {
     const mapped = BGG_TO_TAG[String(link['@_value'] ?? '').toLowerCase()];
     if (mapped && !seen.has(mapped)) {
       seen.add(mapped);
-      tags.push(mapped);
+      if (tags.length < 5) tags.push(mapped);
     }
-    if (tags.length >= 5) break;
   }
+  const categories = links
+    .filter((l) => l['@_type'] === 'boardgamecategory')
+    .map((l) => decodeEntities(String(l['@_value'])))
+    .slice(0, 3);
+  const mechanics = links
+    .filter((l) => l['@_type'] === 'boardgamemechanic')
+    .map((l) => decodeEntities(String(l['@_value'])))
+    .slice(0, 3);
 
   const rawWeight = item.statistics?.ratings?.averageweight?.['@_value'];
   const weight = rawWeight != null && Number(rawWeight) > 0 ? Number(rawWeight) : null;
+
+  const rawYear = item.yearpublished?.['@_value'];
+  const yearPublished = rawYear != null && Number(rawYear) > 0 ? Number(rawYear) : null;
+
+  const designers = links
+    .filter((l) => l['@_type'] === 'boardgamedesigner')
+    .map((l) => decodeEntities(String(l['@_value'])))
+    .slice(0, 5);
+
+  const publishers = links
+    .filter((l) => l['@_type'] === 'boardgamepublisher')
+    .map((l) => decodeEntities(String(l['@_value'])))
+    .slice(0, 5);
 
   return {
     id,
@@ -420,6 +473,11 @@ function parseBGGItem(item: any, id: string): Omit<BGGGame, 'howToPlayUrl'> {
     expansions,
     parentGame,
     tags,
+    categories,
+    mechanics,
+    yearPublished,
+    designers,
+    publishers,
   };
 }
 

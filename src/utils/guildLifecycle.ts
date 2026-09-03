@@ -4,13 +4,21 @@ const DELETED_GUILDS_FILE = 'deleted_guilds.json';
 const RETENTION_DAYS = 30;
 
 // Files and their data shapes for purging
-const ARRAY_FILES = ['gamenights.json', 'library.json', 'games.json'] as const;
+const ARRAY_FILES = [
+  'gamenights.json',
+  'library.json',
+  'games.json',
+  'privateRooms.json',
+  'commandUsage.json',
+] as const;
 
 const KEYED_FILES = [
   'config.json',
   'bgg_accounts.json',
   'gameroles.json',
   'user_collections.json',
+  'board_game_challenges.json',
+  'board_game_challenge_leaderboard.json',
 ] as const;
 
 interface DeletedGuild {

@@ -1,3 +1,4 @@
+import { GuildMember } from 'discord.js';
 import { readJson, writeJson } from './db';
 
 const FILE = 'gameroles.json';
@@ -12,6 +13,14 @@ export interface GameRole {
   // only those roles should ever be deleted from Discord by /admin tags
   // remove or clear.
   botCreated?: boolean;
+}
+
+export interface MemberPreferences {
+  // Genre tag names (e.g. "Party", "Co-op") — matches GameInfo.tags entries.
+  tags: string[];
+  // Difficulty tag name (e.g. "Light") — matches GameInfo.complexity, or null
+  // if the member hasn't set one via /myroles.
+  complexity: string | null;
 }
 
 type Store = Record<string, GameRole[]>;
@@ -38,4 +47,18 @@ export async function clearGameRoles(guildId: string): Promise<GameRole[]> {
   store[guildId] = [];
   await writeJson(FILE, store);
   return removed;
+}
+
+// Reads a member's /myroles selections back out of their Discord roles — there's
+// no separate storage for preferences, the roles themselves are the source of truth.
+export async function getMemberPreferences(
+  guildId: string,
+  member: GuildMember,
+): Promise<MemberPreferences> {
+  const allTags = await getGameRoles(guildId);
+  const selected = allTags.filter((t) => member.roles.cache.has(t.roleId));
+  return {
+    tags: selected.filter((t) => t.type !== 'difficulty').map((t) => t.name),
+    complexity: selected.find((t) => t.type === 'difficulty')?.name ?? null,
+  };
 }

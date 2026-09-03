@@ -6,6 +6,7 @@ import {
   ButtonStyle,
   ChannelType,
   ChatInputCommandInteraction,
+  Client,
   EmbedBuilder,
   ForumChannel,
   MessageFlags,
@@ -15,10 +16,12 @@ import {
   SlashCommandBuilder,
   StringSelectMenuBuilder,
   StringSelectMenuInteraction,
+  TextChannel,
   TextInputBuilder,
   TextInputStyle,
   ThreadChannel,
   AutocompleteInteraction,
+  ChannelFlags,
 } from 'discord.js';
 import {
   MarketplaceListing,
@@ -26,14 +29,18 @@ import {
   Condition,
   CONDITION_LABELS,
   getActiveListingsForGuild,
+  getListingsForGuild,
   getListing,
+  findListingById,
   getUserListings,
   createListing,
   updateListing,
+  editListing,
   addBid,
   updateBid,
   addCounter,
   acceptBid,
+  buyNow,
   denyBid,
   closeListing,
   reopenListing,
@@ -41,47 +48,76 @@ import {
   getOpenBid,
 } from '../utils/marketplaceStorage';
 import { appendMarketplaceLog } from '../utils/marketplaceLog';
+import { pinWithRetry } from '../utils/discordPin';
 import { getGuildConfig, updateGuildConfig } from '../utils/config';
 import { removeGame, getGamesByUser } from '../utils/libraryStorage';
-import { searchCatalog } from '../utils/bggCatalog';
+import { searchCatalog, searchCatalogWithFallback, getCatalogEntryById, BGGCatalogEntry } from '../utils/bggCatalog';
 import { fetchBGGMarketplacePrices, getBGGGame } from '../utils/bgg';
+import {
+  SellDraft,
+  saveDraft as persistDraft,
+  deleteDraft as persistDeleteDraft,
+  loadUnexpiredDrafts,
+} from '../utils/marketplaceDraftStorage';
 
 // ── Sell draft store (in-memory, expires after 15 min) ──────────────────────
-
-interface SellDraft {
-  listingType: 'sell' | 'trade';
-  guildId: string;
-  userId: string;
-  username: string;
-  itemName: string;
-  bggId?: string;
-  thumbnail?: string;
-  isExpansion?: boolean;
-  availableExpansions?: { bggId: string; name: string }[];
-  expansions?: { bggId: string; name: string }[];
-  parentItem?: { bggId: string; name: string };
-  condition: Condition;
-  notes?: string;
-  referenceLink?: string;
-  bidsAllowed: boolean;
-  lookingFor?: string;
-  suggestedPrice?: number;
-  priceCheckOnly?: boolean;
-  expiresAt: number;
-}
+//
+// Reads (`sellDrafts.get`) go straight to the in-memory cache for speed, since
+// they happen on every button/select interaction in the flow. Writes go
+// through storeDraft/updateDraft/takeDraft below, which mirror the change to
+// persistent storage (see src/utils/marketplaceDraftStorage.ts) best-effort —
+// so a redeploy between two steps of a long sell flow doesn't strand the user
+// with dead buttons pointing at a draft that no longer exists anywhere.
 
 const sellDrafts = new Map<string, SellDraft>();
+
+// Called once on bot startup to recover drafts that were in-progress when the
+// process last stopped.
+export async function hydrateSellDrafts(): Promise<void> {
+  const stored = await loadUnexpiredDrafts();
+  for (const [id, draft] of Object.entries(stored)) {
+    sellDrafts.set(id, draft);
+  }
+}
 
 function storeDraft(draft: Omit<SellDraft, 'expiresAt'>): string {
   const { randomUUID } = require('crypto') as typeof import('crypto');
   const id = randomUUID();
-  sellDrafts.set(id, { ...draft, expiresAt: Date.now() + 15 * 60 * 1000 });
+  const full: SellDraft = { ...draft, expiresAt: Date.now() + 15 * 60 * 1000 };
+  sellDrafts.set(id, full);
+  void persistDraft(id, full).catch((err) => console.warn(`Could not persist sell draft ${id}:`, err));
   // prune expired drafts opportunistically
   for (const [k, v] of sellDrafts) {
-    if (v.expiresAt < Date.now()) sellDrafts.delete(k);
+    if (v.expiresAt < Date.now()) {
+      sellDrafts.delete(k);
+      void persistDeleteDraft(k).catch(() => {});
+    }
   }
   return id;
 }
+
+function updateDraft(draftId: string, patch: Partial<SellDraft>): SellDraft | undefined {
+  const draft = sellDrafts.get(draftId);
+  if (!draft) return undefined;
+  const updated = { ...draft, ...patch };
+  sellDrafts.set(draftId, updated);
+  void persistDraft(draftId, updated).catch((err) =>
+    console.warn(`Could not persist sell draft ${draftId}:`, err),
+  );
+  return updated;
+}
+
+// In-memory only (unlike sellDrafts, this only tracks the first couple of
+// wizard steps — item name + listing type — before a real, persisted draft
+// exists), keyed by userId, mirroring pendingLibrarySuggest/pendingBrings-style
+// maps elsewhere in this codebase. Lost on a redeploy mid-wizard; the user just
+// restarts from the hub button, same as those other short-lived flows.
+interface PendingHubListing {
+  listingType: 'sell' | 'trade';
+  itemName: string;
+  condition?: Condition;
+}
+const pendingHubListings = new Map<string, PendingHubListing>();
 
 
 function formatPrice(amount: number): string {
@@ -133,6 +169,9 @@ function takeDraft(draftId: string): SellDraft | undefined {
   const draft = sellDrafts.get(draftId);
   if (!draft) return undefined;
   sellDrafts.delete(draftId);
+  void persistDeleteDraft(draftId).catch((err) =>
+    console.warn(`Could not delete persisted sell draft ${draftId}:`, err),
+  );
   if (draft.expiresAt < Date.now()) return undefined;
   return draft;
 }
@@ -160,7 +199,7 @@ export const data = new SlashCommandBuilder()
           )
           .addBooleanOption((opt) =>
             opt
-              .setName('bids_allowed')
+              .setName('offers_allowed')
               .setDescription('Allow buyers to submit offers below your asking price?')
               .setRequired(true),
           )
@@ -253,6 +292,14 @@ export const data = new SlashCommandBuilder()
   )
   .addSubcommand((sub) =>
     sub
+      .setName('edit')
+      .setDescription('Edit the price/looking-for/notes on one of your own active or pending listings')
+      .addStringOption((opt) =>
+        opt.setName('id').setDescription('Your listing to edit').setRequired(true).setAutocomplete(true),
+      ),
+  )
+  .addSubcommand((sub) =>
+    sub
       .setName('price')
       .setDescription('Look up current BoardGameGeek marketplace prices for a game without creating a listing')
       .addStringOption((opt) =>
@@ -269,15 +316,15 @@ export async function handleAutocomplete(interaction: AutocompleteInteraction): 
   const sub = interaction.options.getSubcommand(false);
   const focusedOption = interaction.options.getFocused(true);
 
-  if ((sub === 'close' || sub === 'reopen') && focusedOption.name === 'id') {
+  if ((sub === 'close' || sub === 'reopen' || sub === 'edit') && focusedOption.name === 'id') {
     const guildId = interaction.guildId!;
     const userId = interaction.user.id;
     const query = focusedOption.value.toLowerCase();
 
     const listings = (await getUserListings(guildId, userId)).filter((l) =>
-      sub === 'close'
-        ? l.status === 'active' || l.status === 'pending'
-        : l.status === 'sold' || l.status === 'closed',
+      sub === 'reopen'
+        ? l.status === 'sold' || l.status === 'closed'
+        : l.status === 'active' || l.status === 'pending', // close and edit both need a still-open listing
     );
 
     const typeLabel = (l: MarketplaceListing) => (l.type === 'sell' ? 'Sell' : 'Trade');
@@ -304,7 +351,12 @@ export async function handleAutocomplete(interaction: AutocompleteInteraction): 
   const results = searchCatalog(focused).slice(0, 24);
   const choices = results.map((r) => ({
     name: `${r.isExpansion ? '[Expansion] ' : ''}${r.name} (${r.year ?? '?'})`.slice(0, 100),
-    value: r.name,
+    // Encodes the BGG id rather than the name so resolveMarketplaceItem can
+    // tell an explicit pick apart from free-typed text that happens to match
+    // some other entry's name exactly (see resolveMarketplaceItem's __bgg__
+    // branch) — the root cause of a game like "Gloom" silently winning over
+    // "Gloomhaven" when a user types "gloom" and submits before finishing.
+    value: `__bgg__:${r.id}`,
   }));
   // Prefix with __custom__: so the handler knows to skip the BGG catalog lookup
   choices.push({ name: `📝 "${focused.slice(0, 75)}" — not on BGG / custom item`, value: `__custom__:${focused}`.slice(0, 100) });
@@ -313,11 +365,52 @@ export async function handleAutocomplete(interaction: AutocompleteInteraction): 
 
 // ── Embed builders ──────────────────────────────────────────────────────────
 
+// BGG legal requires "Powered by BGG" attribution on any embed that surfaces
+// BGG data (CLAUDE.md §4). A fully custom listing — no bggId, and no
+// BGG-linked base game or expansions — shows no BGG data at all, so the logo
+// would be misleading/unnecessary rather than required; skip it there.
+function usesBggData(listing: Pick<MarketplaceListing, 'bggId' | 'parentItem' | 'expansions'>): boolean {
+  return !!(listing.bggId || listing.parentItem || (listing.expansions && listing.expansions.length > 0));
+}
+
+// Sets the embed's image and returns the attachment to send alongside it, or
+// returns an empty array (and leaves the embed's image untouched) when the
+// listing has no BGG data to attribute.
+function bggAttribution(
+  listing: Pick<MarketplaceListing, 'bggId' | 'parentItem' | 'expansions'>,
+  embed: EmbedBuilder,
+): AttachmentBuilder[] {
+  if (!usesBggData(listing)) return [];
+  embed.setImage('attachment://powered_by_BGG_01_SM.png');
+  return [new AttachmentBuilder('BGG/images/powered_by_BGG_01_SM.png')];
+}
+
+function bundleDisplayTitle(itemName: string, expansionCount: number, includesBase: boolean): string {
+  if (includesBase && expansionCount > 0) {
+    return `${itemName} + Base Game + ${expansionCount} expansion${expansionCount > 1 ? 's' : ''}`;
+  } else if (includesBase) {
+    return `${itemName} + Base Game`;
+  } else if (expansionCount > 0) {
+    return `${itemName} + ${expansionCount} expansion${expansionCount > 1 ? 's' : ''}`;
+  }
+  return itemName;
+}
+
+// A counter supersedes the bid's original amount/offer once made — the last
+// counter in the array is whatever the two parties actually settled on
+// (no further counters get added once a bid is accepted). Falls back to the
+// bid's own amount/offer when there was no back-and-forth at all (a plain
+// Accept with no counters, or Buy It Now — whose bid carries neither field,
+// so the caller falls back again to the listing's fixed askingPrice).
+function finalBidTerms(bid: Bid): { amount?: number; offer?: string } {
+  const lastCounter = bid.counters[bid.counters.length - 1];
+  return lastCounter ? { amount: lastCounter.amount, offer: lastCounter.offer } : { amount: bid.amount, offer: bid.offer };
+}
+
 function listingEmbed(listing: MarketplaceListing): EmbedBuilder {
   const expCount = listing.expansions?.length ?? 0;
-  const displayTitle = expCount > 0
-    ? `${listing.itemName} + ${expCount} expansion${expCount > 1 ? 's' : ''}`
-    : listing.itemName;
+  const includesBase = !!(listing.includesBaseGame && listing.parentItem);
+  const displayTitle = bundleDisplayTitle(listing.itemName, expCount, includesBase);
   const type = listing.type === 'sell' ? '🏷️ For Sale' : '🔄 For Trade';
   const statusEmoji: Record<string, string> = {
     active: '🟢',
@@ -326,7 +419,12 @@ function listingEmbed(listing: MarketplaceListing): EmbedBuilder {
     closed: '⚫',
   };
 
-  const openBids = listing.bids.filter((b) => b.status === 'open').length;
+  const openOffers = listing.bids.filter((b) => b.status === 'open').length;
+  // Once sold, reflect what the listing actually sold/traded for — otherwise
+  // the post keeps showing the original asking price/lookingFor forever,
+  // even after negotiation moved the number (see finalBidTerms above).
+  const acceptedBid = listing.status === 'sold' ? listing.bids.find((b) => b.status === 'accepted') : undefined;
+  const finalTerms = acceptedBid ? finalBidTerms(acceptedBid) : undefined;
 
   const embed = new EmbedBuilder()
     .setColor(listing.type === 'sell' ? 0x57f287 : 0xfee75c)
@@ -340,7 +438,9 @@ function listingEmbed(listing: MarketplaceListing): EmbedBuilder {
   }
   if (listing.parentItem) {
     const parentUrl = `https://boardgamegeek.com/boardgame/${listing.parentItem.bggId}`;
-    descLines.push(`[Base item on BGG](${parentUrl})`);
+    descLines.push(includesBase
+      ? `[Base game on BGG](${parentUrl})`
+      : `[Base game on BGG](${parentUrl}) (not included)`);
   }
   if (listing.referenceLink) {
     descLines.push(`[Reference link](${listing.referenceLink})`);
@@ -351,14 +451,25 @@ function listingEmbed(listing: MarketplaceListing): EmbedBuilder {
   const fields: { name: string; value: string; inline?: boolean }[] = [];
 
   if (listing.type === 'sell') {
-    const priceDisplay = listing.askingPrice != null
-      ? formatPrice(listing.askingPrice)
-      : 'Open to offers';
-    fields.push({ name: 'Price', value: `${priceDisplay}${listing.bidsAllowed ? ' *(bids welcome)*' : ' *(firm)*'}`, inline: true });
+    // Buy It Now's bid carries no amount of its own (the price was already
+    // fixed) — fall back to askingPrice so a Buy-It-Now sale still shows a number.
+    const finalPrice = finalTerms ? finalTerms.amount ?? listing.askingPrice : listing.askingPrice;
+    const priceDisplay = finalPrice != null ? formatPrice(finalPrice) : 'Open to offers';
+    fields.push({ name: finalTerms ? 'Sold For' : 'Price', value: priceDisplay, inline: true });
+    fields.push({
+      name: 'Negotiable?',
+      value: listing.bidsAllowed ? '💬 Open to Offers' : '🔒 Firm Price',
+      inline: true,
+    });
   } else {
     fields.push({
-      name: 'Looking For',
-      value: listing.lookingFor || 'Open to offers',
+      name: 'Offering',
+      value: displayTitle,
+      inline: true,
+    });
+    fields.push({
+      name: finalTerms?.offer ? 'Traded For' : 'Looking For',
+      value: finalTerms?.offer || listing.lookingFor || 'Open to offers',
       inline: true,
     });
   }
@@ -367,9 +478,15 @@ function listingEmbed(listing: MarketplaceListing): EmbedBuilder {
     fields.push({ name: 'Condition', value: CONDITION_LABELS[listing.condition], inline: true });
   }
 
+  // Type-aware label so a completed trade reads "Traded" rather than "Sold" —
+  // the underlying status value stays 'sold' for both (see acceptBid), this
+  // only changes what's displayed.
+  const statusLabel = listing.status === 'sold'
+    ? (listing.type === 'sell' ? 'Sold' : 'Traded')
+    : listing.status.charAt(0).toUpperCase() + listing.status.slice(1);
   fields.push({
     name: 'Status',
-    value: `${statusEmoji[listing.status]} ${listing.status.charAt(0).toUpperCase() + listing.status.slice(1)}${openBids > 0 ? ` (${openBids} open bid${openBids > 1 ? 's' : ''})` : ''}`,
+    value: `${statusEmoji[listing.status]} ${statusLabel}${openOffers > 0 ? ` (${openOffers} open offer${openOffers > 1 ? 's' : ''})` : ''}`,
     inline: true,
   });
 
@@ -380,25 +497,67 @@ function listingEmbed(listing: MarketplaceListing): EmbedBuilder {
     });
   }
 
+  if (includesBase) {
+    fields.push({ name: 'Includes Base Game', value: `• ${listing.parentItem!.name}` });
+  }
+
   if (listing.notes) fields.push({ name: 'Notes', value: listing.notes });
 
   embed.addFields(fields);
   return embed;
 }
 
-function interestButton(listingId: string, disabled = false): ActionRowBuilder<ButtonBuilder> {
-  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+// Firm-price listings get a "Buy It Now" button alongside "I'm Interested" —
+// there's no price to negotiate, so a buyer who's already decided doesn't need
+// to wait on the seller reviewing an offer. Negotiable sells and trades only
+// ever show "I'm Interested" since there's no fixed price to instantly claim.
+function interestButton(
+  listing: Pick<MarketplaceListing, 'id' | 'type' | 'bidsAllowed'>,
+  disabled = false,
+): ActionRowBuilder<ButtonBuilder> {
+  const buttons: ButtonBuilder[] = [];
+  if (isFirmListing(listing)) {
+    buttons.push(
+      new ButtonBuilder()
+        .setCustomId(`mp_buynow_${listing.id}`)
+        .setLabel('Buy It Now')
+        .setStyle(ButtonStyle.Success)
+        .setEmoji('⚡')
+        .setDisabled(disabled),
+    );
+  }
+  buttons.push(
     new ButtonBuilder()
-      .setCustomId(`mp_interest_${listingId}`)
+      .setCustomId(`mp_interest_${listing.id}`)
       .setLabel("I'm Interested")
       .setStyle(ButtonStyle.Primary)
       .setEmoji('🤝')
       .setDisabled(disabled),
   );
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons);
 }
 
-function bidActionRow(listingId: string, bidId: string): ActionRowBuilder<ButtonBuilder> {
-  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+// A firm-price sell listing has no price to negotiate, so the seller only gets
+// Accept/Deny — the Counter button only makes sense when there's room to move
+// on price (negotiable sells) or on what's being exchanged (trades).
+function isFirmListing(listing: Pick<MarketplaceListing, 'type' | 'bidsAllowed'>): boolean {
+  return listing.type === 'sell' && !listing.bidsAllowed;
+}
+
+// Free-text back-and-forth, independent of Accept/Deny/Counter — lets either
+// party ask/answer a question (e.g. "does it include the expansion?")
+// without forcing a price decision. Always available, even on firm-price
+// listings where Counter is hidden, since it never touches price or status.
+function replyButton(listingId: string, bidId: string): ButtonBuilder {
+  return new ButtonBuilder()
+    .setCustomId(`mp_reply_${listingId}_${bidId}`)
+    .setLabel('Reply')
+    .setEmoji('💬')
+    .setStyle(ButtonStyle.Secondary);
+}
+
+function bidActionRow(listingId: string, bidId: string, allowCounter = true): ActionRowBuilder<ButtonBuilder> {
+  const buttons = [
     new ButtonBuilder()
       .setCustomId(`mp_accept_${listingId}_${bidId}`)
       .setLabel('Accept')
@@ -407,11 +566,17 @@ function bidActionRow(listingId: string, bidId: string): ActionRowBuilder<Button
       .setCustomId(`mp_deny_${listingId}_${bidId}`)
       .setLabel('Deny')
       .setStyle(ButtonStyle.Danger),
-    new ButtonBuilder()
-      .setCustomId(`mp_counter_${listingId}_${bidId}`)
-      .setLabel('Counter')
-      .setStyle(ButtonStyle.Secondary),
-  );
+  ];
+  if (allowCounter) {
+    buttons.push(
+      new ButtonBuilder()
+        .setCustomId(`mp_counter_${listingId}_${bidId}`)
+        .setLabel('Counter')
+        .setStyle(ButtonStyle.Secondary),
+    );
+  }
+  buttons.push(replyButton(listingId, bidId));
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons);
 }
 
 function buyerResponseRow(listingId: string, bidId: string): ActionRowBuilder<ButtonBuilder> {
@@ -428,6 +593,21 @@ function buyerResponseRow(listingId: string, bidId: string): ActionRowBuilder<Bu
       .setCustomId(`mp_counter_${listingId}_${bidId}`)
       .setLabel('Counter Again')
       .setStyle(ButtonStyle.Secondary),
+    replyButton(listingId, bidId),
+  );
+}
+
+// Sent to the buyer for a plain reply/question that isn't itself a counter —
+// there's no counter to accept yet, so just Withdraw (reusing the same deny
+// handler the buyer's other withdraw button uses) plus Reply to continue the
+// conversation.
+function buyerReplyRow(listingId: string, bidId: string): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`mp_deny_${listingId}_${bidId}`)
+      .setLabel('Withdraw Offer')
+      .setStyle(ButtonStyle.Danger),
+    replyButton(listingId, bidId),
   );
 }
 
@@ -495,9 +675,8 @@ const CONDITION_LABEL: Record<string, string> = {
 function buildThreadTitle(listing: MarketplaceListing): string {
   const prefix = listing.type === 'sell' ? '[SELL]' : '[TRADE]';
   const expCount = listing.expansions?.length ?? 0;
-  const itemLabel = expCount > 0
-    ? `${listing.itemName} + ${expCount} expansion${expCount > 1 ? 's' : ''}`
-    : listing.itemName;
+  const includesBase = !!(listing.includesBaseGame && listing.parentItem);
+  const itemLabel = bundleDisplayTitle(listing.itemName, expCount, includesBase);
   const meta: string[] = [];
   if (listing.askingPrice != null) meta.push(formatPrice(listing.askingPrice));
   if (listing.condition) meta.push(CONDITION_LABEL[listing.condition] ?? listing.condition);
@@ -524,9 +703,8 @@ async function postListingToForum(
     const tagIds = await ensureMarketplaceTags(forumChannel, guildId);
     const appliedTags = resolvedTags(tagIds, listing.type, listing.status);
 
-    const bggAttachment = new AttachmentBuilder('BGG/images/powered_by_BGG_01_SM.png');
     const embed = listingEmbed(listing);
-    embed.setImage('attachment://powered_by_BGG_01_SM.png');
+    const bggFiles = bggAttribution(listing, embed);
 
     const thumbBuffer = listing.thumbnail ? await fetchImageBuffer(listing.thumbnail) : null;
 
@@ -540,21 +718,21 @@ async function postListingToForum(
           files: [new AttachmentBuilder(thumbBuffer, { name: 'thumbnail.jpg' })],
         },
       });
-      // Second message: the actual listing embed + BGG logo + button
+      // Second message: the actual listing embed + BGG logo (if applicable) + button
       await thread.send({
         embeds: [embed],
-        files: [bggAttachment],
-        components: [interestButton(listing.id)],
+        files: bggFiles,
+        components: [interestButton(listing)],
       });
     } else {
-      // No thumbnail — single message with embed + BGG logo
+      // No thumbnail — single message with embed + BGG logo (if applicable)
       thread = await forumChannel.threads.create({
         name: buildThreadTitle(listing),
         appliedTags,
         message: {
           embeds: [embed],
-          files: [bggAttachment],
-          components: [interestButton(listing.id)],
+          files: bggFiles,
+          components: [interestButton(listing)],
         },
       });
     }
@@ -566,9 +744,148 @@ async function postListingToForum(
   }
 }
 
-async function updateForumPost(
+// Text-channel equivalent of postListingToForum — unlike forum mode, no
+// Discord thread is created. The listing is a single plain message (the
+// thumbnail, if any, is already embedded via listingEmbed's setThumbnail —
+// the forum version's separate thumbnail-only starter message exists purely
+// to feed Discord's forum card preview, which has no text-channel
+// equivalent). Follow-up activity is posted as a reply to this message
+// instead of into a thread — see postListingFollowup.
+async function postListingToTextChannel(
   listing: MarketplaceListing,
-  client: ForumChannel['client'],
+  textChannel: TextChannel,
+  guildId: string,
+): Promise<string | undefined> {
+  try {
+    const embed = listingEmbed(listing);
+    const bggFiles = bggAttribution(listing, embed);
+
+    const message = await textChannel.send({
+      embeds: [embed],
+      files: bggFiles,
+      components: [interestButton(listing)],
+    });
+
+    await updateMarketplaceListingIndex(textChannel.client, guildId);
+
+    return message.id;
+  } catch (err) {
+    console.error('[marketplace] text channel post failed:', err);
+    return undefined;
+  }
+}
+
+type ListingPostRef = Partial<Pick<MarketplaceListing, 'forumThreadId' | 'listingMessageId' | 'listingChannelId'>>;
+
+// Shared by finalizeSellListing and its trade equivalent — resolves the
+// configured marketplace channel and dispatches to the Forum or Text poster
+// based on its live type, so a listing can be created regardless of which
+// mode a guild has configured. Returns the mode-appropriate id(s) to persist
+// on the listing (see updateListing's patch type).
+async function postListingToChannel(
+  listing: MarketplaceListing,
+  guildId: string,
+  client: Client,
+): Promise<ListingPostRef | undefined> {
+  const config = await getGuildConfig(guildId);
+  if (!config.marketplaceChannelId) return undefined;
+  try {
+    const channel = await client.channels.fetch(config.marketplaceChannelId);
+    if (channel?.type === ChannelType.GuildForum) {
+      const threadId = await postListingToForum(listing, channel as ForumChannel, guildId);
+      return threadId ? { forumThreadId: threadId } : undefined;
+    }
+    if (channel?.type === ChannelType.GuildText) {
+      const messageId = await postListingToTextChannel(listing, channel as TextChannel, guildId);
+      return messageId ? { listingMessageId: messageId, listingChannelId: channel.id } : undefined;
+    }
+    return undefined;
+  } catch (err) {
+    console.error('[marketplace] marketplace channel fetch failed:', err);
+    return undefined;
+  }
+}
+
+// Builds the "View listing" URL for either mode, or undefined if the listing
+// was never posted (e.g. no marketplace channel configured at creation time).
+function listingLink(ref: ListingPostRef, guildId: string): string | undefined {
+  if (ref.forumThreadId) {
+    return `https://discord.com/channels/${guildId}/${ref.forumThreadId}`;
+  }
+  if (ref.listingMessageId && ref.listingChannelId) {
+    return `https://discord.com/channels/${guildId}/${ref.listingChannelId}/${ref.listingMessageId}`;
+  }
+  return undefined;
+}
+
+/** Strip buttons from a bid's outstanding DM/thread-fallback prompt and append a closing note. */
+async function lockBidDm(client: Client, bid: Bid, note: string): Promise<void> {
+  if (!bid.dmChannelId || !bid.dmMessageId) return;
+  try {
+    const channel = await client.channels.fetch(bid.dmChannelId);
+    if (!channel || !channel.isTextBased()) return;
+    const message = await channel.messages.fetch(bid.dmMessageId);
+    await message.edit({ content: `${message.content}\n\n${note}`, components: [] });
+  } catch { /* message may be gone or inaccessible */ }
+}
+
+// Posts a follow-up visible to everyone watching the listing — a new-offer
+// notification, a DM-disabled fallback with response buttons, or a sold/
+// closed announcement. Forum mode posts into the listing's thread; Text mode
+// has no thread, so it replies to the listing message instead (same visual
+// grouping via Discord's reply UI, no thread channel created). Returns the
+// sent message's channel+id so callers can persist it as a bid's DM-fallback
+// location via updateBid, or null if there's nowhere to post (no marketplace
+// channel configured, or the listing/thread/message is gone).
+async function postListingFollowup(
+  listing: MarketplaceListing,
+  client: Client,
+  payload: { content: string; components?: ActionRowBuilder<ButtonBuilder>[] },
+): Promise<{ channelId: string; id: string } | null> {
+  try {
+    if (listing.forumThreadId) {
+      const thread = await client.channels.fetch(listing.forumThreadId) as ThreadChannel;
+      if (!thread) return null;
+      const sent = await thread.send(payload);
+      return { channelId: sent.channelId, id: sent.id };
+    }
+    if (listing.listingMessageId && listing.listingChannelId) {
+      const channel = await client.channels.fetch(listing.listingChannelId);
+      if (!channel || !channel.isTextBased()) return null;
+      const message = await channel.messages.fetch(listing.listingMessageId).catch(() => null);
+      if (!message) return null;
+      const sent = await message.reply(payload);
+      return { channelId: sent.channelId, id: sent.id };
+    }
+  } catch (err) {
+    console.error('[marketplace] listing followup post failed:', err);
+  }
+  return null;
+}
+
+// Channel-agnostic: works whether listing.forumThreadId is a forum post's own
+// thread or a thread started off a message in a Text channel (see
+// postListingToChannel). Forum-only steps (tag updates) are skipped when the
+// thread's parent isn't a forum channel; Text-only steps (the listing index
+// pin) are refreshed when it is a text channel.
+// Dispatches to the Forum-thread or Text-message updater based on which id(s)
+// are populated on the listing — set once at creation time by
+// postListingToChannel and never mixed on a single listing.
+async function updateListingPost(
+  listing: MarketplaceListing,
+  client: Client,
+  guildId: string,
+): Promise<void> {
+  if (listing.forumThreadId) {
+    await updateForumThreadPost(listing, client, guildId);
+  } else if (listing.listingMessageId && listing.listingChannelId) {
+    await updateTextChannelListingMessage(listing, client, guildId);
+  }
+}
+
+async function updateForumThreadPost(
+  listing: MarketplaceListing,
+  client: Client,
   guildId: string,
 ): Promise<void> {
   if (!listing.forumThreadId) return;
@@ -596,15 +913,14 @@ async function updateForumPost(
     }
     if (!embedMsg || embedMsg.author.id !== client.user!.id) return;
 
-    const bggAttachment = new AttachmentBuilder('BGG/images/powered_by_BGG_01_SM.png');
     const embed = listingEmbed(listing);
-    embed.setImage('attachment://powered_by_BGG_01_SM.png');
+    const bggFiles = bggAttribution(listing, embed);
 
     const isFinalised = listing.status === 'sold' || listing.status === 'closed';
     await embedMsg.edit({
       embeds: [embed],
-      files: [bggAttachment],
-      components: isFinalised ? [] : [interestButton(listing.id)],
+      files: bggFiles,
+      components: isFinalised ? [] : [interestButton(listing)],
     });
 
     if (isFinalised) {
@@ -620,8 +936,260 @@ async function updateForumPost(
       await thread.setLocked(false);
     }
   } catch (err) {
-    console.error('[marketplace] forum update failed:', err);
+    console.error('[marketplace] forum thread update failed:', err);
   }
+}
+
+// Text-mode equivalent — edits the single listing message in place; there's
+// no thread to lock/archive, so "closed" is communicated by dropping the
+// button and posting a reply, and "reopened" by the button simply coming
+// back on the next edit.
+async function updateTextChannelListingMessage(
+  listing: MarketplaceListing,
+  client: Client,
+  guildId: string,
+): Promise<void> {
+  if (!listing.listingMessageId || !listing.listingChannelId) return;
+  try {
+    const channel = await client.channels.fetch(listing.listingChannelId);
+    if (!channel || !channel.isTextBased()) return;
+    const message = await channel.messages.fetch(listing.listingMessageId).catch(() => null);
+    if (!message || message.author.id !== client.user!.id) return;
+
+    const embed = listingEmbed(listing);
+    const bggFiles = bggAttribution(listing, embed);
+
+    const isFinalised = listing.status === 'sold' || listing.status === 'closed';
+    await message.edit({
+      embeds: [embed],
+      files: bggFiles,
+      components: isFinalised ? [] : [interestButton(listing)],
+    });
+
+    if (isFinalised) {
+      const closingMessage = listing.status === 'sold'
+        ? `🔴 **This listing has been sold.** Thank you for using the marketplace!`
+        : `⚫ **This listing has been closed** and is no longer available.`;
+      await message.reply(closingMessage);
+    }
+  } catch (err) {
+    console.error('[marketplace] text channel listing update failed:', err);
+  } finally {
+    await updateMarketplaceListingIndex(client, guildId).catch(() => null);
+  }
+}
+
+// ── Item resolution (search-match confirmation) ─────────────────────────────
+// Shared by post sell/trade/price — resolving a raw "item" value (whether
+// from a slash-command autocomplete field or the hub wizard's free-text
+// modal) into BGG catalog data, one way, in one place.
+
+async function resolveCatalogDetails(entry: BGGCatalogEntry): Promise<{
+  bggId: string;
+  thumbnail?: string;
+  isExpansion: boolean;
+  availableExpansions: { bggId: string; name: string }[];
+  parentItem?: { bggId: string; name: string };
+}> {
+  const bggId = String(entry.id);
+  const details = await getBGGGame(bggId).catch(() => null);
+  return {
+    bggId,
+    thumbnail: details?.thumbnail ?? undefined,
+    isExpansion: entry.isExpansion,
+    availableExpansions:
+      !entry.isExpansion && details?.expansions
+        ? details.expansions.map((e) => ({ bggId: e.id, name: e.name }))
+        : [],
+    parentItem:
+      entry.isExpansion && details?.parentGame
+        ? { bggId: details.parentGame.id, name: details.parentGame.name }
+        : undefined,
+  };
+}
+
+interface ResolvedMarketplaceItem {
+  itemName: string;
+  bggId?: string;
+  thumbnail?: string;
+  isExpansion: boolean;
+  availableExpansions: { bggId: string; name: string }[];
+  parentItem?: { bggId: string; name: string };
+  // False only when bggId came from a free-text guess (searchCatalog's top
+  // result for unselected/typed text) rather than an explicit pick — the
+  // only case where the match needs confirming before it's trusted. An
+  // explicit __bgg__: pick or __custom__: choice is always confident, since
+  // there's nothing ambiguous about either.
+  confident: boolean;
+  // The catalog entry's real name/year, present whenever bggId is set —
+  // itemName intentionally stays the user's own raw text (unchanged from
+  // before this fix) so listing titles still reflect what they typed;
+  // matchedName/matchedYear are what actually get attached, used for the
+  // confirmation prompt and the /marketplace price "best guess" note.
+  matchedName?: string;
+  matchedYear?: number | null;
+}
+
+async function resolveMarketplaceItem(rawItem: string): Promise<ResolvedMarketplaceItem> {
+  if (rawItem.startsWith('__custom__:')) {
+    return {
+      itemName: rawItem.slice('__custom__:'.length),
+      isExpansion: false,
+      availableExpansions: [],
+      confident: true,
+    };
+  }
+
+  if (rawItem.startsWith('__bgg__:')) {
+    const entry = getCatalogEntryById(rawItem.slice('__bgg__:'.length));
+    if (entry) {
+      try {
+        const details = await resolveCatalogDetails(entry);
+        return { itemName: entry.name, ...details, confident: true, matchedName: entry.name, matchedYear: entry.year };
+      } catch {
+        // BGG lookup is best-effort
+      }
+    }
+    // Catalog entry vanished since the dropdown was shown — treat as unmatched.
+    return { itemName: rawItem, isExpansion: false, availableExpansions: [], confident: true };
+  }
+
+  // Free-typed text — an unselected autocomplete suggestion, or the hub
+  // wizard's modal, which has no autocomplete at all. A match here is only
+  // ever a guess (see the "Gloom" vs "Gloomhaven" example above).
+  try {
+    const results = await searchCatalogWithFallback(rawItem);
+    if (results.length > 0) {
+      const entry = results[0];
+      const details = await resolveCatalogDetails(entry);
+      return { itemName: rawItem, ...details, confident: false, matchedName: entry.name, matchedYear: entry.year };
+    }
+  } catch {
+    // BGG lookup is best-effort
+  }
+  return { itemName: rawItem, isExpansion: false, availableExpansions: [], confident: true };
+}
+
+// The shared "what's next" branch after an item has been resolved (and, if
+// needed, confirmed) — used at initial draft creation and after every
+// confirmation-prompt outcome. Identical for sell/trade except the final step.
+async function continueAfterItemResolved(
+  interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction,
+  draft: SellDraft,
+  draftId: string,
+): Promise<void> {
+  if (!draft.bggId) {
+    await showNoBggPrompt(interaction, draft.itemName, draftId);
+  } else if (!draft.isExpansion && (draft.availableExpansions?.length ?? 0) > 0) {
+    await showExpansionSelect(interaction, draft, draftId);
+  } else if (draft.isExpansion && draft.parentItem) {
+    await showIncludeBaseGameSelect(interaction, draft, draftId);
+  } else if (draft.listingType === 'sell') {
+    await showPriceScreen(interaction, draft, draftId);
+  } else {
+    await createTradeListing(interaction, draft);
+  }
+}
+
+async function showConfirmMatchPrompt(
+  interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction,
+  draft: SellDraft,
+  draftId: string,
+  matchedName: string,
+  matchedYear: number | null | undefined,
+): Promise<void> {
+  const embed = new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle('Found a possible match')
+    .setDescription(
+      `You searched for **${draft.itemName}** — is this the game you meant?\n\n` +
+      `${draft.isExpansion ? '🧩' : '🎲'} **${matchedName}**${matchedYear ? ` (${matchedYear})` : ''}`,
+    );
+  if (draft.thumbnail) embed.setThumbnail(draft.thumbnail);
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(`mp_match_yes_${draftId}`).setLabel("Yes, that's it").setStyle(ButtonStyle.Success).setEmoji('✅'),
+    new ButtonBuilder().setCustomId(`mp_match_search_${draftId}`).setLabel('Search again').setStyle(ButtonStyle.Secondary).setEmoji('🔍'),
+    new ButtonBuilder().setCustomId(`mp_match_notbgg_${draftId}`).setLabel('Not on BGG').setStyle(ButtonStyle.Secondary).setEmoji('📝'),
+  );
+
+  await interaction.editReply({ embeds: [embed], components: [row] });
+}
+
+export async function handleMatchConfirmYes(interaction: ButtonInteraction, draftId: string): Promise<void> {
+  await interaction.deferUpdate();
+  const draft = sellDrafts.get(draftId);
+  if (!draft || draft.userId !== interaction.user.id || draft.expiresAt < Date.now()) {
+    await interaction.editReply({ content: 'This session has expired. Please run the command again.', embeds: [], components: [] });
+    return;
+  }
+  await continueAfterItemResolved(interaction, draft, draftId);
+}
+
+export async function handleMatchConfirmNotBgg(interaction: ButtonInteraction, draftId: string): Promise<void> {
+  await interaction.deferUpdate();
+  const draft = sellDrafts.get(draftId);
+  if (!draft || draft.userId !== interaction.user.id || draft.expiresAt < Date.now()) {
+    await interaction.editReply({ content: 'This session has expired. Please run the command again.', embeds: [], components: [] });
+    return;
+  }
+  const updated = updateDraft(draftId, {
+    bggId: undefined,
+    thumbnail: undefined,
+    isExpansion: false,
+    availableExpansions: [],
+    parentItem: undefined,
+  })!;
+  await showNoBggPrompt(interaction, updated.itemName, draftId);
+}
+
+export async function handleMatchConfirmSearchAgain(interaction: ButtonInteraction, draftId: string): Promise<void> {
+  const draft = sellDrafts.get(draftId);
+  if (!draft || draft.userId !== interaction.user.id || draft.expiresAt < Date.now()) {
+    await interaction.reply({ content: 'This session has expired. Please run the command again.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  const modal = new ModalBuilder()
+    .setCustomId(`mp_match_research_modal_${draftId}`)
+    .setTitle('Search Again')
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('item')
+          .setLabel('Item name')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('e.g. Gloomhaven')
+          .setRequired(true)
+          .setMaxLength(100),
+      ),
+    );
+  await interaction.showModal(modal);
+}
+
+export async function handleMatchResearchModal(interaction: ModalSubmitInteraction, draftId: string): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const draft = sellDrafts.get(draftId);
+  if (!draft || draft.userId !== interaction.user.id || draft.expiresAt < Date.now()) {
+    await interaction.editReply({ content: 'This session has expired. Please run the command again.' });
+    return;
+  }
+
+  const rawItem = interaction.fields.getTextInputValue('item').trim();
+  const resolution = await resolveMarketplaceItem(rawItem);
+  const updated = updateDraft(draftId, {
+    itemName: resolution.itemName,
+    bggId: resolution.bggId,
+    thumbnail: resolution.thumbnail,
+    isExpansion: resolution.isExpansion,
+    availableExpansions: resolution.availableExpansions,
+    parentItem: resolution.parentItem,
+  })!;
+
+  if (updated.bggId && !resolution.confident && resolution.matchedName) {
+    await showConfirmMatchPrompt(interaction, updated, draftId, resolution.matchedName, resolution.matchedYear);
+    return;
+  }
+  await continueAfterItemResolved(interaction, updated, draftId);
 }
 
 // ── /marketplace post sell ──────────────────────────────────────────────────
@@ -630,7 +1198,7 @@ async function handlePostSell(interaction: ChatInputCommandInteraction): Promise
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const rawItem = interaction.options.getString('item', true);
-  const bidsAllowed = interaction.options.getBoolean('bids_allowed', true);
+  const bidsAllowed = interaction.options.getBoolean('offers_allowed', true);
   const condition = interaction.options.getString('condition', true) as Condition;
   const notes = interaction.options.getString('notes') ?? undefined;
   const guildId = interaction.guildId!;
@@ -640,51 +1208,52 @@ async function handlePostSell(interaction: ChatInputCommandInteraction): Promise
     return;
   }
 
-  const isCustomItem = rawItem.startsWith('__custom__:');
-  const itemName = isCustomItem ? rawItem.slice('__custom__:'.length) : rawItem;
-
   const displayName = interaction.member
     ? (interaction.member as { displayName?: string }).displayName ?? interaction.user.username
     : interaction.user.username;
 
-  let bggId: string | undefined;
-  let thumbnail: string | undefined;
-  let isExpansion = false;
-  let availableExpansions: { bggId: string; name: string }[] = [];
-  let parentItem: { bggId: string; name: string } | undefined;
+  await createSellDraftAndContinue(
+    interaction,
+    guildId,
+    interaction.user.id,
+    displayName,
+    rawItem,
+    condition,
+    notes,
+    bidsAllowed,
+  );
+}
 
-  if (!isCustomItem) {
-    try {
-      const results = searchCatalog(itemName);
-      if (results.length > 0) {
-        const catalogEntry = results[0];
-        bggId = String(catalogEntry.id);
-        isExpansion = catalogEntry.isExpansion;
-        const details = await getBGGGame(bggId).catch(() => null);
-        if (details?.thumbnail) thumbnail = details.thumbnail;
-        if (!isExpansion && details?.expansions) {
-          availableExpansions = details.expansions.map((e) => ({ bggId: e.id, name: e.name }));
-        }
-        if (isExpansion && details?.parentGame) {
-          parentItem = { bggId: details.parentGame.id, name: details.parentGame.name };
-        }
-      }
-    } catch {
-      // BGG lookup is best-effort
-    }
-  }
+// Shared by the slash command above, the marketplace hub's Sell wizard (see
+// handleHubMarketplaceOffers below), and "search again" on the match-
+// confirmation prompt — everything after the item name/condition/offers-
+// allowed choice is resolved identically regardless of how those were
+// collected. rawItem may carry a __custom__:/__bgg__: sentinel (slash-command
+// autocomplete) or be plain free-typed text (hub wizard modal, or an
+// unselected autocomplete suggestion) — resolveMarketplaceItem sorts that out.
+async function createSellDraftAndContinue(
+  interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction,
+  guildId: string,
+  userId: string,
+  displayName: string,
+  rawItem: string,
+  condition: Condition,
+  notes: string | undefined,
+  bidsAllowed: boolean,
+): Promise<void> {
+  const resolution = await resolveMarketplaceItem(rawItem);
 
   const draft: Omit<SellDraft, 'expiresAt'> = {
     listingType: 'sell',
     guildId,
-    userId: interaction.user.id,
+    userId,
     username: displayName,
-    itemName,
-    bggId,
-    thumbnail,
-    isExpansion,
-    availableExpansions,
-    parentItem,
+    itemName: resolution.itemName,
+    bggId: resolution.bggId,
+    thumbnail: resolution.thumbnail,
+    isExpansion: resolution.isExpansion,
+    availableExpansions: resolution.availableExpansions,
+    parentItem: resolution.parentItem,
     condition,
     notes,
     bidsAllowed,
@@ -693,17 +1262,15 @@ async function handlePostSell(interaction: ChatInputCommandInteraction): Promise
   const draftId = storeDraft(draft);
   const stored = sellDrafts.get(draftId)!;
 
-  if (!bggId) {
-    await showNoBggPrompt(interaction, itemName, draftId);
-  } else if (!isExpansion && availableExpansions.length > 0) {
-    await showExpansionSelect(interaction, stored, draftId);
-  } else {
-    await showPriceScreen(interaction, stored, draftId);
+  if (stored.bggId && !resolution.confident && resolution.matchedName) {
+    await showConfirmMatchPrompt(interaction, stored, draftId, resolution.matchedName, resolution.matchedYear);
+    return;
   }
+  await continueAfterItemResolved(interaction, stored, draftId);
 }
 
 async function showExpansionSelect(
-  interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction,
+  interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction,
   draft: SellDraft,
   draftId: string,
 ): Promise<void> {
@@ -751,8 +1318,7 @@ export async function handleExpansionSelect(
     return { bggId, name: found?.name ?? bggId };
   });
 
-  sellDrafts.set(draftId, { ...draft, expansions: selectedExpansions });
-  const updated = sellDrafts.get(draftId)!;
+  const updated = updateDraft(draftId, { expansions: selectedExpansions })!;
 
   if (draft.listingType === 'sell') {
     await showPriceScreen(interaction, updated, draftId);
@@ -778,22 +1344,86 @@ export async function handleSkipExpansions(
   }
 }
 
+async function showIncludeBaseGameSelect(
+  interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction,
+  draft: SellDraft,
+  draftId: string,
+): Promise<void> {
+  const parentItem = draft.parentItem!;
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(`mp_base_yes_${draftId}`).setLabel(`✅ Include ${parentItem.name}`).setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`mp_base_no_${draftId}`).setLabel('➡️ Just the Expansion').setStyle(ButtonStyle.Secondary),
+  );
+
+  const embed = new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle(`${draft.itemName} is an expansion`)
+    .setDescription(
+      `This is an expansion for **${parentItem.name}**. Are you including the base game in this listing, ` +
+      `or just the expansion by itself?`,
+    );
+  if (draft.thumbnail) embed.setThumbnail(draft.thumbnail);
+
+  await interaction.editReply({ embeds: [embed], components: [row] });
+}
+
+async function continueAfterBaseGameChoice(
+  interaction: ButtonInteraction,
+  draft: SellDraft,
+  draftId: string,
+): Promise<void> {
+  if (draft.listingType === 'sell') {
+    await showPriceScreen(interaction, draft, draftId);
+  } else {
+    await createTradeListing(interaction, draft);
+  }
+}
+
+export async function handleIncludeBaseGameYes(
+  interaction: ButtonInteraction,
+  draftId: string,
+): Promise<void> {
+  await interaction.deferUpdate();
+  const draft = sellDrafts.get(draftId);
+  if (!draft || draft.userId !== interaction.user.id || draft.expiresAt < Date.now()) {
+    await interaction.editReply({ content: 'This session has expired. Please run the command again.', embeds: [], components: [] });
+    return;
+  }
+  const updated = updateDraft(draftId, { includesBaseGame: true })!;
+  await continueAfterBaseGameChoice(interaction, updated, draftId);
+}
+
+export async function handleIncludeBaseGameNo(
+  interaction: ButtonInteraction,
+  draftId: string,
+): Promise<void> {
+  await interaction.deferUpdate();
+  const draft = sellDrafts.get(draftId);
+  if (!draft || draft.userId !== interaction.user.id || draft.expiresAt < Date.now()) {
+    await interaction.editReply({ content: 'This session has expired. Please run the command again.', embeds: [], components: [] });
+    return;
+  }
+  const updated = updateDraft(draftId, { includesBaseGame: false })!;
+  await continueAfterBaseGameChoice(interaction, updated, draftId);
+}
+
 async function showPriceScreen(
   interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction,
   draft: SellDraft,
   draftId: string,
 ): Promise<void> {
-  const { itemName, bggId, thumbnail, condition, expansions, priceCheckOnly } = draft;
-  const hasExpansions = expansions && expansions.length > 0;
-  const titleLabel = hasExpansions
-    ? `${itemName} + ${expansions!.length} expansion${expansions!.length > 1 ? 's' : ''}`
-    : itemName;
+  const { itemName, bggId, thumbnail, condition, expansions, isExpansion, parentItem, includesBaseGame, priceCheckOnly, matchNote } = draft;
+  const expansionCount = expansions?.length ?? 0;
+  const includeBase = !!(includesBaseGame && parentItem);
+  const bundleExtras = [...(expansions ?? []), ...(includeBase ? [parentItem!] : [])];
+  const hasBundle = bundleExtras.length > 0;
+  const titleLabel = bundleDisplayTitle(itemName, expansionCount, includeBase);
   let suggestedPrice: number | undefined;
 
   const priceEmbed = new EmbedBuilder()
     .setColor(0x57f287)
     .setTitle(priceCheckOnly ? `Price check — ${titleLabel}` : `Set a price for ${titleLabel}`)
-    .setDescription('Pick an option below.');
+    .setDescription(matchNote ? `${matchNote}\n\nPick an option below.` : 'Pick an option below.');
 
   if (!priceCheckOnly) {
     priceEmbed.addFields({ name: 'Condition', value: CONDITION_LABELS[condition], inline: true });
@@ -802,10 +1432,10 @@ async function showPriceScreen(
   if (thumbnail) priceEmbed.setThumbnail(thumbnail);
 
   if (bggId) {
-    if (hasExpansions) {
-      // Fetch prices for base item and all selected expansions in parallel
-      const allIds = [bggId, ...expansions!.map((e) => e.bggId)];
-      const allNames = [itemName, ...expansions!.map((e) => e.name)];
+    if (hasBundle) {
+      // Fetch prices for the primary item and all bundle extras (expansions and/or the base game) in parallel
+      const allIds = [bggId, ...bundleExtras.map((e) => e.bggId)];
+      const allNames = [itemName, ...bundleExtras.map((e) => e.name)];
       const allPrices = await Promise.all(
         allIds.map((id) => fetchBGGMarketplacePrices(id).catch(() => null)),
       );
@@ -817,7 +1447,7 @@ async function showPriceScreen(
 
       for (let i = 0; i < allIds.length; i++) {
         const p = allPrices[i];
-        const label = i === 0 ? `Base — ${allNames[i]}` : allNames[i];
+        const label = i === 0 ? (isExpansion ? allNames[i] : `Base — ${allNames[i]}`) : allNames[i];
         if (p && p.listings.length > 0) {
           hasAnyData = true;
           totalListings += p.listings.length;
@@ -875,7 +1505,7 @@ async function showPriceScreen(
   }
 
   // Store the suggested price back into the draft so button handlers can read it
-  sellDrafts.set(draftId, { ...draft, suggestedPrice });
+  updateDraft(draftId, { suggestedPrice });
 
   if (priceCheckOnly) {
     const bggAttachment = new AttachmentBuilder('BGG/images/powered_by_BGG_01_SM.png');
@@ -886,7 +1516,7 @@ async function showPriceScreen(
 
   const buttons = new ActionRowBuilder<ButtonBuilder>().addComponents(
     ...(suggestedPrice != null
-      ? [new ButtonBuilder().setCustomId(`mp_price_use_${draftId}`).setLabel(`Use ${formatPrice(suggestedPrice)}${hasExpansions ? ' (combined estimate)' : ' (median)'}`).setStyle(ButtonStyle.Success)]
+      ? [new ButtonBuilder().setCustomId(`mp_price_use_${draftId}`).setLabel(`Use ${formatPrice(suggestedPrice)}${hasBundle ? ' (combined estimate)' : ' (median)'}`).setStyle(ButtonStyle.Success)]
       : []),
     new ButtonBuilder().setCustomId(`mp_price_custom_${draftId}`).setLabel('Enter my own price').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId(`mp_price_none_${draftId}`).setLabel('List as open to offers').setStyle(ButtonStyle.Secondary),
@@ -898,7 +1528,7 @@ async function showPriceScreen(
 }
 
 async function showNoBggPrompt(
-  interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction,
+  interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction,
   itemName: string,
   draftId: string,
 ): Promise<void> {
@@ -917,8 +1547,7 @@ async function finalizeSellListing(
   draft: Omit<SellDraft, 'expiresAt'>,
   price: number | undefined,
 ): Promise<void> {
-  const { guildId, userId, username, itemName, bggId, thumbnail, condition, notes, referenceLink, bidsAllowed, expansions, parentItem } = draft;
-  const config = await getGuildConfig(guildId);
+  const { guildId, userId, username, itemName, bggId, thumbnail, condition, notes, referenceLink, bidsAllowed, expansions, parentItem, includesBaseGame } = draft;
 
   const listing = await createListing(guildId, {
     guildId,
@@ -935,6 +1564,7 @@ async function finalizeSellListing(
     bidsAllowed,
     expansions: expansions && expansions.length > 0 ? expansions : undefined,
     parentItem,
+    includesBaseGame,
   });
 
   await appendMarketplaceLog({
@@ -950,35 +1580,25 @@ async function finalizeSellListing(
     details: `condition=${condition} bidsAllowed=${bidsAllowed}`,
   });
 
-  let forumPosted = false;
-  let forumThreadId: string | undefined;
-  if (config.marketplaceChannelId) {
-    try {
-      const channel = await interaction.client.channels.fetch(config.marketplaceChannelId);
-      if (channel?.type === ChannelType.GuildForum) {
-        const threadId = await postListingToForum(listing, channel as ForumChannel, guildId);
-        if (threadId) {
-          await updateListing(guildId, listing.id, { forumThreadId: threadId });
-          forumPosted = true;
-          forumThreadId = threadId;
-        }
-      }
-    } catch (err) {
-      console.error('[marketplace] forum channel fetch failed:', err);
-    }
+  let listingPosted = false;
+  const posted = await postListingToChannel(listing, guildId, interaction.client);
+  if (posted) {
+    await updateListing(guildId, listing.id, posted);
+    listingPosted = true;
   }
+  const postedLink = posted ? listingLink(posted, guildId) : undefined;
 
   const responseEmbed = new EmbedBuilder()
     .setColor(0x57f287)
     .setTitle(`Listing created — ${itemName}`)
     .addFields(
       { name: 'Price', value: price != null ? formatPrice(price) : 'Open to offers', inline: true },
-      { name: 'Bids', value: bidsAllowed ? 'Allowed' : 'Firm price', inline: true },
+      { name: 'Negotiable?', value: bidsAllowed ? '💬 Open to Offers' : '🔒 Firm Price', inline: true },
       { name: 'Condition', value: CONDITION_LABELS[condition], inline: true },
       { name: 'Listing ID', value: `\`${listing.id}\``, inline: false },
-      ...(forumThreadId ? [{ name: 'Forum Post', value: `[View listing](https://discord.com/channels/${guildId}/${forumThreadId})`, inline: false }] : []),
+      ...(postedLink ? [{ name: 'Marketplace Post', value: `[View listing](${postedLink})`, inline: false }] : []),
     )
-    .setFooter({ text: forumPosted ? 'Posted to marketplace channel.' : 'No marketplace channel configured — use /admin marketplace config to set one.' });
+    .setFooter({ text: listingPosted ? 'Posted to marketplace channel.' : 'No marketplace channel configured — use /admin marketplace config to set one.' });
 
   if (thumbnail) responseEmbed.setThumbnail(thumbnail);
 
@@ -1006,51 +1626,49 @@ async function handlePostTrade(interaction: ChatInputCommandInteraction): Promis
     return;
   }
 
-  const isCustomItem = rawItem.startsWith('__custom__:');
-  const itemName = isCustomItem ? rawItem.slice('__custom__:'.length) : rawItem;
-
   const username = interaction.member
     ? (interaction.member as { displayName?: string }).displayName ?? interaction.user.username
     : interaction.user.username;
 
-  let bggId: string | undefined;
-  let thumbnail: string | undefined;
-  let isExpansion = false;
-  let availableExpansions: { bggId: string; name: string }[] = [];
-  let parentItem: { bggId: string; name: string } | undefined;
+  await createTradeDraftAndContinue(
+    interaction,
+    guildId,
+    interaction.user.id,
+    username,
+    rawItem,
+    condition,
+    notes,
+    lookingFor,
+  );
+}
 
-  if (!isCustomItem) {
-    try {
-      const results = searchCatalog(itemName);
-      if (results.length > 0) {
-        const catalogEntry = results[0];
-        bggId = String(catalogEntry.id);
-        isExpansion = catalogEntry.isExpansion;
-        const details = await getBGGGame(bggId).catch(() => null);
-        if (details?.thumbnail) thumbnail = details.thumbnail;
-        if (!isExpansion && details?.expansions) {
-          availableExpansions = details.expansions.map((e) => ({ bggId: e.id, name: e.name }));
-        }
-        if (isExpansion && details?.parentGame) {
-          parentItem = { bggId: details.parentGame.id, name: details.parentGame.name };
-        }
-      }
-    } catch {
-      // best-effort
-    }
-  }
+// Shared by the slash command above, the marketplace hub's Trade wizard (see
+// handleHubMarketplaceConditionSelect below), and "search again" on the
+// match-confirmation prompt — see createSellDraftAndContinue above for how
+// rawItem gets resolved.
+async function createTradeDraftAndContinue(
+  interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction,
+  guildId: string,
+  userId: string,
+  username: string,
+  rawItem: string,
+  condition: Condition,
+  notes: string | undefined,
+  lookingFor: string | undefined,
+): Promise<void> {
+  const resolution = await resolveMarketplaceItem(rawItem);
 
   const draft: Omit<SellDraft, 'expiresAt'> = {
     listingType: 'trade',
     guildId,
-    userId: interaction.user.id,
+    userId,
     username,
-    itemName,
-    bggId,
-    thumbnail,
-    isExpansion,
-    availableExpansions,
-    parentItem,
+    itemName: resolution.itemName,
+    bggId: resolution.bggId,
+    thumbnail: resolution.thumbnail,
+    isExpansion: resolution.isExpansion,
+    availableExpansions: resolution.availableExpansions,
+    parentItem: resolution.parentItem,
     condition,
     notes,
     bidsAllowed: true,
@@ -1060,13 +1678,11 @@ async function handlePostTrade(interaction: ChatInputCommandInteraction): Promis
   const draftId = storeDraft(draft);
   const stored = sellDrafts.get(draftId)!;
 
-  if (!bggId) {
-    await showNoBggPrompt(interaction, itemName, draftId);
-  } else if (!isExpansion && availableExpansions.length > 0) {
-    await showExpansionSelect(interaction, stored, draftId);
-  } else {
-    await createTradeListing(interaction, stored);
+  if (stored.bggId && !resolution.confident && resolution.matchedName) {
+    await showConfirmMatchPrompt(interaction, stored, draftId, resolution.matchedName, resolution.matchedYear);
+    return;
   }
+  await continueAfterItemResolved(interaction, stored, draftId);
 }
 
 // ── /marketplace price ───────────────────────────────────────────────────────
@@ -1081,39 +1697,15 @@ async function handlePriceCheck(interaction: ChatInputCommandInteraction): Promi
     return;
   }
 
-  const isCustomItem = rawItem.startsWith('__custom__:');
-  const itemName = isCustomItem ? rawItem.slice('__custom__:'.length) : rawItem;
-
-  if (isCustomItem || !itemName.trim()) {
+  if (rawItem.startsWith('__custom__:')) {
+    const itemName = rawItem.slice('__custom__:'.length);
     await interaction.editReply({ content: `**${itemName}** is not in the BGG catalog — no marketplace price data available for custom items.` });
     return;
   }
 
-  let bggId: string | undefined;
-  let thumbnail: string | undefined;
-  let isExpansion = false;
-  let availableExpansions: { bggId: string; name: string }[] = [];
-  let parentItem: { bggId: string; name: string } | undefined;
-
-  try {
-    const results = searchCatalog(itemName);
-    if (results.length > 0) {
-      const catalogEntry = results[0];
-      bggId = String(catalogEntry.id);
-      isExpansion = catalogEntry.isExpansion;
-      const details = await getBGGGame(bggId).catch(() => null);
-      if (details?.thumbnail) thumbnail = details.thumbnail;
-      if (!isExpansion && details?.expansions) {
-        availableExpansions = details.expansions.map((e) => ({ bggId: e.id, name: e.name }));
-      }
-      if (isExpansion && details?.parentGame) {
-        parentItem = { bggId: details.parentGame.id, name: details.parentGame.name };
-      }
-    }
-  } catch { /* best effort */ }
-
-  if (!bggId) {
-    await interaction.editReply({ content: `No BGG entry found for **${itemName}** — can't look up pricing.` });
+  const resolution = await resolveMarketplaceItem(rawItem);
+  if (!resolution.bggId) {
+    await interaction.editReply({ content: `No BGG entry found for **${resolution.itemName}** — can't look up pricing.` });
     return;
   }
 
@@ -1122,22 +1714,30 @@ async function handlePriceCheck(interaction: ChatInputCommandInteraction): Promi
     guildId: interaction.guildId!,
     userId: interaction.user.id,
     username: '',
-    itemName,
-    bggId,
-    thumbnail,
-    isExpansion,
-    availableExpansions,
-    parentItem,
+    itemName: resolution.itemName,
+    bggId: resolution.bggId,
+    thumbnail: resolution.thumbnail,
+    isExpansion: resolution.isExpansion,
+    availableExpansions: resolution.availableExpansions,
+    parentItem: resolution.parentItem,
     condition: 'good',
     bidsAllowed: false,
     priceCheckOnly: true,
+    // No interactive confirmation step for price check (read-only, lower
+    // stakes) — just surface an unconfirmed guess in the embed instead of
+    // silently showing prices for the wrong game.
+    matchNote: !resolution.confident && resolution.matchedName
+      ? `⚠️ Best-guess match for "${rawItem}" — showing prices for **${resolution.matchedName}**${resolution.matchedYear ? ` (${resolution.matchedYear})` : ''}.`
+      : undefined,
   };
 
   const draftId = storeDraft(draft);
   const stored = sellDrafts.get(draftId)!;
 
-  if (!isExpansion && availableExpansions.length > 0) {
+  if (!resolution.isExpansion && resolution.availableExpansions.length > 0) {
     await showExpansionSelect(interaction, stored, draftId);
+  } else if (resolution.isExpansion && resolution.parentItem) {
+    await showIncludeBaseGameSelect(interaction, stored, draftId);
   } else {
     await showPriceScreen(interaction, stored, draftId);
   }
@@ -1147,8 +1747,7 @@ async function createTradeListing(
   interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction,
   draft: Omit<SellDraft, 'expiresAt'>,
 ): Promise<void> {
-  const { guildId, userId, username, itemName, bggId, thumbnail, condition, notes, referenceLink, lookingFor, expansions, parentItem } = draft;
-  const config = await getGuildConfig(guildId);
+  const { guildId, userId, username, itemName, bggId, thumbnail, condition, notes, referenceLink, lookingFor, expansions, parentItem, includesBaseGame } = draft;
 
   const listing = await createListing(guildId, {
     guildId, userId, username,
@@ -1158,6 +1757,7 @@ async function createTradeListing(
     lookingFor,
     expansions: expansions && expansions.length > 0 ? expansions : undefined,
     parentItem,
+    includesBaseGame,
   });
 
   await appendMarketplaceLog({
@@ -1172,28 +1772,25 @@ async function createTradeListing(
     details: `condition=${condition}`,
   });
 
-  let forumPosted = false;
-  let forumThreadId: string | undefined;
-  if (config.marketplaceChannelId) {
-    try {
-      const channel = await interaction.client.channels.fetch(config.marketplaceChannelId);
-      if (channel?.type === ChannelType.GuildForum) {
-        const threadId = await postListingToForum(listing, channel as ForumChannel, guildId);
-        if (threadId) { await updateListing(guildId, listing.id, { forumThreadId: threadId }); forumPosted = true; forumThreadId = threadId; }
-      }
-    } catch (err) { console.error('[marketplace] forum channel fetch failed:', err); }
+  let listingPosted = false;
+  const posted = await postListingToChannel(listing, guildId, interaction.client);
+  if (posted) {
+    await updateListing(guildId, listing.id, posted);
+    listingPosted = true;
   }
+  const postedLink = posted ? listingLink(posted, guildId) : undefined;
 
   const responseEmbed = new EmbedBuilder()
     .setColor(0xfee75c)
     .setTitle(`Trade listing created — ${listing.itemName}`)
     .addFields(
+      { name: 'Offering', value: listing.itemName, inline: true },
       { name: 'Looking For', value: lookingFor ?? 'Open to offers', inline: true },
       { name: 'Condition', value: CONDITION_LABELS[condition], inline: true },
       { name: 'Listing ID', value: `\`${listing.id}\``, inline: false },
-      ...(forumThreadId ? [{ name: 'Forum Post', value: `[View listing](https://discord.com/channels/${guildId}/${forumThreadId})`, inline: false }] : []),
+      ...(postedLink ? [{ name: 'Marketplace Post', value: `[View listing](${postedLink})`, inline: false }] : []),
     )
-    .setFooter({ text: forumPosted ? 'Posted to marketplace channel.' : 'No marketplace channel configured.' });
+    .setFooter({ text: listingPosted ? 'Posted to marketplace channel.' : 'No marketplace channel configured.' });
 
   await interaction.editReply({ embeds: [responseEmbed] });
 }
@@ -1219,11 +1816,11 @@ async function handleConditions(interaction: ChatInputCommandInteraction): Promi
         value: 'Very minimal wear and tear. All materials present. You would give this to a friend as a gift.',
       },
       {
-        name: '✅ Good',
+        name: '👌 Good',
         value: 'Minor damage to the box and/or contents. All materials present. May have been used once or twice.',
       },
       {
-        name: '⚠️ Acceptable',
+        name: '🟠 Acceptable',
         value: 'Some box damage but item is intact. Possible split corners. May be missing a non-crucial piece or rules (available online). Scuffing on the item.',
       },
     );
@@ -1231,13 +1828,18 @@ async function handleConditions(interaction: ChatInputCommandInteraction): Promi
   await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }
 
+// Shared legend for the status/type icons used in both /marketplace browse
+// and /marketplace my — neither list explained these anywhere otherwise.
+const MARKETPLACE_LEGEND = '🟢 Active · 🟡 Pending offer(s) · 🔴 Sold/Traded · ⚫ Closed  |  🏷️ For Sale · 🔄 For Trade';
+
 // ── /marketplace browse ─────────────────────────────────────────────────────
 
-async function handleBrowse(interaction: ChatInputCommandInteraction): Promise<void> {
+async function handleBrowse(interaction: ChatInputCommandInteraction | ButtonInteraction): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const guildId = interaction.guildId!;
-  const typeFilter = interaction.options.getString('type') as 'sell' | 'trade' | null;
+  // The hub's "Browse Listings" button has no type filter — it always shows everything.
+  const typeFilter = interaction.isChatInputCommand() ? (interaction.options.getString('type') as 'sell' | 'trade' | null) : null;
 
   let listings = await getActiveListingsForGuild(guildId);
   if (typeFilter) listings = listings.filter((l) => l.type === typeFilter);
@@ -1255,11 +1857,10 @@ async function handleBrowse(interaction: ChatInputCommandInteraction): Promise<v
     const priceStr = l.type === 'sell'
       ? (l.askingPrice != null ? formatPrice(l.askingPrice) : 'Open to offers')
       : (l.lookingFor ?? 'Open to offers');
-    const openBids = l.bids.filter((b) => b.status === 'open').length;
-    const threadLink = l.forumThreadId
-      ? ` — [View listing](https://discord.com/channels/${guildId}/${l.forumThreadId})`
-      : '';
-    return `${statusIcon} ${typeIcon} **${l.itemName}** — ${priceStr}${openBids > 0 ? ` *(${openBids} bid${openBids > 1 ? 's' : ''})*` : ''} — by ${l.username}${threadLink}`;
+    const openOffers = l.bids.filter((b) => b.status === 'open').length;
+    const link = listingLink(l, guildId);
+    const threadLink = link ? ` — [View listing](${link})` : '';
+    return `${statusIcon} ${typeIcon} **${l.itemName}** — ${priceStr}${openOffers > 0 ? ` *(${openOffers} offer${openOffers > 1 ? 's' : ''})*` : ''} — by ${l.username}${threadLink}`;
   });
 
   const moreNote = listings.length > PAGE_SIZE
@@ -1267,20 +1868,32 @@ async function handleBrowse(interaction: ChatInputCommandInteraction): Promise<v
     : '';
 
   await interaction.editReply({
-    content: `**Active Marketplace Listings**\n\n${lines.join('\n')}${moreNote}`,
+    content: `**Active Marketplace Listings**\n\n${lines.join('\n')}${moreNote}\n\n${MARKETPLACE_LEGEND}`,
   });
 }
 
 // ── /marketplace my ─────────────────────────────────────────────────────────
 
-async function handleMy(interaction: ChatInputCommandInteraction): Promise<void> {
+// Sold/closed listings older than this just clutter "my listings" once
+// they're done — active/pending ones are always shown regardless of age.
+const MY_LISTINGS_FINALIZED_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+async function handleMy(interaction: ChatInputCommandInteraction | ButtonInteraction): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const guildId = interaction.guildId!;
-  const listings = await getUserListings(guildId, interaction.user.id);
+  const allListings = await getUserListings(guildId, interaction.user.id);
+  const now = Date.now();
+  const listings = allListings.filter((l) => {
+    if (l.status === 'active' || l.status === 'pending') return true;
+    return now - new Date(l.updatedAt).getTime() < MY_LISTINGS_FINALIZED_RETENTION_MS;
+  });
 
   if (listings.length === 0) {
-    await interaction.editReply({ content: "You don't have any listings. Use `/marketplace post` to create one." });
+    const content = allListings.length > 0
+      ? "You don't have any active listings. (Sold/closed listings older than a week aren't shown here.)"
+      : "You don't have any listings. Use `/marketplace post` to create one.";
+    await interaction.editReply({ content });
     return;
   }
 
@@ -1290,12 +1903,12 @@ async function handleMy(interaction: ChatInputCommandInteraction): Promise<void>
     const priceStr = l.type === 'sell'
       ? (l.askingPrice != null ? formatPrice(l.askingPrice) : 'Open to offers')
       : (l.lookingFor ?? 'Open to offers');
-    const openBids = l.bids.filter((b) => b.status === 'open').length;
-    return `${statusEmoji[l.status]} ${typeIcon} **${l.itemName}** — ${priceStr}${openBids > 0 ? ` *(${openBids} open bid${openBids > 1 ? 's' : ''})*` : ''}\n  ID: \`${l.id}\``;
+    const openOffers = l.bids.filter((b) => b.status === 'open').length;
+    return `${statusEmoji[l.status]} ${typeIcon} **${l.itemName}** — ${priceStr}${openOffers > 0 ? ` *(${openOffers} open offer${openOffers > 1 ? 's' : ''})*` : ''}\n  ID: \`${l.id}\``;
   });
 
   await interaction.editReply({
-    content: `**Your Listings**\n\n${lines.join('\n\n')}\n\nUse \`/marketplace close <id>\` to close a listing, or \`/marketplace reopen <id>\` to reopen one.`,
+    content: `**Your Listings**\n\n${lines.join('\n\n')}\n\nUse \`/marketplace close <id>\` to close a listing, or \`/marketplace reopen <id>\` to reopen one.\n\n${MARKETPLACE_LEGEND}`,
   });
 }
 
@@ -1336,7 +1949,7 @@ async function handleClose(interaction: ChatInputCommandInteraction): Promise<vo
     actorUsername: interaction.user.username,
   });
 
-  await updateForumPost(updated, interaction.client, guildId);
+  await updateListingPost(updated, interaction.client, guildId);
   await interaction.editReply({ content: `Listing **${listing.itemName}** has been closed.` });
 }
 
@@ -1376,8 +1989,505 @@ async function handleReopen(interaction: ChatInputCommandInteraction): Promise<v
     actorUsername: interaction.user.username,
   });
 
-  await updateForumPost(updated, interaction.client, guildId);
+  await updateListingPost(updated, interaction.client, guildId);
   await interaction.editReply({ content: `Listing **${listing.itemName}** has been reopened and is now ${updated.status}.` });
+}
+
+// ── /marketplace edit ───────────────────────────────────────────────────────
+// Owner-only, and only while the listing is still active/pending — a
+// sold/closed listing is done, so there's nothing left to edit. Only the
+// "soft" free-text/numeric fields are editable (price, looking-for, notes);
+// type, condition, and bidsAllowed are structural choices baked in at
+// creation and stay fixed, since changing them mid-listing could invalidate
+// the context of any already-open offers.
+
+async function handleEditCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+  const guildId = interaction.guildId!;
+  const listingId = interaction.options.getString('id', true).trim();
+  const listing = await getListing(guildId, listingId);
+
+  if (!listing) {
+    await interaction.reply({ content: 'Listing not found.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  if (listing.userId !== interaction.user.id) {
+    await interaction.reply({ content: 'You can only edit your own listings.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  if (listing.status !== 'active' && listing.status !== 'pending') {
+    await interaction.reply({ content: 'Only active or pending listings can be edited.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const modal = new ModalBuilder()
+    .setCustomId(`mp_edit_modal_${listingId}`)
+    .setTitle(`Edit — ${listing.itemName}`.slice(0, 45));
+
+  const components: ActionRowBuilder<TextInputBuilder>[] = [];
+
+  if (listing.type === 'sell') {
+    components.push(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('edit_price')
+          .setLabel('Asking price (USD, blank = open to offers)')
+          .setPlaceholder('e.g. 25.00')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setValue(listing.askingPrice != null ? listing.askingPrice.toFixed(2) : ''),
+      ),
+    );
+  } else {
+    components.push(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('edit_looking_for')
+          .setLabel('Looking for')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setValue(listing.lookingFor ?? ''),
+      ),
+    );
+  }
+
+  components.push(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      new TextInputBuilder()
+        .setCustomId('edit_notes')
+        .setLabel('Notes')
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(false)
+        .setMaxLength(1000)
+        .setValue(listing.notes ?? ''),
+    ),
+  );
+
+  modal.addComponents(...components);
+  await interaction.showModal(modal);
+}
+
+export async function handleMarketplaceEditModal(interaction: ModalSubmitInteraction, listingId: string): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const guildId = interaction.guildId!;
+  const listing = await getListing(guildId, listingId);
+
+  if (!listing) {
+    await interaction.editReply({ content: 'Listing not found.' });
+    return;
+  }
+  if (listing.userId !== interaction.user.id) {
+    await interaction.editReply({ content: 'You can only edit your own listings.' });
+    return;
+  }
+  // Re-checked here in case status changed between opening the modal and submitting it.
+  if (listing.status !== 'active' && listing.status !== 'pending') {
+    await interaction.editReply({ content: 'Only active or pending listings can be edited — your changes were not saved.' });
+    return;
+  }
+
+  const patch: Partial<Pick<MarketplaceListing, 'askingPrice' | 'lookingFor' | 'notes'>> = {};
+
+  if (listing.type === 'sell') {
+    const priceRaw = interaction.fields.getTextInputValue('edit_price').trim();
+    if (priceRaw) {
+      const price = parseFloat(priceRaw.replace(/[^0-9.]/g, ''));
+      if (isNaN(price) || price < 0) {
+        await interaction.editReply({ content: 'Invalid price — please enter a number like `25.00`. Nothing was saved.' });
+        return;
+      }
+      patch.askingPrice = price;
+    } else {
+      patch.askingPrice = undefined;
+    }
+  } else {
+    const lookingForRaw = interaction.fields.getTextInputValue('edit_looking_for').trim();
+    patch.lookingFor = lookingForRaw || undefined;
+  }
+
+  const notesRaw = interaction.fields.getTextInputValue('edit_notes').trim();
+  patch.notes = notesRaw || undefined;
+
+  const updated = await editListing(guildId, listingId, patch);
+  if (!updated) {
+    await interaction.editReply({ content: 'Could not save changes.' });
+    return;
+  }
+
+  await appendMarketplaceLog({
+    timestamp: new Date().toISOString(),
+    guildId,
+    event: 'listing_edited',
+    listingId,
+    listingName: listing.itemName,
+    listingType: listing.type,
+    actorId: interaction.user.id,
+    actorUsername: interaction.user.username,
+  });
+
+  await updateListingPost(updated, interaction.client, guildId);
+  await interaction.editReply({ content: `**${listing.itemName}** has been updated.` });
+}
+
+// ── "Quick Actions" button hub ────────────────────────────────────────────────
+// Unlike the per-event/per-room hubs, the marketplace forum is one shared
+// channel per guild — so the hub lives as a single **pinned forum post**
+// (thread) rather than a plain pinned message, using discord.js's ThreadChannel
+// pin()/unpin() (forum-only; backed by Discord's ChannelFlags.Pinned bit).
+
+export function buildMarketplaceHubEmbed(): EmbedBuilder {
+  return new EmbedBuilder()
+    .setTitle('🎮 Quick Actions')
+    .setColor(0x57f287)
+    .setDescription('Prefer tapping over typing? Use the buttons below instead of slash commands.')
+    .addFields(
+      { name: '📦 Sell an Item', value: 'List something you want to sell.' },
+      { name: '🔄 Propose a Trade', value: "List something you'd trade away." },
+      { name: '🔍 Browse Listings', value: 'See what other members are selling or trading.' },
+      { name: '📋 My Listings', value: 'See your own active listings and offers.' },
+    );
+}
+
+export function buildMarketplaceHubButtons(): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId('hub_mp_sell').setLabel('📦 Sell an Item').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('hub_mp_trade').setLabel('🔄 Propose a Trade').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('hub_mp_browse').setLabel('🔍 Browse Listings').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('hub_mp_my').setLabel('📋 My Listings').setStyle(ButtonStyle.Secondary),
+  );
+}
+
+// Called whenever the marketplace channel is (re)configured via /admin
+// marketplace config — analogous to the eager tag creation right after this
+// call, so the hub is ready before any listing is ever posted.
+export async function updateMarketplaceHubThread(client: Client, guildId: string): Promise<void> {
+  const config = await getGuildConfig(guildId);
+  if (!config.marketplaceChannelId) return;
+
+  let forumChannel: ForumChannel;
+  try {
+    const ch = await client.channels.fetch(config.marketplaceChannelId);
+    if (ch?.type !== ChannelType.GuildForum) return;
+    forumChannel = ch as ForumChannel;
+  } catch {
+    return;
+  }
+
+  const payload = { embeds: [buildMarketplaceHubEmbed()], components: [buildMarketplaceHubButtons()] };
+
+  if (config.marketplaceHubThreadId) {
+    try {
+      const thread = await forumChannel.threads.fetch(config.marketplaceHubThreadId);
+      if (thread) {
+        const starterMsg = await thread.fetchStarterMessage();
+        if (starterMsg) await starterMsg.edit(payload);
+        if (!thread.flags.has(ChannelFlags.Pinned)) {
+          await pinWithRetry(thread, `re-pin marketplace hub thread in guild ${guildId}`);
+        }
+        return;
+      }
+    } catch {
+      /* thread was deleted — fall through and recreate */
+    }
+  }
+
+  let thread: ThreadChannel;
+  try {
+    thread = await forumChannel.threads.create({ name: '🎮 Quick Actions', message: payload });
+  } catch (err) {
+    console.warn(`Could not create marketplace hub thread in guild ${guildId}:`, err);
+    return;
+  }
+  await pinWithRetry(thread, `marketplace hub thread in guild ${guildId}`);
+
+  await updateGuildConfig(guildId, { marketplaceHubThreadId: thread.id });
+}
+
+// Text-channel equivalent of updateMarketplaceHubThread — same Quick Actions
+// embed/buttons, but as a plain pinned message (Text channels have no forum
+// threads to pin), tracked via marketplaceHubMessageId instead of
+// marketplaceHubThreadId. Modeled on updateHubPin in src/utils/requestPin.ts.
+export async function updateMarketplaceHubMessage(client: Client, guildId: string): Promise<void> {
+  const config = await getGuildConfig(guildId);
+  if (!config.marketplaceChannelId) return;
+
+  let textChannel: TextChannel;
+  try {
+    const ch = await client.channels.fetch(config.marketplaceChannelId);
+    if (ch?.type !== ChannelType.GuildText) return;
+    textChannel = ch as TextChannel;
+  } catch {
+    return;
+  }
+
+  const payload = { embeds: [buildMarketplaceHubEmbed()], components: [buildMarketplaceHubButtons()] };
+
+  if (config.marketplaceHubMessageId) {
+    try {
+      const msg = await textChannel.messages.fetch(config.marketplaceHubMessageId);
+      await msg.edit(payload);
+      if (!msg.pinned) {
+        await pinWithRetry(msg, `re-pin marketplace hub message in guild ${guildId}`);
+      }
+      return;
+    } catch {
+      /* message was deleted — fall through and repost */
+    }
+  }
+
+  const msg = await textChannel.send(payload);
+  await pinWithRetry(msg, `marketplace hub message in guild ${guildId}`);
+
+  await updateGuildConfig(guildId, { marketplaceHubMessageId: msg.id });
+}
+
+// ── Marketplace listing index (Text-channel mode) ───────────────────────────
+// Substitutes for forum tags' status/type filtering: a single pinned message
+// listing every active listing grouped by type, each linking to its post.
+// Modeled on buildGameListEmbed/updateGameListPin in src/utils/requestPin.ts.
+
+function buildMarketplaceListingIndexEmbed(guildId: string, listings: MarketplaceListing[]): EmbedBuilder {
+  const embed = new EmbedBuilder().setTitle('🛒 Marketplace Listings').setColor(0x5865f2);
+  if (listings.length === 0) {
+    return embed.setDescription('No active listings right now — use `/marketplace post sell` or `post trade` to list something.');
+  }
+
+  const lineFor = (l: MarketplaceListing) => {
+    const priceStr = l.type === 'sell'
+      ? (l.askingPrice != null ? formatPrice(l.askingPrice) : 'Open to offers')
+      : (l.lookingFor ?? 'Open to offers');
+    const statusIcon = l.status === 'pending' ? '🟡' : '🟢';
+    const link = listingLink(l, guildId);
+    const title = link ? `[${l.itemName}](${link})` : l.itemName;
+    return `${statusIcon} **${title}** — ${priceStr} — by ${l.username}`;
+  };
+
+  const sellLines = listings.filter((l) => l.type === 'sell').map(lineFor);
+  const tradeLines = listings.filter((l) => l.type === 'trade').map(lineFor);
+  if (sellLines.length > 0) {
+    embed.addFields({ name: '🏷️ For Sale', value: sellLines.join('\n').slice(0, 1024) });
+  }
+  if (tradeLines.length > 0) {
+    embed.addFields({ name: '🔄 For Trade', value: tradeLines.join('\n').slice(0, 1024) });
+  }
+
+  return embed.setFooter({
+    text: `${listings.length} active listing${listings.length !== 1 ? 's' : ''} · Post yours with /marketplace post or the Quick Actions buttons above`,
+  });
+}
+
+async function updateMarketplaceListingIndex(client: Client, guildId: string): Promise<void> {
+  const config = await getGuildConfig(guildId);
+  if (!config.marketplaceChannelId) return;
+
+  let textChannel: TextChannel;
+  try {
+    const ch = await client.channels.fetch(config.marketplaceChannelId);
+    if (ch?.type !== ChannelType.GuildText) return;
+    textChannel = ch as TextChannel;
+  } catch {
+    return;
+  }
+
+  const listings = await getActiveListingsForGuild(guildId);
+  const embed = buildMarketplaceListingIndexEmbed(guildId, listings);
+
+  if (config.marketplaceListingIndexMessageId) {
+    try {
+      const msg = await textChannel.messages.fetch(config.marketplaceListingIndexMessageId);
+      await msg.edit({ embeds: [embed] });
+      if (!msg.pinned) {
+        await pinWithRetry(msg, `re-pin marketplace listing index in guild ${guildId}`);
+      }
+      return;
+    } catch {
+      /* message was deleted — fall through and repost */
+    }
+  }
+
+  const msg = await textChannel.send({ embeds: [embed] });
+  await pinWithRetry(msg, `marketplace listing index in guild ${guildId}`);
+
+  await updateGuildConfig(guildId, { marketplaceListingIndexMessageId: msg.id });
+}
+
+// ── Hub wizard: "📦 Sell an Item" / "🔄 Propose a Trade" ────────────────────
+// A modal collects only the item name (no autocomplete is possible in a
+// modal), then condition (native select) and — sell only — offers-allowed
+// (native buttons) are collected as separate steps before handing off to the
+// exact same createSellDraftAndContinue/createTradeDraftAndContinue used by
+// the slash commands. Trades skip the offers-allowed step entirely (trades
+// are always open to offers, mirroring /marketplace post trade).
+
+function buildHubItemNameModal(customId: string, title: string): ModalBuilder {
+  return new ModalBuilder()
+    .setCustomId(customId)
+    .setTitle(title)
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('item')
+          .setLabel('Item name')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('e.g. Wingspan')
+          .setRequired(true)
+          .setMaxLength(100),
+      ),
+    );
+}
+
+export async function handleHubMarketplaceSellButton(interaction: ButtonInteraction): Promise<void> {
+  await interaction.showModal(buildHubItemNameModal('hub_mp_sell_modal', 'Sell an Item'));
+}
+
+export async function handleHubMarketplaceTradeButton(interaction: ButtonInteraction): Promise<void> {
+  await interaction.showModal(buildHubItemNameModal('hub_mp_trade_modal', 'Propose a Trade'));
+}
+
+async function showHubConditionSelect(interaction: ModalSubmitInteraction): Promise<void> {
+  const select = new StringSelectMenuBuilder()
+    .setCustomId('hub_mp_condition_select')
+    .setPlaceholder("Select the item's condition…")
+    .addOptions(
+      (Object.keys(CONDITION_LABELS) as Condition[]).map((value) => ({
+        label: CONDITION_LABELS[value],
+        value,
+      })),
+    );
+  await interaction.reply({
+    content: 'What condition is it in?',
+    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+export async function handleHubMarketplaceSellModal(interaction: ModalSubmitInteraction): Promise<void> {
+  const itemName = interaction.fields.getTextInputValue('item').trim();
+  pendingHubListings.set(interaction.user.id, { listingType: 'sell', itemName });
+  await showHubConditionSelect(interaction);
+}
+
+export async function handleHubMarketplaceTradeModal(interaction: ModalSubmitInteraction): Promise<void> {
+  const itemName = interaction.fields.getTextInputValue('item').trim();
+  pendingHubListings.set(interaction.user.id, { listingType: 'trade', itemName });
+  await showHubConditionSelect(interaction);
+}
+
+function hubDisplayName(interaction: { member: unknown; user: { username: string } }): string {
+  return interaction.member
+    ? ((interaction.member as { displayName?: string }).displayName ?? interaction.user.username)
+    : interaction.user.username;
+}
+
+export async function handleHubMarketplaceConditionSelect(interaction: StringSelectMenuInteraction): Promise<void> {
+  const pending = pendingHubListings.get(interaction.user.id);
+  if (!pending) {
+    await interaction.update({
+      content: 'This session has expired — tap a button in Quick Actions to start again.',
+      components: [],
+    });
+    return;
+  }
+  const condition = interaction.values[0] as Condition;
+
+  if (pending.listingType === 'trade') {
+    pendingHubListings.set(interaction.user.id, { ...pending, condition });
+    const modal = new ModalBuilder()
+      .setCustomId('hub_mp_trade_looking_for_modal')
+      .setTitle('Propose a Trade')
+      .addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId('looking_for')
+            .setLabel('What are you looking for in return?')
+            .setPlaceholder('e.g. Wingspan or Ark Nova (leave blank for open to offers)')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
+            .setMaxLength(200),
+        ),
+      );
+    await interaction.showModal(modal);
+    return;
+  }
+
+  pendingHubListings.set(interaction.user.id, { ...pending, condition });
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId('hub_mp_offers_yes').setLabel('✅ Allow Offers').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('hub_mp_offers_no').setLabel('🔒 Firm Price').setStyle(ButtonStyle.Secondary),
+  );
+  await interaction.update({
+    content: 'Should other members be able to make offers, or is the price firm?',
+    components: [row],
+  });
+}
+
+export async function handleHubMarketplaceTradeLookingForModal(interaction: ModalSubmitInteraction): Promise<void> {
+  const pending = pendingHubListings.get(interaction.user.id);
+  if (!pending || pending.listingType !== 'trade' || !pending.condition) {
+    await interaction.reply({
+      content: 'This session has expired — tap a button in Quick Actions to start again.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  pendingHubListings.delete(interaction.user.id);
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const lookingFor = interaction.fields.getTextInputValue('looking_for').trim();
+  await createTradeDraftAndContinue(
+    interaction,
+    interaction.guildId!,
+    interaction.user.id,
+    hubDisplayName(interaction),
+    pending.itemName,
+    pending.condition,
+    undefined,
+    lookingFor || undefined,
+  );
+}
+
+async function handleHubMarketplaceOffers(interaction: ButtonInteraction, bidsAllowed: boolean): Promise<void> {
+  const pending = pendingHubListings.get(interaction.user.id);
+  if (!pending || pending.listingType !== 'sell' || !pending.condition) {
+    await interaction.update({
+      content: 'This session has expired — tap a button in Quick Actions to start again.',
+      components: [],
+    });
+    return;
+  }
+  pendingHubListings.delete(interaction.user.id);
+  await interaction.deferUpdate();
+
+  await createSellDraftAndContinue(
+    interaction,
+    interaction.guildId!,
+    interaction.user.id,
+    hubDisplayName(interaction),
+    pending.itemName,
+    pending.condition,
+    undefined,
+    bidsAllowed,
+  );
+}
+
+export async function handleHubMarketplaceOffersYes(interaction: ButtonInteraction): Promise<void> {
+  await handleHubMarketplaceOffers(interaction, true);
+}
+
+export async function handleHubMarketplaceOffersNo(interaction: ButtonInteraction): Promise<void> {
+  await handleHubMarketplaceOffers(interaction, false);
+}
+
+// ── Hub buttons: "🔍 Browse Listings" / "📋 My Listings" ────────────────────
+// Run the exact same logic as their slash-command equivalents, minus the
+// optional type filter (browse) that only the slash command's option exposes.
+
+export async function handleHubMarketplaceBrowseButton(interaction: ButtonInteraction): Promise<void> {
+  await handleBrowse(interaction);
+}
+
+export async function handleHubMarketplaceMyButton(interaction: ButtonInteraction): Promise<void> {
+  await handleMy(interaction);
 }
 
 // ── /admin marketplace config ───────────────────────────────────────────────
@@ -1397,8 +2507,8 @@ export async function handleAdminConfig(interaction: ChatInputCommandInteraction
 
   const patch: Record<string, unknown> = {};
   if (channel) {
-    if (channel.type !== ChannelType.GuildForum) {
-      await interaction.editReply({ content: 'The marketplace channel must be a **Forum Channel**.' });
+    if (channel.type !== ChannelType.GuildForum && channel.type !== ChannelType.GuildText) {
+      await interaction.editReply({ content: 'The marketplace channel must be a **Forum Channel** or a **Text Channel**.' });
       return;
     }
     patch.marketplaceChannelId = channel.id;
@@ -1420,15 +2530,24 @@ export async function handleAdminConfig(interaction: ChatInputCommandInteraction
   await updateGuildConfig(guildId, patch as Parameters<typeof updateGuildConfig>[1]);
   const config = await getGuildConfig(guildId);
 
-  // Eagerly create forum tags so they're ready before any listing is posted
+  // Eagerly set up the mode-appropriate ready-to-go pieces (forum tags + hub
+  // thread, or hub message + listing index) so they're ready before any
+  // listing is ever posted, rather than being created lazily on first use.
+  let setupNote = '';
   if (patch.marketplaceChannelId && config.marketplaceChannelId) {
     try {
-      const forumChannel = await interaction.client.channels.fetch(config.marketplaceChannelId);
-      if (forumChannel?.type === ChannelType.GuildForum) {
-        await ensureMarketplaceTags(forumChannel as ForumChannel, guildId);
+      const channel = await interaction.client.channels.fetch(config.marketplaceChannelId);
+      if (channel?.type === ChannelType.GuildForum) {
+        await ensureMarketplaceTags(channel as ForumChannel, guildId);
+        await updateMarketplaceHubThread(interaction.client, guildId).catch(() => null);
+        setupNote = '\n✅ Forum tags created/verified and Quick Actions hub posted.';
+      } else if (channel?.type === ChannelType.GuildText) {
+        await updateMarketplaceHubMessage(interaction.client, guildId).catch(() => null);
+        await updateMarketplaceListingIndex(interaction.client, guildId).catch(() => null);
+        setupNote = '\n✅ Quick Actions hub and listing index posted.';
       }
     } catch {
-      // non-fatal — tags will be created lazily on first listing post
+      // non-fatal — hub/index will be created lazily on first listing post
     }
   }
 
@@ -1437,7 +2556,7 @@ export async function handleAdminConfig(interaction: ChatInputCommandInteraction
       'Marketplace config updated.',
       `• Channel: ${config.marketplaceChannelId ? `<#${config.marketplaceChannelId}>` : '*not set*'}`,
       `• Negotiation mode: **${config.marketplaceNegotiationMode}**`,
-      patch.marketplaceChannelId ? '\n✅ Forum tags created/verified.' : '',
+      setupNote,
     ].join('\n'),
   });
 }
@@ -1464,10 +2583,34 @@ export async function handleAdminPurge(interaction: ChatInputCommandInteraction)
     statusOption === 'all' ? ['active', 'pending', 'sold', 'closed'] :
     ['sold', 'closed'];
 
+  const allListings = await getListingsForGuild(guildId);
+  const listingsToPurge = allListings.filter((l) => {
+    if (targetUser && l.userId !== targetUser.id) return false;
+    return statusFilter.includes(l.status);
+  });
+
   const removed = await purgeListings(guildId, {
     userId: targetUser?.id,
     status: statusFilter,
   });
+
+  for (const listing of listingsToPurge) {
+    try {
+      if (listing.forumThreadId) {
+        const thread = await interaction.client.channels.fetch(listing.forumThreadId) as ThreadChannel;
+        await thread?.delete('Marketplace listing purged by admin');
+      } else if (listing.listingMessageId && listing.listingChannelId) {
+        const channel = await interaction.client.channels.fetch(listing.listingChannelId);
+        if (channel?.isTextBased()) {
+          const message = await channel.messages.fetch(listing.listingMessageId).catch(() => null);
+          await message?.delete();
+        }
+      }
+    } catch {
+      // thread/message already gone or inaccessible — nothing to clean up
+    }
+  }
+  await updateMarketplaceListingIndex(interaction.client, guildId).catch(() => null);
 
   await appendMarketplaceLog({
     timestamp: new Date().toISOString(),
@@ -1503,6 +2646,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     else if (sub === 'conditions') await handleConditions(interaction);
     else if (sub === 'close') await handleClose(interaction);
     else if (sub === 'reopen') await handleReopen(interaction);
+    else if (sub === 'edit') await handleEditCommand(interaction);
   }
 }
 
@@ -1536,7 +2680,7 @@ export async function handlePriceCustomButton(interaction: ButtonInteraction, dr
   }
   const modal = new ModalBuilder()
     .setCustomId(`mp_price_modal_${draftId}`)
-    .setTitle(`Set your price — ${draft.itemName}`)
+    .setTitle(`Set your price — ${draft.itemName}`.slice(0, 45))
     .addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
@@ -1578,19 +2722,19 @@ export async function handleInterestButton(interaction: ButtonInteraction, listi
   }
 
   if (listing.userId === interaction.user.id) {
-    await interaction.reply({ content: "You can't bid on your own listing.", flags: MessageFlags.Ephemeral });
+    await interaction.reply({ content: "You can't make an offer on your own listing.", flags: MessageFlags.Ephemeral });
     return;
   }
 
   const existingBid = getOpenBid(listing, interaction.user.id);
   if (existingBid) {
-    await interaction.reply({ content: 'You already have an open bid on this listing.', flags: MessageFlags.Ephemeral });
+    await interaction.reply({ content: 'You already have an open offer on this listing.', flags: MessageFlags.Ephemeral });
     return;
   }
 
   const modal = new ModalBuilder()
     .setCustomId(`mp_bid_${listingId}`)
-    .setTitle(`Interested in ${listing.itemName}`);
+    .setTitle(`Interested in ${listing.itemName}`.slice(0, 45));
 
   const components: ActionRowBuilder<TextInputBuilder>[] = [];
 
@@ -1634,7 +2778,129 @@ export async function handleInterestButton(interaction: ButtonInteraction, listi
   await interaction.showModal(modal);
 }
 
-// ── Modal: bid submitted ─────────────────────────────────────────────────────
+// ── Button: Buy It Now (firm listings only) ──────────────────────────────────
+
+function buyNowConfirmRow(listingId: string): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`mp_buynowyes_${listingId}`)
+      .setLabel('Confirm Purchase')
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`mp_buynowno_${listingId}`)
+      .setLabel('Cancel')
+      .setStyle(ButtonStyle.Secondary),
+  );
+}
+
+export async function handleBuyNowButton(interaction: ButtonInteraction, listingId: string): Promise<void> {
+  const guildId = interaction.guildId!;
+  const listing = await getListing(guildId, listingId);
+
+  if (!listing || listing.status === 'sold' || listing.status === 'closed') {
+    await interaction.reply({ content: 'This listing is no longer available.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  if (listing.userId === interaction.user.id) {
+    await interaction.reply({ content: "You can't buy your own listing.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const priceDisplay = listing.askingPrice != null ? formatPrice(listing.askingPrice) : 'the listed price';
+  await interaction.reply({
+    content: `Confirm purchase of **${listing.itemName}** for **${priceDisplay}**? This is final — the seller won't get a chance to review it first.`,
+    components: [buyNowConfirmRow(listingId)],
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+export async function handleBuyNowCancel(interaction: ButtonInteraction): Promise<void> {
+  await interaction.update({ content: 'Purchase cancelled.', components: [] });
+}
+
+export async function handleBuyNowConfirm(interaction: ButtonInteraction, listingId: string): Promise<void> {
+  await interaction.deferUpdate();
+
+  const guildId = interaction.guildId!;
+  const listing = await getListing(guildId, listingId);
+  if (!listing || listing.status === 'sold' || listing.status === 'closed') {
+    await interaction.editReply({ content: 'Sorry, this listing is no longer available.', components: [] });
+    return;
+  }
+
+  const buyerName = interaction.member
+    ? (interaction.member as { displayName?: string }).displayName ?? interaction.user.username
+    : interaction.user.username;
+
+  const result = await buyNow(guildId, listingId, interaction.user.id, buyerName);
+  if (!result) {
+    await interaction.editReply({ content: 'Sorry, this listing is no longer available — someone else may have just bought it.', components: [] });
+    return;
+  }
+
+  await appendMarketplaceLog({
+    timestamp: new Date().toISOString(),
+    guildId,
+    event: 'bid_accepted',
+    listingId,
+    listingName: listing.itemName,
+    listingType: listing.type,
+    actorId: interaction.user.id,
+    actorUsername: interaction.user.username,
+    bidId: result.boughtBid.id,
+    details: 'buy it now',
+  });
+  await appendMarketplaceLog({
+    timestamp: new Date().toISOString(),
+    guildId,
+    event: 'listing_sold',
+    listingId,
+    listingName: listing.itemName,
+    listingType: listing.type,
+    actorId: interaction.user.id,
+    actorUsername: interaction.user.username,
+  });
+
+  // Post visible conclusion before the listing post gets locked/finalized
+  await postListingFollowup(result.listing, interaction.client, {
+    content: `⚡ **Sold instantly!** <@${interaction.user.id}> bought **${listing.itemName}** with Buy It Now. Coordinate the exchange directly. This listing is now closed.`,
+  });
+
+  await updateListingPost(result.listing, interaction.client, guildId);
+
+  try {
+    const seller = await interaction.client.users.fetch(listing.userId);
+    const inLibrary = (await getGamesByUser(guildId, listing.userId)).some(
+      (e) => e.gameName.toLowerCase() === listing.itemName.toLowerCase(),
+    );
+    const priceDisplay = listing.askingPrice != null ? formatPrice(listing.askingPrice) : 'the listed price';
+    const dmBase = `⚡ <@${interaction.user.id}> (${buyerName}) just bought **${listing.itemName}** with Buy It Now for **${priceDisplay}**! Coordinate the exchange directly.`;
+    if (inLibrary) {
+      await seller.send({
+        content: `${dmBase}\n\n**${listing.itemName}** is in your library. Would you like to remove it now that it's sold?`,
+        components: [libraryRemoveRow(guildId, listing.id)],
+      });
+    } else {
+      await seller.send(dmBase);
+    }
+  } catch { /* DMs disabled */ }
+
+  for (const closedBid of result.closedBids) {
+    try {
+      const buyer = await interaction.client.users.fetch(closedBid.userId);
+      await buyer.send(`Sorry, **${listing.itemName}** has been sold to someone else via Buy It Now. Thanks for your interest!`);
+    } catch { /* DMs disabled */ }
+    await lockBidDm(interaction.client, closedBid, '_🔒 Closed — this listing has been sold to someone else._');
+  }
+
+  await interaction.editReply({
+    content: `✅ Purchase confirmed! **${listing.itemName}** is now marked as sold. Coordinate the exchange with the seller.`,
+    components: [],
+  });
+}
+
+// ── Modal: offer submitted ───────────────────────────────────────────────────
 
 export async function handleBidModal(interaction: ModalSubmitInteraction, listingId: string): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -1677,7 +2943,7 @@ export async function handleBidModal(interaction: ModalSubmitInteraction, listin
   });
 
   if (!result) {
-    await interaction.editReply({ content: 'Could not place bid.' });
+    await interaction.editReply({ content: 'Could not submit offer.' });
     return;
   }
 
@@ -1696,71 +2962,69 @@ export async function handleBidModal(interaction: ModalSubmitInteraction, listin
   });
 
   const config = await getGuildConfig(guildId);
+  const isFirm = isFirmListing(listing);
 
-  const bidLines: string[] = [`**${bidderName}** is interested in **${listing.itemName}**`];
-  if (amount != null) bidLines.push(`Bid: **${formatPrice(amount)}**`);
-  if (offerRaw) bidLines.push(`Offering: **${offerRaw}**`);
-  if (messageRaw) bidLines.push(`Message: ${messageRaw}`);
+  const offerLines: string[] = [`**${bidderName}** is interested in **${listing.itemName}**`];
+  if (amount != null) offerLines.push(`Offer: **${formatPrice(amount)}**`);
+  if (offerRaw) offerLines.push(`Offering: **${offerRaw}**`);
+  if (messageRaw) offerLines.push(`Message: ${messageRaw}`);
 
-  const sellerNotification = bidLines.join('\n');
+  const sellerNotification = offerLines.join('\n');
 
   if (config.marketplaceNegotiationMode === 'private') {
-    // Private mode: negotiate via DMs. Seller gets action buttons; forum post reflects updated status only.
+    // Private mode: negotiate via DMs. Seller gets action buttons; the listing post reflects updated status only.
     try {
       const seller = await interaction.client.users.fetch(listing.userId);
-      await seller.send({
+      const sentMsg = await seller.send({
         content: [
-          `📬 **New bid on your ${listing.itemName} listing:**`,
+          `📬 **New offer on your ${listing.itemName} listing:**`,
           sellerNotification,
         ].join('\n'),
-        components: [bidActionRow(listingId, result.bid.id)],
+        components: [bidActionRow(listingId, result.bid.id, !isFirm)],
       });
+      await updateBid(guildId, listingId, result.bid.id, { dmChannelId: sentMsg.channelId, dmMessageId: sentMsg.id });
     } catch {
-      // seller DMs disabled — fall back to forum post
+      // seller DMs disabled — fall back to the listing post
     }
-    if (listing.forumThreadId) {
-      try {
-        await updateForumPost(result.listing, interaction.client, guildId);
-      } catch (err) {
-        console.error('[marketplace] private mode forum update failed:', err);
-      }
-    }
-  } else if (listing.forumThreadId) {
-    // Forum mode: post text-only notification to thread, send action buttons via DM
-    let threadChannel: ThreadChannel | null = null;
     try {
-      threadChannel = await interaction.client.channels.fetch(listing.forumThreadId) as ThreadChannel;
-      await threadChannel.send({
-        content: `${sellerNotification}\n📬 <@${listing.userId}> — you have a new bid! Check your DMs from the bot to accept, deny, or counter.`,
-      });
-      await updateForumPost(result.listing, interaction.client, guildId);
+      await updateListingPost(result.listing, interaction.client, guildId);
     } catch (err) {
-      console.error('[marketplace] forum thread post failed:', err);
+      console.error('[marketplace] private mode listing update failed:', err);
+    }
+  } else {
+    // Public mode: post a text-only notification to the listing post, send action buttons via DM
+    try {
+      await postListingFollowup(listing, interaction.client, {
+        content: `${sellerNotification}\n📬 <@${listing.userId}> — you have a new offer! Check your DMs from the bot to accept, deny, or counter.`,
+      });
+      await updateListingPost(result.listing, interaction.client, guildId);
+    } catch (err) {
+      console.error('[marketplace] public offer notification failed:', err);
     }
 
     let dmSent = false;
     try {
       const seller = await interaction.client.users.fetch(listing.userId);
-      await seller.send({
+      const sentMsg = await seller.send({
         content: [
-          `📬 New bid on your **${listing.itemName}** listing:`,
+          `📬 New offer on your **${listing.itemName}** listing:`,
           sellerNotification,
         ].join('\n'),
-        components: [bidActionRow(listingId, result.bid.id)],
+        components: [bidActionRow(listingId, result.bid.id, !isFirm)],
       });
       dmSent = true;
+      await updateBid(guildId, listingId, result.bid.id, { dmChannelId: sentMsg.channelId, dmMessageId: sentMsg.id });
     } catch {
-      // DMs disabled — post buttons to thread as fallback
+      // DMs disabled — post buttons to the listing post as fallback
     }
 
-    if (!dmSent && threadChannel) {
-      try {
-        await threadChannel.send({
-          content: `<@${listing.userId}> — your DMs are disabled. Use the buttons below to respond:`,
-          components: [bidActionRow(listingId, result.bid.id)],
-        });
-      } catch (err) {
-        console.error('[marketplace] fallback button post failed:', err);
+    if (!dmSent) {
+      const fallback = await postListingFollowup(listing, interaction.client, {
+        content: `<@${listing.userId}> — your DMs are disabled. Use the buttons below to respond:`,
+        components: [bidActionRow(listingId, result.bid.id, !isFirm)],
+      });
+      if (fallback) {
+        await updateBid(guildId, listingId, result.bid.id, { dmChannelId: fallback.channelId, dmMessageId: fallback.id });
       }
     }
   }
@@ -1771,7 +3035,7 @@ export async function handleBidModal(interaction: ModalSubmitInteraction, listin
 
   const modeNote = config.marketplaceNegotiationMode === 'private'
     ? 'The seller has been notified via DM.'
-    : 'Check the listing thread for updates.';
+    : 'Check the listing post for updates.';
   await interaction.editReply({ content: `Your interest has been sent to the seller. ${modeNote}` });
 }
 
@@ -1824,8 +3088,7 @@ export async function handleRefModal(interaction: ModalSubmitInteraction, draftI
   }
 
   const refLink = interaction.fields.getTextInputValue('ref_link').trim() || undefined;
-  const updated = { ...draft, referenceLink: refLink ?? draft.referenceLink };
-  sellDrafts.set(draftId, updated);
+  const updated = updateDraft(draftId, { referenceLink: refLink ?? draft.referenceLink })!;
 
   if (draft.listingType === 'sell') {
     await showPriceScreen(interaction, updated, draftId);
@@ -1872,18 +3135,27 @@ export async function handleLibraryKeep(interaction: ButtonInteraction): Promise
   await interaction.reply({ content: 'Got it — the item stays in your library.', flags: MessageFlags.Ephemeral });
 }
 
-// ── Button: Accept bid ───────────────────────────────────────────────────────
+// ── Button: Accept offer ─────────────────────────────────────────────────────
 
 export async function handleAcceptBid(interaction: ButtonInteraction, listingId: string, bidId: string): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-  const guildId = interaction.guildId!;
-  const listing = await getListing(guildId, listingId);
-  if (!listing) { await interaction.editReply({ content: 'Listing not found.' }); return; }
-  if (listing.userId !== interaction.user.id) { await interaction.editReply({ content: 'Only the seller can accept bids.' }); return; }
+  const found = await findListingById(listingId);
+  if (!found) { await interaction.editReply({ content: 'Listing not found.' }); return; }
+  const { guildId, listing } = found;
+  const verb = listing.type === 'sell' ? 'sold' : 'traded';
+  if (listing.userId !== interaction.user.id) { await interaction.editReply({ content: 'Only the seller can accept offers.' }); return; }
+
+  const targetBid = listing.bids.find((b) => b.id === bidId);
+  if (!targetBid) { await interaction.editReply({ content: 'Offer not found.' }); return; }
+  if (targetBid.status !== 'open') {
+    await interaction.editReply({ content: 'This offer is no longer open.' });
+    try { await interaction.message.edit({ content: `${interaction.message.content}\n\n_This offer is no longer open._`, components: [] }); } catch { /* message may not be editable */ }
+    return;
+  }
 
   const result = await acceptBid(guildId, listingId, bidId);
-  if (!result) { await interaction.editReply({ content: 'Bid not found.' }); return; }
+  if (!result) { await interaction.editReply({ content: 'Offer not found.' }); return; }
 
   await appendMarketplaceLog({
     timestamp: new Date().toISOString(),
@@ -1907,16 +3179,10 @@ export async function handleAcceptBid(interaction: ButtonInteraction, listingId:
     actorUsername: interaction.user.username,
   });
 
-  // Post visible conclusion to the thread before it gets archived
-  if (result.listing.forumThreadId) {
-    try {
-      const thread = await interaction.client.channels.fetch(result.listing.forumThreadId) as ThreadChannel;
-      const verb = listing.type === 'sell' ? 'sold' : 'traded';
-      await thread.send(
-        `✅ **Deal done!** <@${listing.userId}> has accepted <@${result.acceptedBid.userId}>'s offer — **${listing.itemName}** is now ${verb}. Coordinate the exchange directly. This listing is now closed.`,
-      );
-    } catch { /* thread may be gone */ }
-  }
+  // Post visible conclusion before the listing post gets locked/finalized
+  await postListingFollowup(result.listing, interaction.client, {
+    content: `✅ **Deal done!** <@${listing.userId}> has accepted <@${result.acceptedBid.userId}>'s offer — **${listing.itemName}** is now ${verb}. Coordinate the exchange directly. This listing is now closed.`,
+  });
 
   // Remove buttons from the DM/thread message that was clicked
   try {
@@ -1926,56 +3192,63 @@ export async function handleAcceptBid(interaction: ButtonInteraction, listingId:
     });
   } catch { /* message may not be editable */ }
 
-  await updateForumPost(result.listing, interaction.client, guildId);
+  await updateListingPost(result.listing, interaction.client, guildId);
 
   try {
     const buyer = await interaction.client.users.fetch(result.acceptedBid.userId);
     await buyer.send(
-      `✅ Your bid on **${listing.itemName}** was accepted by ${listing.username}! Coordinate the exchange in the listing thread or message the seller directly.`,
+      `✅ Your offer on **${listing.itemName}** was accepted by ${listing.username}! Coordinate the exchange in the listing thread or message the seller directly.`,
     );
   } catch { /* DMs disabled */ }
 
   for (const closedBid of result.closedBids) {
     try {
       const buyer = await interaction.client.users.fetch(closedBid.userId);
-      await buyer.send(`Sorry, **${listing.itemName}** has been sold to someone else. Thanks for your interest!`);
+      await buyer.send(`Sorry, **${listing.itemName}** has been ${verb} to someone else. Thanks for your interest!`);
     } catch { /* DMs disabled */ }
+    await lockBidDm(interaction.client, closedBid, `_🔒 Closed — this listing has been ${verb} to someone else._`);
   }
 
-  await interaction.editReply({ content: `Bid accepted! **${listing.itemName}** is now marked as sold.` });
+  await interaction.editReply({ content: `Offer accepted! **${listing.itemName}** is now marked as ${verb}.` });
 
   const inLibrary = (await getGamesByUser(guildId, listing.userId)).some(
     (e) => e.gameName.toLowerCase() === listing.itemName.toLowerCase(),
   );
   if (inLibrary) {
     await interaction.followUp({
-      content: `**${listing.itemName}** is in your library. Would you like to remove it now that it's sold?`,
+      content: `**${listing.itemName}** is in your library. Would you like to remove it now that it's ${verb}?`,
       components: [libraryRemoveRow(guildId, listingId)],
       flags: MessageFlags.Ephemeral,
     });
   }
 }
 
-// ── Button: Deny bid ─────────────────────────────────────────────────────────
+// ── Button: Deny offer ────────────────────────────────────────────────────────
 
 export async function handleDenyBid(interaction: ButtonInteraction, listingId: string, bidId: string): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-  const guildId = interaction.guildId!;
-  const listing = await getListing(guildId, listingId);
-  if (!listing) { await interaction.editReply({ content: 'Listing not found.' }); return; }
+  const found = await findListingById(listingId);
+  if (!found) { await interaction.editReply({ content: 'Listing not found.' }); return; }
+  const { guildId, listing } = found;
 
   const isSeller = listing.userId === interaction.user.id;
   const bid = listing.bids.find((b) => b.id === bidId);
   const isBuyer = bid?.userId === interaction.user.id;
 
   if (!isSeller && !isBuyer) {
-    await interaction.editReply({ content: 'Only the seller or the bidder can deny/withdraw this bid.' });
+    await interaction.editReply({ content: 'Only the seller or the other party can deny/withdraw this offer.' });
+    return;
+  }
+
+  if (bid?.status !== 'open') {
+    await interaction.editReply({ content: 'This offer is no longer open.' });
+    try { await interaction.message.edit({ content: `${interaction.message.content}\n\n_This offer is no longer open._`, components: [] }); } catch { /* message may not be editable */ }
     return;
   }
 
   const result = await denyBid(guildId, listingId, bidId);
-  if (!result) { await interaction.editReply({ content: 'Bid not found.' }); return; }
+  if (!result) { await interaction.editReply({ content: 'Offer not found.' }); return; }
 
   const event = isBuyer ? 'bid_withdrawn' : 'bid_denied';
   await appendMarketplaceLog({
@@ -1992,44 +3265,55 @@ export async function handleDenyBid(interaction: ButtonInteraction, listingId: s
 
   // Remove buttons from the DM/thread message that was clicked
   try {
-    const resultLabel = isBuyer ? '↩️ **Withdrawn** — bid withdrawn.' : '❌ **Declined** — bid denied.';
+    const resultLabel = isBuyer ? '↩️ **Withdrawn** — offer withdrawn.' : '❌ **Declined** — offer denied.';
     await interaction.message.edit({
       content: `${interaction.message.content}\n\n${resultLabel}`,
       components: [],
     });
   } catch { /* message may not be editable */ }
 
-  await updateForumPost(result.listing, interaction.client, guildId);
+  await updateListingPost(result.listing, interaction.client, guildId);
 
   if (isSeller && bid) {
     try {
       const buyer = await interaction.client.users.fetch(bid.userId);
-      await buyer.send(`Your bid on **${listing.itemName}** was declined. The listing is back to ${result.listing.status}.`);
+      await buyer.send(`Your offer on **${listing.itemName}** was declined. The listing is back to ${result.listing.status}.`);
     } catch { /* DMs disabled */ }
   }
 
-  await interaction.editReply({ content: isBuyer ? 'Your bid has been withdrawn.' : 'Bid denied. The listing is back to active.' });
+  await interaction.editReply({ content: isBuyer ? 'Your offer has been withdrawn.' : 'Offer denied. The listing is back to active.' });
 }
 
-// ── Button: Counter bid ──────────────────────────────────────────────────────
+// ── Button: Counter offer ─────────────────────────────────────────────────────
 
 export async function handleCounterButton(interaction: ButtonInteraction, listingId: string, bidId: string): Promise<void> {
-  const guildId = interaction.guildId!;
-  const listing = await getListing(guildId, listingId);
-  if (!listing) { await interaction.reply({ content: 'Listing not found.', flags: MessageFlags.Ephemeral }); return; }
+  const found = await findListingById(listingId);
+  if (!found) { await interaction.reply({ content: 'Listing not found.', flags: MessageFlags.Ephemeral }); return; }
+  const { listing } = found;
 
   const bid = listing.bids.find((b) => b.id === bidId);
   const isSeller = listing.userId === interaction.user.id;
   const isBuyer = bid?.userId === interaction.user.id;
 
   if (!isSeller && !isBuyer) {
-    await interaction.reply({ content: 'Only the seller or the bidder can counter.', flags: MessageFlags.Ephemeral });
+    await interaction.reply({ content: 'Only the seller or the other party can counter.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  if (bid?.status !== 'open') {
+    await interaction.reply({ content: 'This offer is no longer open.', flags: MessageFlags.Ephemeral });
+    try { await interaction.message.edit({ content: `${interaction.message.content}\n\n_This offer is no longer open._`, components: [] }); } catch { /* message may not be editable */ }
+    return;
+  }
+
+  if (isFirmListing(listing)) {
+    await interaction.reply({ content: "This is a firm-price listing — there's no price to counter.", flags: MessageFlags.Ephemeral });
     return;
   }
 
   const modal = new ModalBuilder()
     .setCustomId(`mp_counter_modal_${listingId}_${bidId}`)
-    .setTitle(`Counter offer — ${listing.itemName}`);
+    .setTitle(`Counter offer — ${listing.itemName}`.slice(0, 45));
 
   const components: ActionRowBuilder<TextInputBuilder>[] = [];
 
@@ -2090,19 +3374,33 @@ export async function handleCounterModal(
 ): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-  const guildId = interaction.guildId!;
-  const listing = await getListing(guildId, listingId);
-  if (!listing) { await interaction.editReply({ content: 'Listing not found.' }); return; }
+  const found = await findListingById(listingId);
+  if (!found) { await interaction.editReply({ content: 'Listing not found.' }); return; }
+  const { guildId, listing } = found;
 
   const bid = listing.bids.find((b) => b.id === bidId);
-  if (!bid) { await interaction.editReply({ content: 'Bid not found.' }); return; }
+  if (!bid) { await interaction.editReply({ content: 'Offer not found.' }); return; }
 
   const isSeller = listing.userId === interaction.user.id;
   const isBuyer = bid.userId === interaction.user.id;
-  if (!isSeller && !isBuyer) { await interaction.editReply({ content: 'You cannot counter this bid.' }); return; }
+  if (!isSeller && !isBuyer) { await interaction.editReply({ content: 'You cannot counter this offer.' }); return; }
 
-  const amountRaw = interaction.fields.getTextInputValue('counter_amount').trim();
-  const offerRaw = interaction.fields.getTextInputValue('counter_offer').trim();
+  if (bid.status !== 'open') {
+    await interaction.editReply({ content: 'This offer is no longer open — your counter was not submitted.' });
+    return;
+  }
+
+  if (isFirmListing(listing)) {
+    await interaction.editReply({ content: "This is a firm-price listing — there's no price to counter." });
+    return;
+  }
+
+  const amountRaw = listing.type === 'sell'
+    ? interaction.fields.getTextInputValue('counter_amount').trim()
+    : '';
+  const offerRaw = listing.type !== 'sell'
+    ? interaction.fields.getTextInputValue('counter_offer').trim()
+    : '';
   const messageRaw = interaction.fields.getTextInputValue('counter_message').trim();
 
   let amount: number | undefined;
@@ -2146,40 +3444,156 @@ export async function handleCounterModal(
   if (messageRaw) counterLines.push(messageRaw);
 
   const targetUserId = isSeller ? bid.userId : listing.userId;
-  const responseRow = isSeller ? buyerResponseRow(listingId, bidId) : bidActionRow(listingId, bidId);
-  const threadId = bid.negotiationThreadId ?? listing.forumThreadId;
+  const responseRow = isSeller ? buyerResponseRow(listingId, bidId) : bidActionRow(listingId, bidId, !isFirmListing(listing));
 
-  let counterThread: ThreadChannel | null = null;
-  if (threadId) {
-    try {
-      counterThread = await interaction.client.channels.fetch(threadId) as ThreadChannel;
-      // Post text-only to thread; buttons go to the recipient via DM
-      await counterThread.send({ content: `${counterLines.join('\n')}\n📬 <@${targetUserId}> — check your DMs from the bot to respond.` });
-    } catch (err) {
-      console.error('[marketplace] counter post to thread failed:', err);
-    }
+  // Negotiation mode gates whether the counter's price/message ever reach the
+  // public channel — same rule handleBidModal already applies to the initial
+  // offer. Private mode negotiates via DM only, including its DM-disabled
+  // fallback (mirroring handleBidModal's private branch, which likewise never
+  // falls back to a public post if the seller's DMs are off).
+  const config = await getGuildConfig(guildId);
+  const isPrivateMode = config.marketplaceNegotiationMode === 'private';
+  if (!isPrivateMode) {
+    await postListingFollowup(listing, interaction.client, {
+      content: `${counterLines.join('\n')}\n📬 <@${targetUserId}> — check your DMs from the bot to respond.`,
+    });
   }
 
   let dmSent = false;
   try {
     const target = await interaction.client.users.fetch(targetUserId);
-    await target.send({ content: counterLines.join('\n'), components: [responseRow] });
+    const sentMsg = await target.send({ content: counterLines.join('\n'), components: [responseRow] });
     dmSent = true;
+    await updateBid(guildId, listingId, bidId, { dmChannelId: sentMsg.channelId, dmMessageId: sentMsg.id });
   } catch { /* DMs disabled */ }
 
-  if (!dmSent && counterThread) {
-    try {
-      const targetMention = `<@${targetUserId}>`;
-      await counterThread.send({
-        content: `${targetMention} — your DMs are disabled. Use the buttons below to respond:`,
-        components: [responseRow],
-      });
-    } catch (err) {
-      console.error('[marketplace] fallback counter button post failed:', err);
+  if (!dmSent && !isPrivateMode) {
+    const fallback = await postListingFollowup(listing, interaction.client, {
+      content: `<@${targetUserId}> — your DMs are disabled. Use the buttons below to respond:`,
+      components: [responseRow],
+    });
+    if (fallback) {
+      await updateBid(guildId, listingId, bidId, { dmChannelId: fallback.channelId, dmMessageId: fallback.id });
     }
   }
 
   await interaction.editReply({ content: 'Counter submitted.' });
+}
+
+// ── Button: Reply (free-text message, no price/status change) ───────────────
+
+export async function handleReplyButton(interaction: ButtonInteraction, listingId: string, bidId: string): Promise<void> {
+  const found = await findListingById(listingId);
+  if (!found) { await interaction.reply({ content: 'Listing not found.', flags: MessageFlags.Ephemeral }); return; }
+  const { listing } = found;
+
+  const bid = listing.bids.find((b) => b.id === bidId);
+  const isSeller = listing.userId === interaction.user.id;
+  const isBuyer = bid?.userId === interaction.user.id;
+
+  if (!isSeller && !isBuyer) {
+    await interaction.reply({ content: 'Only the seller or the other party can reply.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  if (bid?.status !== 'open') {
+    await interaction.reply({ content: 'This offer is no longer open.', flags: MessageFlags.Ephemeral });
+    try { await interaction.message.edit({ content: `${interaction.message.content}\n\n_This offer is no longer open._`, components: [] }); } catch { /* message may not be editable */ }
+    return;
+  }
+
+  const modal = new ModalBuilder()
+    .setCustomId(`mp_reply_modal_${listingId}_${bidId}`)
+    .setTitle(`Reply — ${listing.itemName}`.slice(0, 45))
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('reply_message')
+          .setLabel('Your message')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(500),
+      ),
+    );
+
+  await interaction.showModal(modal);
+
+  // Strip the action buttons now that a reply is being composed — the
+  // recipient's response (see handleReplyModal) carries a fresh set.
+  try {
+    await interaction.message.edit({
+      content: `${interaction.message.content}\n\n💬 **Reply sent** — waiting for response.`,
+      components: [],
+    });
+  } catch { /* message may not be editable */ }
+}
+
+// ── Modal: reply submitted ───────────────────────────────────────────────────
+
+export async function handleReplyModal(
+  interaction: ModalSubmitInteraction,
+  listingId: string,
+  bidId: string,
+): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const found = await findListingById(listingId);
+  if (!found) { await interaction.editReply({ content: 'Listing not found.' }); return; }
+  const { guildId, listing } = found;
+
+  const bid = listing.bids.find((b) => b.id === bidId);
+  if (!bid) { await interaction.editReply({ content: 'Offer not found.' }); return; }
+
+  const isSeller = listing.userId === interaction.user.id;
+  const isBuyer = bid.userId === interaction.user.id;
+  if (!isSeller && !isBuyer) { await interaction.editReply({ content: 'You cannot reply on this offer.' }); return; }
+
+  if (bid.status !== 'open') {
+    await interaction.editReply({ content: 'This offer is no longer open — your reply was not sent.' });
+    return;
+  }
+
+  const messageText = interaction.fields.getTextInputValue('reply_message').trim();
+  const fromName = interaction.member
+    ? (interaction.member as { displayName?: string }).displayName ?? interaction.user.username
+    : interaction.user.username;
+
+  const targetUserId = isSeller ? bid.userId : listing.userId;
+  // The buyer gets the plain reply-context row (no counter to accept yet);
+  // the seller always gets their normal Accept/Deny/Counter/Reply row.
+  const responseRow = isSeller ? buyerReplyRow(listingId, bidId) : bidActionRow(listingId, bidId, !isFirmListing(listing));
+  const messageLines = [`**Message from ${fromName}** on **${listing.itemName}**:`, messageText];
+
+  // Same negotiation-mode privacy rule as counters (see handleCounterModal) —
+  // private mode never posts message content publicly, nor falls back to a
+  // public post if the recipient's DMs are off.
+  const config = await getGuildConfig(guildId);
+  const isPrivateMode = config.marketplaceNegotiationMode === 'private';
+  if (!isPrivateMode) {
+    await postListingFollowup(listing, interaction.client, {
+      content: `${messageLines.join('\n')}\n📬 <@${targetUserId}> — check your DMs from the bot to respond.`,
+    });
+  }
+
+  let dmSent = false;
+  try {
+    const target = await interaction.client.users.fetch(targetUserId);
+    const sentMsg = await target.send({ content: messageLines.join('\n'), components: [responseRow] });
+    dmSent = true;
+    await updateBid(guildId, listingId, bidId, { dmChannelId: sentMsg.channelId, dmMessageId: sentMsg.id });
+  } catch { /* DMs disabled */ }
+
+  if (!dmSent && !isPrivateMode) {
+    const fallback = await postListingFollowup(listing, interaction.client, {
+      content: `<@${targetUserId}> — your DMs are disabled. Use the buttons below to respond:`,
+      components: [responseRow],
+    });
+    if (fallback) {
+      await updateBid(guildId, listingId, bidId, { dmChannelId: fallback.channelId, dmMessageId: fallback.id });
+    }
+  }
+
+  await interaction.editReply({ content: 'Message sent.' });
 }
 
 // ── Button: buyer accepts counter ────────────────────────────────────────────
@@ -2189,17 +3603,24 @@ export async function handleBuyerAcceptCounter(
   listingId: string,
   bidId: string,
 ): Promise<void> {
-  const guildId = interaction.guildId!;
-  const listing = await getListing(guildId, listingId);
-  if (!listing) { await interaction.reply({ content: 'Listing not found.', flags: MessageFlags.Ephemeral }); return; }
+  const found = await findListingById(listingId);
+  if (!found) { await interaction.reply({ content: 'Listing not found.', flags: MessageFlags.Ephemeral }); return; }
+  const { guildId, listing } = found;
 
+  const verb = listing.type === 'sell' ? 'sold' : 'traded';
   const bid = listing.bids.find((b) => b.id === bidId);
   if (!bid || bid.userId !== interaction.user.id) {
-    await interaction.reply({ content: 'You are not the bidder on this offer.', flags: MessageFlags.Ephemeral });
+    await interaction.reply({ content: 'You are not the other party on this offer.', flags: MessageFlags.Ephemeral });
     return;
   }
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  if (bid.status !== 'open') {
+    await interaction.editReply({ content: 'This offer is no longer open.' });
+    try { await interaction.message.edit({ content: `${interaction.message.content}\n\n_This offer is no longer open._`, components: [] }); } catch { /* message may not be editable */ }
+    return;
+  }
 
   const result = await acceptBid(guildId, listingId, bidId);
   if (!result) { await interaction.editReply({ content: 'Could not complete acceptance.' }); return; }
@@ -2227,16 +3648,10 @@ export async function handleBuyerAcceptCounter(
     actorUsername: interaction.user.username,
   });
 
-  // Post visible conclusion to the thread before it gets archived
-  if (result.listing.forumThreadId) {
-    try {
-      const thread = await interaction.client.channels.fetch(result.listing.forumThreadId) as ThreadChannel;
-      const verb = listing.type === 'sell' ? 'sold' : 'traded';
-      await thread.send(
-        `✅ **Deal done!** <@${bid.userId}> accepted the counter offer from <@${listing.userId}> — **${listing.itemName}** is now ${verb}. Coordinate the exchange directly. This listing is now closed.`,
-      );
-    } catch { /* thread may be gone */ }
-  }
+  // Post visible conclusion before the listing post gets locked/finalized
+  await postListingFollowup(result.listing, interaction.client, {
+    content: `✅ **Deal done!** <@${bid.userId}> accepted the counter offer from <@${listing.userId}> — **${listing.itemName}** is now ${verb}. Coordinate the exchange directly. This listing is now closed.`,
+  });
 
   // Remove buttons from the DM message that was clicked
   try {
@@ -2246,17 +3661,17 @@ export async function handleBuyerAcceptCounter(
     });
   } catch { /* message may not be editable */ }
 
-  await updateForumPost(result.listing, interaction.client, guildId);
+  await updateListingPost(result.listing, interaction.client, guildId);
 
   try {
     const seller = await interaction.client.users.fetch(listing.userId);
     const inLibrary = (await getGamesByUser(guildId, listing.userId)).some(
       (e) => e.gameName.toLowerCase() === listing.itemName.toLowerCase(),
     );
-    const dmBase = `✅ The buyer accepted your counter on **${listing.itemName}**! Coordinate the exchange in the listing thread.`;
+    const dmBase = `✅ The other party accepted your counter on **${listing.itemName}**! Coordinate the exchange in the listing thread.`;
     if (inLibrary) {
       await seller.send({
-        content: `${dmBase}\n\n**${listing.itemName}** is in your library. Would you like to remove it now that it's sold?`,
+        content: `${dmBase}\n\n**${listing.itemName}** is in your library. Would you like to remove it now that it's ${verb}?`,
         components: [libraryRemoveRow(guildId, listing.id)],
       });
     } else {
@@ -2267,9 +3682,10 @@ export async function handleBuyerAcceptCounter(
   for (const closedBid of result.closedBids) {
     try {
       const buyer = await interaction.client.users.fetch(closedBid.userId);
-      await buyer.send(`Sorry, **${listing.itemName}** has been sold to someone else.`);
+      await buyer.send(`Sorry, **${listing.itemName}** has been ${verb} to someone else.`);
     } catch { /* DMs disabled */ }
+    await lockBidDm(interaction.client, closedBid, `_🔒 Closed — this listing has been ${verb} to someone else._`);
   }
 
-  await interaction.editReply({ content: `You accepted the counter — **${listing.itemName}** is now marked as sold. Coordinate the exchange with the seller!` });
+  await interaction.editReply({ content: `You accepted the counter — **${listing.itemName}** is now marked as ${verb}. Coordinate the exchange with the seller!` });
 }

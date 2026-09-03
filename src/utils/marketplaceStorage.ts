@@ -36,7 +36,9 @@ export interface Bid {
   message?: string;
   status: BidStatus;
   counters: Counter[];
-  negotiationThreadId?: string;
+  /** Channel + message ID of the current DM (or thread/reply-fallback) prompt awaiting a response for this bid. */
+  dmChannelId?: string;
+  dmMessageId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -58,8 +60,18 @@ export interface MarketplaceListing {
   lookingFor?: string;
   expansions?: { bggId: string; name: string }[];
   parentItem?: { bggId: string; name: string };
+  includesBaseGame?: boolean;
   status: ListingStatus;
+  // Forum-mode only: the forum post's own thread, holding this listing's
+  // embed/button (see postListingToChannel in marketplace.ts).
   forumThreadId?: string;
+  // Text-mode only: the listing's embed/button lives in a plain message
+  // (listingMessageId) in the configured Text channel (listingChannelId) — no
+  // Discord thread is created. Follow-up activity (offer notifications, DM
+  // fallback, sold/closed announcements) is posted as a reply to this message
+  // instead of into a thread (see postListingFollowup in marketplace.ts).
+  listingMessageId?: string;
+  listingChannelId?: string;
   bids: Bid[];
   createdAt: string;
   updatedAt: string;
@@ -84,6 +96,17 @@ export async function getListing(
   listingId: string,
 ): Promise<MarketplaceListing | undefined> {
   return (await getListingsForGuild(guildId)).find((l) => l.id === listingId);
+}
+
+export async function findListingById(
+  listingId: string,
+): Promise<{ guildId: string; listing: MarketplaceListing } | undefined> {
+  const store = await load();
+  for (const [guildId, listings] of Object.entries(store)) {
+    const listing = listings.find((l) => l.id === listingId);
+    if (listing) return { guildId, listing };
+  }
+  return undefined;
 }
 
 export async function getActiveListingsForGuild(
@@ -125,7 +148,28 @@ export async function createListing(
 export async function updateListing(
   guildId: string,
   listingId: string,
-  patch: Partial<Pick<MarketplaceListing, 'status' | 'forumThreadId' | 'bids' | 'updatedAt'>>,
+  patch: Partial<Pick<MarketplaceListing, 'status' | 'forumThreadId' | 'listingMessageId' | 'listingChannelId' | 'bids' | 'updatedAt'>>,
+): Promise<MarketplaceListing | undefined> {
+  const store = await load();
+  const listings = store[guildId] ?? [];
+  const idx = listings.findIndex((l) => l.id === listingId);
+  if (idx === -1) return undefined;
+  listings[idx] = { ...listings[idx], ...patch, updatedAt: new Date().toISOString() };
+  store[guildId] = listings;
+  await save(store);
+  return listings[idx];
+}
+
+// Owner-editable content fields only — deliberately separate from
+// updateListing's patch (status/forumThreadId/etc. bookkeeping) so the two
+// can't be confused, and so this contract stays narrow as new editable
+// fields are added. asking price / looking-for / notes are all a listing's
+// author can currently change post-creation; type, bggId, condition, and
+// bidsAllowed are structural and not editable (see handleEditCommand).
+export async function editListing(
+  guildId: string,
+  listingId: string,
+  patch: Partial<Pick<MarketplaceListing, 'askingPrice' | 'lookingFor' | 'notes'>>,
 ): Promise<MarketplaceListing | undefined> {
   const store = await load();
   const listings = store[guildId] ?? [];
@@ -175,7 +219,7 @@ export async function updateBid(
   guildId: string,
   listingId: string,
   bidId: string,
-  patch: Partial<Pick<Bid, 'status' | 'negotiationThreadId' | 'counters'>>,
+  patch: Partial<Pick<Bid, 'status' | 'counters' | 'dmChannelId' | 'dmMessageId'>>,
 ): Promise<{ listing: MarketplaceListing; bid: Bid } | undefined> {
   const store = await load();
   const listings = store[guildId] ?? [];
@@ -251,6 +295,56 @@ export async function acceptBid(
   store[guildId] = listings;
   await save(store);
   return { listing, acceptedBid: listing.bids[bidIdx], closedBids };
+}
+
+/**
+ * Buy It Now (firm listings only): creates a bid already in the 'accepted'
+ * state and marks the listing sold in one atomic step — there's no seller
+ * review to wait on since the price was already fixed. Any other open bids
+ * (e.g. someone's pending "I'm Interested" message) are closed out exactly
+ * like acceptBid() does, since the item is no longer available.
+ */
+export async function buyNow(
+  guildId: string,
+  listingId: string,
+  buyerUserId: string,
+  buyerUsername: string,
+): Promise<{ listing: MarketplaceListing; boughtBid: Bid; closedBids: Bid[] } | undefined> {
+  const store = await load();
+  const listings = store[guildId] ?? [];
+  const listingIdx = listings.findIndex((l) => l.id === listingId);
+  if (listingIdx === -1) return undefined;
+
+  const listing = listings[listingIdx];
+  if (listing.status === 'sold' || listing.status === 'closed') return undefined;
+
+  const now = new Date().toISOString();
+  const closedBids: Bid[] = [];
+  for (const bid of listing.bids) {
+    if (bid.status === 'open') {
+      bid.status = 'sold_to_other';
+      bid.updatedAt = now;
+      closedBids.push(bid);
+    }
+  }
+
+  const boughtBid: Bid = {
+    id: randomUUID(),
+    listingId,
+    userId: buyerUserId,
+    username: buyerUsername,
+    status: 'accepted',
+    counters: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+  listing.bids.push(boughtBid);
+  listing.status = 'sold';
+  listing.updatedAt = now;
+
+  store[guildId] = listings;
+  await save(store);
+  return { listing, boughtBid, closedBids };
 }
 
 export async function denyBid(

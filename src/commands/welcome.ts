@@ -7,10 +7,12 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
   const channel = interaction.options.getChannel('channel');
   const rulesChannel = interaction.options.getChannel('rules_channel');
   const facebookUrl = interaction.options.getString('facebook_url');
+  const bggUrl = interaction.options.getString('bgg_url');
 
   if (channel !== null) patch.welcomeChannelId = channel.id;
   if (rulesChannel !== null) patch.rulesChannelId = rulesChannel.id;
   if (facebookUrl !== null) patch.facebookGroupUrl = facebookUrl;
+  if (bggUrl !== null) patch.bggGroupUrl = bggUrl;
 
   const ch = (id: string) => (id ? `<#${id}>` : '*not set*');
 
@@ -22,6 +24,7 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
         `> Welcome channel: ${ch(c.welcomeChannelId)}`,
         `> Rules channel: ${ch(c.rulesChannelId)}`,
         `> Facebook group: ${c.facebookGroupUrl || '*not set*'}`,
+        `> BGG group: ${c.bggGroupUrl || '*not set*'}`,
       ].join('\n'),
       flags: MessageFlags.Ephemeral,
     });
@@ -35,6 +38,7 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
       `> Welcome channel: ${ch(updated.welcomeChannelId)}`,
       `> Rules channel: ${ch(updated.rulesChannelId)}`,
       `> Facebook group: ${updated.facebookGroupUrl || '*not set*'}`,
+      `> BGG group: ${updated.bggGroupUrl || '*not set*'}`,
     ].join('\n'),
     flags: MessageFlags.Ephemeral,
   });

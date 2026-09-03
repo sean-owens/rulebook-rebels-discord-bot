@@ -8,12 +8,23 @@ export function buildGameNightEmbed(gn: GameNight, nameMap: Record<string, strin
   const maybeNames = gn.rsvps.maybe.map(getName);
   const noNames = gn.rsvps.no.map(getName);
 
+  // Discord timestamp markup (<t:UNIX:STYLE>) auto-localizes per viewer, the
+  // same way the native scheduled event does — unlike gn.date/gn.time, which
+  // are frozen strings formatted once in whatever timezone was configured at
+  // creation time.
+  const startUnix = Math.floor(new Date(gn.startTimeISO).getTime() / 1000);
+  const endUnix = gn.endTimeISO ? Math.floor(new Date(gn.endTimeISO).getTime() / 1000) : null;
+
   const embed = new EmbedBuilder()
-    .setTitle(`Monthly Game Event — ${gn.date}`)
+    .setTitle(`${gn.title ?? 'Game Night'} — ${gn.date}`)
     .setColor(gn.cancelled ? 0x808080 : 0x5865f2)
     .addFields(
-      { name: 'Date', value: gn.date, inline: true },
-      { name: 'Time', value: gn.time, inline: true },
+      { name: 'Date', value: `<t:${startUnix}:D>`, inline: true },
+      {
+        name: 'Time',
+        value: endUnix ? `<t:${startUnix}:t> – <t:${endUnix}:t>` : `<t:${startUnix}:t>`,
+        inline: true,
+      },
       { name: 'Location', value: gn.location || 'TBD', inline: true },
     );
 

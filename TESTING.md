@@ -2,16 +2,24 @@
 
 This document describes every feature in the bot and provides a checklist of test cases to verify correct behavior. All tests are performed in Discord using slash commands unless otherwise noted.
 
-The guide is organized by **permission tier** so a single tester can be handed one part and complete it end-to-end without flipping between sections:
+The guide has two top-level groups, so you know at a glance whether you can run a test alone or need to wait until a second person is around:
 
+- **🧍 Single-Tester Tests** — every one of these can be completed solo by one person with the right role. Sub-grouped by permission tier (Member → Host → Admin), plus system/automated behavior and role-agnostic edge cases.
+- **👥 Multi-Person Tests** — these genuinely cannot be completed alone, even with several test accounts on hand, because they involve live back-and-forth between two distinct Discord identities (marketplace DM negotiation) or a real join event (new member welcome). All of them live together in one place so you can knock them all out in a single sitting whenever a second tester is available. Also sub-grouped by which tier's flow needed the second person (Member-tier marketplace flows, then a System/Automated flow).
+
+**A note on the numbering:** each test still carries its original **Part N** label (Part 1 = Member, Part 2 = Host, Part 3 = Admin, Part 4 = System & Automated, Part 5 = Multi-Person, Part 6 = General Edge Cases) — that numbering is also used throughout the doc for cross-references (e.g. `(2.8a)`, `(4.7)`, `5.1a`). Those numbers reflect *what* a test is, not the order it appears in — Part 5 (multi-person) is physically placed at the very end of the document, after Part 6, so all solo-testable parts (1–4, 6) come first and stay together.
+
+Within **🧍 Single-Tester Tests**:
 - **Part 1 — Regular Member Tests**: no elevated role required.
 - **Part 2 — Host Tests**: requires the Host role (or Manage Events permission). Fully repeats Part 1 plus Host-only commands, since Hosts must retain full member-level access.
 - **Part 3 — Admin Tests**: requires the Admin role (or Manage Guild permission). Fully repeats Parts 1 and 2 plus Admin-only commands, since Admins must retain full member- and Host-level access.
 - **Part 4 — System & Automated Behavior**: features triggered by Discord events/timers rather than a slash command permission check (bot join/leave, scheduled event completion, new member join). Requires server ownership or Admin-level Discord permissions to exercise (adding/removing the bot, editing scheduled events), even though it isn't part of the slash-command tier model.
-- **Part 5 — Multi-Person Tests**: test cases that cannot be completed by a single tester alone, even with several test accounts, because they involve genuine back-and-forth between two distinct Discord identities (marketplace DM negotiation) or a real join event (new member welcome). These are pulled out of Parts 1–4 so they're not scattered through solo-testable checklists — a short pointer note is left where each one used to live.
 - **Part 6 — General Edge Cases**: role-agnostic sanity checks. Run once, regardless of which tier you're testing.
 
-Because Parts 2 and 3 repeat the tests from the tier(s) below them, the same test case appears more than once in this document — that's intentional, not a copy/paste error. It lets a tester assigned to a single tier work from one self-contained part. Where a test case was moved to Part 5 instead, the original spot has a one-line pointer rather than the checklist itself.
+Because Parts 2 and 3 repeat the tests from the tier(s) below them, the same test case appears more than once in this document — that's intentional, not a copy/paste error. It lets a tester assigned to a single tier work from one self-contained part. Where a test case needed a second person instead, the original spot (in Parts 1–4) has a one-line pointer into **👥 Multi-Person Tests** rather than the checklist itself.
+
+Within **👥 Multi-Person Tests**:
+- **Part 5 — Multi-Person Tests**: pulled out of Parts 1–4 so they're not scattered through solo-testable checklists. Grouped first by tier (5.1 is a Member-tier flow — marketplace negotiation only ever needs two regular members, no elevated role on either side; 5.2 is a System/Automated flow — a new member joining), then by which pairing you need to recruit within that.
 
 ---
 
@@ -20,10 +28,16 @@ Because Parts 2 and 3 repeat the tests from the tier(s) below them, the same tes
 - At least one game tag must exist for `/myroles` to be testable — run `/admin tags sync` first.
 - Three test accounts are recommended: one with no elevated role, one with the Host role, and one with the Admin role.
 - At least one upcoming, non-cancelled event should exist before testing `/event`, `/game`, or the event-scoped `/library` commands (`request`, `unrequest`, `bring`) — create one first with `/host event create` (2.8a).
-- A marketplace forum channel should be configured via `/admin marketplace config` (3.9m) before testing `/marketplace post sell`/`post trade` end-to-end — listings are still created without one (that's its own test case), but you won't see the resulting forum post.
+- A marketplace channel should be configured via `/admin marketplace config` (3.9m) before testing `/marketplace post sell`/`post trade` end-to-end — listings are still created without one (that's its own test case), but you won't see the resulting forum post.
 - A BGG account should be linked via `/bgg link` before testing `/library import bgg`.
 - **For Part 5:** you'll need a second, distinct Discord account you can act as concurrently with your primary tester account — reusing one of the three test accounts above is fine. Discord does not allow an account to DM itself, so marketplace negotiation genuinely cannot be exercised with only one identity. For the "new member joins" case, you don't need a never-before-seen account — kicking an existing test account from the server and re-inviting it fires the same join event the welcome flow listens for.
 - 👑 marks a check that will behave differently — usually silently pass when it should fail — if run from the Discord **server owner's** account. This bot enforces its Host/Admin tiers entirely through Discord's native `Manage Events`/`Manage Server` permission bits (no custom role lookup), and Discord grants the server owner every permission implicitly and permanently, regardless of what role (if any) they're assigned. An owner account can never be used to validate a "this should be denied to non-hosts/non-admins" case — use a genuinely separate, non-owner account for anything marked 👑.
+
+---
+
+# 🧍 Single-Tester Tests
+
+Everything in this group (Parts 1–4, 6) can be completed solo by one tester holding the appropriate role — no second Discord identity needed.
 
 ---
 
@@ -33,11 +47,23 @@ Because Parts 2 and 3 repeat the tests from the tier(s) below them, the same tes
 
 **What it does:** Displays an ephemeral embed listing all available commands. Shows a Host section to members with Manage Events permission. Shows an Admin section to members with Manage Guild permission.
 
-- [ ] 👑 Run `/help` as a regular member — confirm only user-facing command sections appear (`/event`, `/game`, `/library`, `/myroles`, `/bgg`, `/marketplace`) with **no Host or Admin section**
+- [ ] 👑 Run `/help` as a regular member — confirm only user-facing command sections appear (`/event`, `/game`, `/library`, `/myroles`, `/bgg`, `/marketplace`, `/room`) with **no Host or Admin section**
 - [ ] Confirm `/game cancel` description says "Remove your own game suggestion"
 - [ ] Confirm `/library clear` description says "Remove all your own games at once"
+- [ ] Confirm the `/library` field lists `random` and `search`, both noting they default to `/myroles` preferences
+- [ ] Confirm the top description points new members to `/getting-started` for a shorter walkthrough
 - [ ] Confirm the response is ephemeral
 - [ ] 👑 Confirm `/host` and `/admin` commands are **not visible** in the Discord slash command picker
+
+## 1.1a `/getting-started`
+
+**What it does:** Displays a short, ephemeral, ordered walkthrough for new members — RSVPing to a game night, setting preferences (`/myroles`), suggesting a game (`/game suggest`), and browsing the library (`/library list`) — plus a rules-channel step if one is configured. Deliberately omits `/library add` from the numbered steps' emphasis and BGG linking, marketplace, and rooms entirely, so a brand-new member isn't asked to commit to anything on day one. The footer points to `/help` for the rest, and to a host/moderator if they get stuck.
+
+- [ ] Run `/getting-started` with no rules channel configured (`/admin welcome config`, 3.9j) — confirm the walkthrough starts at "RSVP to a game night" with no rules-channel step
+- [ ] Configure a rules channel (3.9j), run `/getting-started` again — confirm "Read the rules" is now step 1 and links to that channel, and the remaining steps renumber accordingly
+- [ ] Confirm the walkthrough mentions `/myroles`, `/game suggest`, and `/library list`
+- [ ] Confirm the response is ephemeral
+- [ ] Confirm the embed's footer mentions both `/help` and asking a host or moderator for help
 
 ## 1.2 `/event` — Event Viewing
 
@@ -71,7 +97,14 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.3a `/game suggest`
 
-**What it does:** Suggests a game for the event. Checks the group library first (exact match → partial match → BGG search). Prompts to add tags if not already tagged.
+**What it does:** Suggests a game for the event (or, from inside a private room, for that room — see below). Checks the group library first (exact match → partial match → BGG search). Prompts to add tags if not already tagged.
+
+#### From a private room
+- [ ] Run `/game suggest title:Wingspan` from inside a `/room`-created private room channel (1.8a) — confirm it posts the game card directly in the room, with no event picker
+- [ ] Suggest a library game whose owner is a member of the room but not attending any event — confirm it's allowed (attendance is checked against room membership, not event RSVPs)
+- [ ] Suggest a library game whose owner is **not** a member of the room — confirm "None of the owners are attending" error, same wording as the event case
+- [ ] Confirm Join/Leave buttons on a room-suggested game card work the same as in an event channel
+- [ ] Confirm suggesting in a room does **not** create a request-pin or lineup-pin entry — "bring to a future event" tracking doesn't apply to an ad-hoc room
 
 #### From a library game (exact match)
 - [ ] Add a game to your library first (`/library add game:Wingspan`)
@@ -90,11 +123,15 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 #### From BGG search
 - [ ] Run `/game suggest title:Ticket to Ride` — confirm BGG results dropdown appears
+- [ ] Confirm results are sorted newest publish year first
 - [ ] Select a result — confirm game card is posted with BGG-sourced data
 - [ ] If the BGG game has no tags — confirm tag picker appears
 - [ ] Select tags, click Save — confirm tags appear on the game card and prompt to confirm bringing the game
 - [ ] Click Skip on tag picker — confirm bring prompt appears
-- [ ] Search a very generic term with many BGG matches — confirm the dropdown is capped at Discord's 25-option select menu limit rather than erroring
+- [ ] Search a generic term with more than 24 BGG matches — confirm **← Previous** / **Page X of Y** / **Next →** buttons appear below the dropdown, with Previous disabled on page 1
+- [ ] Click **Next →** — confirm the dropdown updates to the next page of results (newest-first order continues across pages) and **Previous** becomes enabled
+- [ ] Navigate to the last page — confirm **Next →** is disabled
+- [ ] Search a term with 24 or fewer matches — confirm no pagination buttons appear (dropdown only)
 
 #### With expansions
 - [ ] Run `/game suggest title:Wingspan with_expansions:True`
@@ -110,6 +147,10 @@ All `/game` commands should be used inside an active event channel unless otherw
 #### From outside an event channel
 - [ ] Run `/game suggest title:Catan` from a non-event channel — confirm an event picker dropdown appears
 - [ ] Select an event — confirm the suggest flow continues normally
+- [ ] With multiple upcoming events, run `/game suggest` for a title that has no library match, select an event from the picker — confirm the BGG search dropdown appears next (regression: the event picker used to lose track of the typed title if it wasn't resolved as part of the same interaction, making it look like nothing happened after picking an event)
+- [ ] Same as above but with a title that **is** an exact library match — confirm the game card posts directly (with the owner listed) right after picking the event, no extra step
+- [ ] Restart/redeploy the bot between running `/game suggest` (before picking an event) and selecting an event from the picker — confirm the picker still resolves the original title correctly afterward (the title/expansion choice now travels with the dropdown itself rather than living in the bot process's memory)
+- [ ] Select an event from the picker for a lineup that has already locked (4.7) — confirm the same "lineup is locked" message you'd get from suggesting directly in that event's channel
 
 ### 1.3b `/game list`
 
@@ -121,11 +162,13 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.3c `/game cancel`
 
-**What it does:** Removes your own game suggestion from the lineup. Only the person who suggested the game can remove it via this command; hosts can remove any game via `/host game cancel`.
+**What it does:** Removes a game suggestion from the lineup. The person who suggested the game, that event's host, or an admin can remove it via this command. If the given title isn't an exact match, falls back to a fuzzy match against the current lineup (e.g. `catan` matches "Settlers of Catan").
 
 - [ ] Remove your own game suggestion: `/game cancel title:Wingspan` — confirm card is deleted
-- [ ] Attempt to remove another user's suggestion as a regular member — confirm "Only the person who suggested... can remove it. Ask a host or admin if you need it removed." error
-- [ ] Attempt to cancel a game not in the lineup — confirm "No game called X found" error
+- [ ] Remove your own game suggestion using a partial/fuzzy title, e.g. `/game cancel title:catan` when "Settlers of Catan" is in the lineup — confirm it's found and removed
+- [ ] With two similarly-named games in the lineup (e.g. "Wingspan" and "Wingspan: Asia"), run `/game cancel title:wing` — confirm the bot asks you to be more specific instead of guessing, and neither game is removed
+- [ ] Attempt to remove another user's suggestion as a regular member who is not that event's host — confirm "Only the person who suggested..., the event host, or an admin can remove it." error
+- [ ] Attempt to cancel a game not in the lineup (no exact or fuzzy match) — confirm "No game called X found" error
 
 ### 1.3d Game Card Buttons — Join / Leave
 
@@ -139,14 +182,18 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.3e Game Card Buttons — Waitlist
 
-**What it does:** When a game is full, players join a waitlist. If the waitlist reaches the minimum player count, the request pin is updated to reflect 2 copies needed.
+**What it does:** When a game is full, players join a waitlist. If the waitlist reaches the minimum player count, the request pin is updated to reflect 2 copies needed — and if that game has a `/library request` (1.4h) outstanding, the bot automatically asks one more attending owner (load-balanced, excluding anyone already asked/confirmed/declined) to bring a second copy, the same "🎲 ... ✅ Confirm bringing / ❌ Can't bring it" DM as the initial request. If the waitlist later drops back below the threshold, that extra ask is retracted — its DM is edited to say it's no longer needed and its buttons removed — rather than left outstanding. When a seated player leaves and the game is full, the first waitlisted player is automatically promoted into the freed seat and removed from the waitlist (they get a DM if their DMs are open).
 
 - [ ] Fill a game to max players, then click **Join Waitlist** — confirm added to waitlist section
 - [ ] Click **Join Waitlist** when already on waitlist — confirm "You're already on the waitlist" error
 - [ ] Click **Join Waitlist** when a seat is still available — confirm "There's still an open seat" error
-- [ ] Add enough players to the waitlist to reach the minimum player count — confirm request pin updates to show "2 copies"
+- [ ] Add enough players to the waitlist to reach the minimum player count, with a `/library request` (1.4h) already outstanding for that game and 2+ attending owners — confirm the request pin updates to show "X/2 copies confirmed" and a second attending owner receives a "please bring a copy" DM
+- [ ] Do the same with only 1 owner attending — confirm the pin still shows the updated copy count, but no second DM is sent (no eligible second owner to ask)
 - [ ] Click **Leave Waitlist** — confirm removed from waitlist
-- [ ] Dropping below min players on waitlist — confirm request pin reverts to "1 copy"
+- [ ] Dropping below min players on waitlist, with a second owner's ask still outstanding (unconfirmed) — confirm the pin reverts to 1 copy needed and that owner's DM is edited to say it's no longer needed, with its buttons removed
+- [ ] Dropping below min players after the second owner already confirmed — confirm the pin reverts to 1 copy needed but the existing confirmation is left alone (a harmless extra confirmed copy), not retracted
+- [ ] With a full game and at least one person on the waitlist, have a seated player click **Leave** — confirm the first waitlisted person is moved into the freed seat, removed from the waitlist list, and (if their DMs are open) receives a DM saying a seat opened up
+- [ ] Do the same when promoting the waitlist below the minimum player count drops it back below 2 groups — confirm the request pin reverts to 1 copy needed
 
 ### 1.3f Bring Confirm / Cancel
 
@@ -154,6 +201,42 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 - [ ] After suggesting a BGG game, click **Yes, I'll bring it** — confirm game is added to your library (check with `/library mine`)
 - [ ] Click **No** — confirm the game is still in the lineup but not added to your library
+
+### 1.3g `/game bgstats`
+
+**What it does:** Generates a QR code (and, for small enough tables — or always, if `SHORT_LINK_BASE_URL` is configured, see 4.7a — a "Log in BG Stats" button) for one of the current channel's suggested games, pre-filled with that game, its seated players, and a location — useful for a one-off play (especially in `/room` private rooms, which have no automatic scheduler pass). Works the same in event channels and private rooms; anyone who can see the game card can run it, not just its creator.
+
+- [ ] With `SHORT_LINK_BASE_URL` configured (4.7a), run `/game bgstats title:Wingspan` in an event channel with players seated — confirm a public reply with a "📊 Log in BG Stats" button and a QR code image, regardless of how many players are seated
+- [ ] Confirm the button opens BG Stats (or, pasted/decoded, contains) the correct game, the event's configured location, and the seated players
+- [ ] Without `SHORT_LINK_BASE_URL` configured, run the same command — confirm the button is **omitted** (BG Stats' full payload, including the fields it requires per player/game, exceeds Discord's 512-char button limit even for a solo play) but the QR code is still present, and the reply text explains why there's no button
+- [ ] Confirm the QR code decodes to (or, via the short link, redirects to) the exact same play details the button would have used, regardless of player count
+- [ ] Scan the QR code (or tap the button) and confirm BG Stats opens the pre-filled play screen without an "Invalid data" JSON error (regression: BG Stats' Android app requires explicit `winner`, `startPlayer`, `highestWins`, and `noPoints` values, even though all four are documented as optional)
+- [ ] For a game with a BGG id, confirm BG Stats opens successfully on iOS **and** macOS/Mac Catalyst without crashing (regression: `game.bggId` was sent as a quoted JSON string instead of the number BG Stats' schema expects, which threw a Core Data type-coercion exception — crashed outright on macOS, and silently closed the app on iOS)
+- [ ] For a seated player with a linked BGG account (`/bgg link`), confirm their BGG username appears instead of their Discord display name
+- [ ] Run `/game bgstats title:Wingspan location:Sean's place` — confirm the supplied location overrides the event's default
+- [ ] Run the same command inside a `/room`-created private room with a suggested game — confirm it works identically, and that location is blank unless the `location` option is given (rooms have no location of their own)
+- [ ] Run with a title that doesn't match any suggested game — confirm a clear ephemeral "No game called... found" error listing current games
+- [ ] With `SHORT_LINK_BASE_URL` configured, run `/game bgstats` for a game whose link hasn't been opened yet — confirm a "🔗 BG Stats Link" field reads "Not yet opened"
+- [ ] Open that same link/QR — confirm the **original posted message** updates in place (no need to re-run the command) to show the open count and a relative "last opened" time; open it again and confirm the count increments further
+- [ ] Run `/game bgstats` again for the same game (regenerating a new link/message) — confirm its "🔗 BG Stats Link" field reflects the combined open count across both links, and opening either link updates both posted messages
+- [ ] Without `SHORT_LINK_BASE_URL` configured, confirm the "🔗 BG Stats Link" field is omitted entirely (there's no short link to track opens on)
+
+### 1.3h Quick Actions Hub (button panel)
+
+**What it does:** A pinned "🎮 Quick Actions" message with four buttons — 🎲 Suggest a Game, 🙋 Request a Game to Bring, 📋 My Games to Bring, 🍿 Snacks — posted automatically in the event channel the moment it's created, alongside (not replacing) the existing plain-text welcome message. Built for members on mobile who'd rather tap a button than learn/type a slash command; each button leads to the exact same result as its slash-command equivalent, just entered via a modal (popup text form) instead of command options. Because the hub only ever lives inside one specific event channel, it always resolves that event directly from the channel — there's no event picker step here, unlike running the bare slash commands outside an event channel.
+
+- [ ] Create a new event — confirm the "🎮 Quick Actions" message appears in the new event channel, pinned, alongside the separate plain-text welcome message
+- [ ] Tap "🎲 Suggest a Game" — confirm a modal pops up asking for a game title
+- [ ] Submit the modal with a game already in the group library — confirm it's added to the lineup exactly as `/game suggest` would (posts a game card, same duplicate-detection, same "owner must be attending" check)
+- [ ] Submit the modal with a title not in the library — confirm it falls through to the BGG search flow, same as `/game suggest`
+- [ ] Submit the modal with a title already suggested for this event — confirm the same "already in the lineup" message `/game suggest` gives, with a jump link to the existing card
+- [ ] Tap "🙋 Request a Game to Bring" — confirm a modal pops up asking for a game name
+- [ ] Submit the modal with a game in the group library whose owner is attending — confirm the request is created and the assigned owner gets DMed, identical to `/library request`
+- [ ] Submit the modal with a game not in the library, or whose owner(s) aren't attending — confirm the same error messages `/library request` gives
+- [ ] Tap "📋 My Games to Bring" — confirm it shows the same ephemeral embed `/library bring` (no game param) shows for this event, listing only requests tied to games you (or a linked delegate) own
+- [ ] Tap "📋 My Games to Bring" with nothing of yours requested — confirm "None of your games have been requested for this event"
+- [ ] Tap "🍿 Snacks" — confirm the same panel described in 1.11d, scoped to this event
+- [ ] Manually un-pin the hub message — confirm it stays unpinned afterward (known limitation: unlike the Game Lineup/Games to Bring pins, which refresh and re-pin on every suggest/request, nothing currently re-triggers the hub pin after event creation, so there's no later action that would restore it)
 
 ## 1.4 `/library` — Game Library
 
@@ -164,15 +247,18 @@ All `/game` commands should be used inside an active event channel unless otherw
 #### Basic add — already owned
 - [ ] `/library add game:Wingspan` when you already own it — confirm "already in your library" duplicate message
 - [ ] Case-insensitive: `/library add game:wingspan` when you own "Wingspan" — same duplicate message
+- [ ] `/library add game:Wingspan` when a member who's linked you as a delegate (1.4n) owns it, and you don't — confirm `**Wingspan** is already in your library (shared from <@owner>'s library).` rather than the "adding your copy?" prompt
 
 #### Others already own the game
 - [ ] When another user owns the game (exact name match), confirm "already in the group library — adding your copy?" prompt with **Yes, add my copy** and **Cancel** buttons
 - [ ] Click **Yes, add my copy** — confirm game is added
+- [ ] Confirm this "adding your copy?" prompt still appears for a stranger's matching entry when there's no library link between you — linking only changes the behavior for linked delegates (see 1.4n)
 
 #### Partial match in group library
 - [ ] `/library add game:wing` when "Wingspan" is in the group library — confirm a "similar games in the group library" select menu appears
 - [ ] Select a match — confirm "adding your copy?" flow
 - [ ] Select "None of these — search BGG" — confirm BGG catalog search continues
+- [ ] `/library add game:wing` where the only "Wingspan" entry in the group library is owned by a member who's linked you as a delegate (1.4n) — select it from the dropdown — confirm "already in your library (shared from @owner's library)" instead of the "adding your copy?" flow
 
 #### BGG exact match (confirm prompt)
 - [ ] `/library add game:Wingspan` on an empty library — confirm a "Found **Wingspan** on BGG — is that the game?" confirm prompt appears
@@ -185,8 +271,12 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Confirm **Yes** — confirm game is added with BGG details
 - [ ] Search a very generic term with many BGG matches — confirm the dropdown is capped at Discord's 25-option select menu limit rather than erroring
 
+#### Live BGG search fallback
+- [ ] Type a game name that's new/obscure enough to miss the local BGG catalog but findable on BGG directly (e.g. a recent release) — confirm it still resolves (BGG confirm prompt or select UI) instead of falling through to the custom-game path
+- [ ] Repeat the same search a second time — confirm it now resolves instantly from the local catalog (no delay from a live BGG lookup)
+
 #### No matches anywhere — custom game
-- [ ] `/library add game:My Custom Game` with nothing matching anywhere — confirm game is added immediately and the "add details" modal appears
+- [ ] `/library add game:My Custom Game` with nothing matching anywhere (including a live BGG search) — confirm game is added immediately and the "add details" modal appears
 
 ### 1.4b `/library remove`
 
@@ -199,11 +289,18 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.4c `/library mine`
 
-**What it does:** Lists all base games you've added to the library. Expansions imported via `/library import bgg` are excluded.
+**What it does:** Lists all base games you've added to the library, plus any linked delegates' games. Expansions imported via `/library import bgg` are excluded. Paginates with Previous/Next buttons when large (same pattern as `/library list`, 1.4d) — a member linked to several delegates' libraries can easily exceed a single embed field's capacity.
 
 - [ ] Run `/library mine` with games added — confirm all your base games are listed
 - [ ] If you have imported BGG expansions — confirm they do NOT appear in `/library mine`
 - [ ] Run `/library mine` with no games — confirm "You haven't added any games" message
+- [ ] With another member's library linked to you as a delegate (1.4n), run `/library mine` — confirm their games appear alongside your own, each marked `*(shared from <@ownerId>)*`
+- [ ] With enough games (yours plus any linked delegates') to exceed one page:
+  - [ ] Confirm **← Previous** and **Next →** buttons appear, with a "Page X of Y" indicator between them
+  - [ ] **← Previous** is disabled on the first page
+  - [ ] Click **Next →** — confirm page 2 is shown with different games
+  - [ ] **Next →** is disabled on the last page
+  - [ ] Confirm no error occurs regardless of how large the combined list is (regression: this previously crashed once the list exceeded Discord's embed description limit)
 
 ### 1.4d `/library list`
 
@@ -230,10 +327,12 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.4f `/library edit`
 
-**What it does:** Lets you update the details of a game you own (player count, play time, tags, expansions, and complexity).
+**What it does:** Lets you update the details of a game you own (player count, play time, tags, expansions, and complexity). Every field in the modal is pre-filled with its current value, so deleting a field's text and saving clears that field rather than leaving the old value in place.
 
-- [ ] `/library edit game:Wingspan` — confirm the edit modal appears
+- [ ] `/library edit game:Wingspan` — confirm the edit modal appears, pre-filled with the game's current values
 - [ ] Update player range, save — confirm updated values appear in `/library view`
+- [ ] Set an expansion you own (e.g. `Prelude`), save, then re-open `/library edit` and clear the Expansions field entirely — confirm `/library view` no longer lists any expansions
+- [ ] Clear the player range, play time, tags, and complexity fields (leave every field blank), save — confirm `/library view` shows none of those values set, rather than the previous ones
 - [ ] Set Complexity to `Medium` — confirm 🟡 icon appears in `/library list`
 - [ ] Set Complexity to `light` (lowercase) — confirm it is accepted and normalized to `Light`
 - [ ] Set Complexity to an invalid value (e.g. `Extreme`) — confirm a warning is shown and the previous value is kept
@@ -249,7 +348,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.4h `/library request`
 
-**What it does:** Requests a specific game be brought to an event.
+**What it does:** Requests a specific game be brought to an event. No "please bring this" DM goes out yet — asking is deferred until the event's lineup locks (4.7), so the bot can pick fairly from each owner's *final* confirmed-brings count instead of an early, mostly-arbitrary snapshot. At lock, the request is asked of the owner the copy-select assigned it to (an explicit pick), or — when no copy-select is shown, or **Bot decides** was selected — whichever attending owner currently has the fewest confirmed brings for that event, with "🎲 ... ✅ Confirm bringing" and "❌ Can't bring it" buttons. Confirming behaves the same as `/library bring game:<name>`; declining cascades the same DM to the next eligible attending owner (see "Declining via the DM button" below). If the waitlist for a suggested game grows enough to need a second copy (1.3e/2.3e/3.3e), that just updates how many owners get asked at lock — it doesn't trigger an ask itself. A request made *after* the lineup is already locked has no future lock to wait for, so it's asked immediately instead.
 
 **Prerequisites:** an active event must exist, and the game being requested must already be in the library, owned by someone who has RSVP'd (see 1.4a/2.4a/3.4a to add a game first).
 
@@ -258,11 +357,28 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] `/library request game:Catan` from inside a specific event channel — confirm request targets that event
 - [ ] Request the same game twice — confirm duplicate is blocked
 - [ ] None of the game's owners are RSVP'd — confirm "None of the owners are attending" error
+- [ ] The literal owner has NOT RSVP'd, but a member they've linked as a delegate (1.4n) has RSVP'd yes/maybe — confirm the request still succeeds instead of hitting "None of the owners are attending"
+- [ ] On an event whose lineup hasn't locked yet, confirm no DM is sent to anyone, and the reply notes "An owner will be asked to bring it once the lineup locks"
+- [ ] Force the lineup to lock (4.7), then confirm the assigned owner receives a DM with a "✅ Confirm bringing" button for the requested game (include any owned expansions in the DM text)
+- [ ] With 2+ attending owners and no expansion copy-select shown, confirm the DM (once sent, at lock) goes to whichever owner currently has the fewest confirmed brings for that event, not just the first owner alphabetically/by id
+- [ ] Request a game on an event whose lineup is **already locked** — confirm the DM goes out immediately (no deferral) since there's no future lock left to wait for
 
 #### Request with expansion copy select
 - [ ] Request a game where at least one attending owner has expansions — confirm "Which copy would you like?" select appears
-- [ ] Select a specific owner's copy — confirm announcement includes "— bringing: @owner"
-- [ ] Select **Bot decides** — confirm the bot assigns the owner with fewest confirmed brings
+- [ ] Select a specific owner's copy — confirm announcement includes "— bringing: @owner" immediately, but (pre-lock) that owner doesn't receive the DM until the lineup locks
+- [ ] Select **Bot decides** — confirm no owner is chosen or announced yet (no "— bringing: @owner" in the reply); once the lineup locks, confirm the bot then assigns the owner with fewest confirmed brings and DMs them
+
+#### Confirming via the DM button
+- [ ] Tap "✅ Confirm bringing" in the DM — confirm it behaves the same as `/library bring game:<name>` (message edits to show confirmed, ✅ appears next to the game in the event's request pin)
+- [ ] Tap the DM button as an account that no longer owns the requested game — confirm "You can only confirm bringing games you own" reply, and the request is **not** marked confirmed
+- [ ] Confirm the same request via `/library bring game:<name>` instead of the DM button — confirm the earlier DM is edited afterward to note "Confirmed via /library bring", with its button removed
+- [ ] Tap a "please bring this" DM button for a request that's since been dropped (e.g. the game ended up with zero seated players at lock, 4.7) — confirm a graceful "no longer exists" edit rather than an error or a duplicate confirmation
+
+#### Declining via the DM button
+- [ ] Tap "❌ Can't bring it" in the DM — confirm the message updates to a "No problem" acknowledgment with buttons removed, and (with a second attending owner available) that owner receives the same "please bring this" DM
+- [ ] Decline with no other attending owner left to ask — confirm the decline itself still succeeds (no error), just with nobody left to cascade to; the request pin's copy count reflects the shortfall
+- [ ] Tap "❌ Can't bring it" a second time (or on a stale/forwarded DM) after already declining — confirm "You weren't asked to bring this one" rather than a duplicate decline or a crash
+- [ ] Tap "❌ Can't bring it" on a request that's since been dropped — confirm the same graceful "no longer exists" edit as the confirm button
 
 ### 1.4i `/library unrequest`
 
@@ -282,12 +398,14 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run `/library bring game:Root` (where Root is requested with your copy preferred) — confirm success message with expansion list
 - [ ] Click Confirm — confirm ✅ appears next to the game in the event's request pin
 - [ ] Run with a game that hasn't been requested — confirm "That game hasn't been requested" error
+- [ ] As a member linked as a delegate (1.4n) of the owner whose copy was requested, run `/library bring` — confirm the owner's requested game appears in your view too, and `/library bring game:X` lets you see expansion availability and confirm bringing it exactly as if it were your own
+- [ ] With a 2-copies-needed request (1.3e) where only one owner has confirmed, run `/library bring` view mode — confirm the line shows "X/2 copies confirmed" rather than a single ✅, both for the confirmed owner's own view and for the still-outstanding owner's view
 
 ### 1.4k `/library import`
 
 #### `/library import bgg`
 
-**What it does:** Imports all owned games and expansions from your linked BoardGameGeek collection.
+**What it does:** Imports all owned games and expansions from your linked BoardGameGeek collection. The "Import my library now" button shown after `/bgg link` (1.6a/2.6a/3.6a) triggers this same import.
 
 - [ ] Run without a linked BGG account — confirm "You don't have a BoardGameGeek account linked" error
 - [ ] Run with a linked account — confirm success message with game/expansion counts
@@ -303,7 +421,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.4l `/library search`
 
-**What it does:** Searches the library with filters for player count, tags, duration, and complexity.
+**What it does:** Searches the library with filters for player count, tags, duration, and complexity. If no `tag`/`tag2`/`tag3` or `complexity` option is given, it defaults to your own `/myroles` preferences (1.5) instead of requiring you to type them every time.
 
 - [ ] `/library search players:4` — confirm results include games supporting 4 players, sorted by proximity to 4
 - [ ] `/library search players:2,4` (multiple counts) — confirm games matching either count appear
@@ -316,20 +434,40 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] `/library search min_duration:30 max_duration:60` — confirm only games within that exact range appear
 - [ ] `/library search complexity:Light` — confirm only Light games appear
 - [ ] Combine filters (e.g. `players`, `tag`, and `complexity` together) — confirm all filters apply together (AND across filter types, OR within tag1/2/3)
-- [ ] Run `/library search` with no options at all — confirm error: "Provide at least one valid filter: `players`, `tag`, or `duration`."
+- [ ] Set genre/difficulty preferences via `/myroles` (1.5), then run `/library search` with no options at all — confirm it searches using those preferences instead of erroring, and the result description notes "(from your /myroles)"
+- [ ] With `/myroles` preferences set, run `/library search tag:Party` (a tag different from your preference) — confirm the explicit tag wins over your preferences, with no "(from your /myroles)" note
+- [ ] With no `/myroles` preferences set, run `/library search` with no options at all — confirm error: "Provide at least one valid filter: `players`, `tag`, or `duration` — or set your preferences with `/myroles` to search based on those."
 - [ ] Search with valid filters but no matches — confirm "No games matched your filters"
 
 ### 1.4m `/library random`
 
-**What it does:** Picks 3 random games from the library, optionally filtered by tags and complexity.
+**What it does:** Picks 3 random games from the library, optionally filtered by tags and complexity. If no `tag`/`tag2`/`tag3` or `complexity` option is given, it defaults to your own `/myroles` preferences (1.5) instead of picking from the whole library. Picks are weighted toward games that haven't been scheduled onto an event lineup recently (or ever) — never excluded, just less likely to come up again right away.
 
-- [ ] `/library random` with no filters — confirm 3 random games are shown
+- [ ] `/library random` with no filters and no `/myroles` preferences set — confirm 3 fully random games are shown, with a footer tip to set `/myroles`
 - [ ] `/library random tag:Co-op` — confirm all 3 results are Co-op tagged
 - [ ] `/library random tag:Co-op tag2:Party` — confirm results match EITHER tag (OR logic across tag/tag2/tag3)
 - [ ] `/library random complexity:Light` — confirm all 3 results are Light complexity
 - [ ] `/library random tag:Co-op complexity:Heavy` — confirm results match the tag AND the complexity together
+- [ ] Set genre/difficulty preferences via `/myroles` (1.5), then run `/library random` with no options at all — confirm the title includes "(from your /myroles)" and results are filtered to those preferences
+- [ ] With `/myroles` preferences set, run `/library random complexity:Heavy` (different from your preference) — confirm the explicit complexity wins, with no "(from your /myroles)" note
 - [ ] Filter for a tag/complexity combination with no matching games — confirm it falls back to 3 unfiltered random picks with a "No `<filter>` games found — here are 3 random picks instead" title
 - [ ] Run multiple times — confirm different results each time
+- [ ] With a mix of library games where some were scheduled onto a recent locked event's lineup and others never have been — run `/library random` many times — confirm the never-(recently-)scheduled games come up noticeably more often, though a recently-scheduled game can still occasionally appear (it's biased, not excluded)
+
+### 1.4n `/library link` / `/library unlink`
+
+**What it does:** `/library link user:@X` grants @X delegate access to your library — they can view your games in their own `/library mine`, and can request/bring them, but this never gives them write access (add/remove/edit/clear) and never gives you access to theirs. It's one-directional: for two people to fully share with each other, each runs `/library link` once naming the other. `/library unlink user:@X` removes the link and can be run by either party.
+
+- [ ] `/library link user:@Bob` (run by Alice) — confirm reply: "<@Bob> can now see your games in their `/library mine`, and can request/confirm bringing them. This only shares *your* library with them — if you'd like the same access to theirs, they'll need to run `/library link user:@you`."
+- [ ] As Bob, run `/library mine` (1.4c) — confirm Alice's games now appear, marked `*(shared from <@Alice>)*`
+- [ ] As Alice, run `/library mine` — confirm Bob's games do NOT appear — the link is one-directional, and Alice only granted access, she didn't receive any
+- [ ] Run `/library link user:@Bob` again as Alice (already linked) — confirm reply: "<@Bob> can already view and manage bringing for your library." and no duplicate link is created
+- [ ] `/library link user:@yourself` (target = yourself) — confirm "You can't link your own account to itself."
+- [ ] `/library link user:@SomeBot` (target = a bot account) — confirm "You can't link a bot account."
+- [ ] `/library unlink user:@Bob` run by Alice (the grantor) — confirm "Library link with <@Bob> removed." and Bob's `/library mine` no longer shows Alice's games
+- [ ] Re-link Alice → Bob, then run `/library unlink user:@Alice` as Bob (the delegate, not the original grantor) — confirm the link is still removed even though Bob didn't create it
+- [ ] `/library unlink user:@Carol` where no link exists between you and Carol — confirm "You don't have a library link with <@Carol>."
+- [ ] With Alice → Bob and Alice → Carol both linked, run `/library unlink user:@Bob` — confirm only the Alice–Bob link is removed; Carol's shared access to Alice's library is unaffected
 
 ## 1.5 `/myroles` — Game Preferences
 
@@ -350,10 +488,12 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ## 1.6 `/bgg` — BGG Account Linking
 
-**What it does:** Lets members link their BoardGameGeek username to their Discord account on this server.
+**What it does:** Lets members link their BoardGameGeek username to their Discord account on this server, with a one-click option to sync their BGG collection into the library right away.
 
 ### 1.6a `/bgg link`
-- [ ] Run `/bgg link username:validuser` — confirm BGG API validates and success embed appears with "Powered by BGG" logo
+- [ ] Run `/bgg link username:validuser` — confirm BGG API validates and success embed appears with "Powered by BGG" logo and an "Import my library now" button
+- [ ] Click "Import my library now" — confirm it behaves like `/library import bgg` (1.4k): success message with game/expansion counts, and games appear in `/library mine`
+- [ ] Click "Import my library now" a second time — confirm all entries show as "already in your library" (no duplicates)
 - [ ] Run `/bgg link username:nonexistentuser` — confirm "We couldn't verify that BoardGameGeek account" message
 - [ ] Run with same username already linked — confirm "already linked" message
 
@@ -371,32 +511,48 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 **What it does:** Creates a for-sale listing, optionally enriched with BGG game details and current BGG marketplace price data.
 
-**Prerequisites:** most cases below assume a marketplace forum channel is already configured via `/admin marketplace config` (3.9m) — the "no channel configured" case further down is intentionally tested without it.
+**Prerequisites:** most cases below assume a marketplace channel is already configured via `/admin marketplace config` (3.9m) — the "no channel configured" case further down is intentionally tested without it.
 
-- [ ] Run `/marketplace post sell item:Wingspan bids_allowed:true condition:Very Good` — confirm BGG price screen appears (ephemeral) with current marketplace prices and "Powered by BGG" logo
-- [ ] Select a price option (use suggested, enter custom, or open to offers) — confirm forum post created with item name, price, condition, and "I'm Interested" button
-- [ ] Run with `bids_allowed:false` — confirm the listing embed shows "*(firm)*" next to the price
+- [ ] Run `/marketplace post sell item:Wingspan offers_allowed:true condition:Very Good` (renamed from `bids_allowed`) — confirm BGG price screen appears (ephemeral) with current marketplace prices and "Powered by BGG" logo
+- [ ] Select a price option (use suggested, enter custom, or open to offers) — confirm forum post created with item name, price, a "Negotiable?" field showing "💬 Open to Offers", condition, and "I'm Interested" button
+- [ ] Run with `offers_allowed:false` (renamed from `bids_allowed`) — confirm the listing embed's "Negotiable?" field shows "🔒 Firm Price" instead of "💬 Open to Offers", and the forum post now also shows a "⚡ Buy It Now" button alongside "I'm Interested" (see 5.1a for the full Buy It Now flow)
+- [ ] Confirm the post-creation confirmation embed (shown right after posting) also has a "Negotiable?" field with the matching value ("💬 Open to Offers" / "🔒 Firm Price") — this field was previously named "Bids" with values "Allowed"/"Firm price"
 - [ ] Select "List as open to offers" — confirm listing shows "Open to offers"
 - [ ] Run with `notes` — confirm notes appear in the listing embed
 - [ ] Confirm BGG thumbnail appears in the embed (if BGG found the item)
 - [ ] Confirm "Powered by BGG" logo appears in the forum post embed
 - [ ] Run when no marketplace channel is configured — confirm listing is still created, response notes no channel configured
 - [ ] Run with an item that has expansions — confirm expansion select step appears; selecting expansions shows combined price estimate
+- [ ] Run with an item that IS an expansion (e.g. `Wingspan: European Expansion`) — confirm the expansion-select step is **skipped**; instead a prompt asks whether to include the base game, with "✅ Include `<Base Game>`" and "➡️ Just the Expansion" buttons
+- [ ] Choose to include the base game — confirm the price screen title includes "+ Base Game" and combines pricing for both items; the resulting listing embed's title also shows "+ Base Game" and includes an "Includes Base Game" field
+- [ ] Choose "Just the Expansion" — confirm the listing posts normally with no base-game bundling; the embed still shows a "Base game on BGG" reference link, marked "(not included)"
 
 #### Custom / non-BGG items
 - [ ] Start typing an item name that has no BGG match, then select the "📝 not on BGG / custom item" autocomplete option — confirm no BGG price screen appears and you're instead prompted to add a reference link (**Add Link** / **Skip** buttons)
 - [ ] Click **Add Link**, submit a URL in the modal — confirm the listing embed shows a "Reference link" entry pointing to that URL
 - [ ] Click **Skip** — confirm the listing posts with no reference link and no BGG thumbnail
 - [ ] Click **Add Link** and submit a non-URL string (e.g. plain text) — confirm graceful validation rather than a broken link field
+- [ ] Confirm a custom/non-BGG listing's forum/text post shows **no** "Powered by BGG" logo (there's no BGG data to attribute) — whether Add Link or Skip was chosen
+
+#### Catalog match confirmation (regression: a search like "gloom" no longer silently attaches the wrong game, e.g. "Gloom" instead of the intended "Gloomhaven")
+- [ ] Type an item name and pick a real suggestion from the autocomplete dropdown — confirm it goes straight to the next step (price screen / expansion select / include-base-game prompt) with **no** "Found a possible match" confirmation in between
+- [ ] Type an item name and submit **without** picking a suggestion (e.g. type "gloom" and press Enter before the dropdown is used) where that text happens to exactly match a *different*, shorter real BGG entry — confirm a "Found a possible match" prompt appears showing the matched game's name/year (and thumbnail, if any), instead of silently attaching it
+- [ ] On that prompt, tap "✅ Yes, that's it" — confirm the wizard continues normally from there (expansion select / include-base-game / price screen) using the matched game's data
+- [ ] On that prompt, tap "🔍 Search again" — confirm a modal appears asking for a new item name; submit one — confirm it re-resolves and shows another confirmation prompt if it matches something (still unconfirmed, since typed text is never an explicit pick), or the no-BGG-match reference-link prompt if it matches nothing
+- [ ] On that prompt, tap "📝 Not on BGG" — confirm it clears the matched game and falls through to the same reference-link prompt (Add Link / Skip) as an item with no BGG match at all
+- [ ] Type text and submit **without** picking a suggestion, using a name obscure/new enough to miss the local BGG catalog but findable via a live BGG search — confirm it still shows a "Found a possible match" prompt instead of falling straight to the no-BGG-match reference-link flow
+- [ ] Use the marketplace hub's "📦 Sell an Item" / "🔄 Propose a Trade" wizard (1.7m) instead of the slash command — confirm every item name entered there (always free-typed, since a modal has no autocomplete) goes through this same confirmation step whenever it matches a catalog entry
 
 ### 1.7b `/marketplace post trade`
 
 **What it does:** Creates a trade listing for an item you want to trade away.
 
-- [ ] Run `/marketplace post trade item:Catan condition:Good looking_for:Wingspan` — confirm trade listing posted to forum with "For Trade" tag and looking-for info
+- [ ] Run `/marketplace post trade item:Catan condition:Good looking_for:Wingspan` — confirm trade listing posted to forum with "For Trade" tag, an "Offering" field showing the item name, and a "Looking For" field showing "Wingspan" (the two fields display side by side)
+- [ ] Confirm the post-creation confirmation embed ("Trade listing created — Catan") also shows the "Offering" field immediately before the "Looking For" field
 - [ ] Run without `looking_for` — confirm listing shows "Open to offers"
 - [ ] Confirm "I'm Interested" button appears on the forum post
 - [ ] Select the "📝 not on BGG / custom item" autocomplete option — confirm the same Add Link / Skip reference-link flow as `/marketplace post sell` (see 1.7a) applies here too
+- [ ] Run with an item that IS an expansion — confirm the same include-base-game prompt from `/marketplace post sell` (see 1.7a) appears before the trade listing is created
 
 ### 1.7c `/marketplace price`
 
@@ -404,8 +560,11 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 - [ ] Run `/marketplace price item:Wingspan` — confirm ephemeral embed shows price range, median, avg, distribution histogram, and "Powered by BGG" logo
 - [ ] Run with an item that has expansions — confirm expansion select step appears; selecting expansions shows per-item breakdown and combined estimate with total listing count
+- [ ] Run with an item that IS an expansion — confirm the include-base-game prompt appears instead of an expansion-select step; choosing to include the base game shows a per-item price breakdown including the base game
 - [ ] Run with a custom/non-BGG item (type a name not in the catalog) — confirm "not in the BGG catalog" error
 - [ ] Confirm no listing is created and nothing is posted to the marketplace channel
+- [ ] Pick a real autocomplete suggestion — confirm the price embed shows no "best-guess" note
+- [ ] Type text and submit **without** picking a suggestion, where it happens to exactly match a different real BGG entry — confirm the price embed includes a "⚠️ Best-guess match" note naming the actual game the prices are for (unlike `post sell`/`post trade`, price check has no interactive confirmation step — it's read-only, so the note is shown instead)
 
 ### 1.7d `/marketplace conditions`
 
@@ -416,36 +575,42 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.7e `/marketplace browse`
 
-**What it does:** Shows active listings in an ephemeral text list (up to 5 at a time).
+**What it does:** Shows active listings in an ephemeral text list (up to 5 at a time), followed by a legend explaining the status/type icons.
 
 - [ ] Run with no listings — confirm "No active listings found"
 - [ ] Run with active listings — confirm list shows item name, price/offer, and seller username
+- [ ] Run with a listing that has open offers — confirm the list shows an inline "(N offer(s))" annotation next to the price/offer for that listing
 - [ ] Run with `type:sell` — confirm only sell listings appear
 - [ ] Run with `type:trade` — confirm only trade listings appear
 - [ ] Run with more than 5 active listings — confirm "Showing 5 of N. Check the marketplace channel for all listings."
+- [ ] Confirm the reply ends with a legend line: "🟢 Active · 🟡 Pending offer(s) · 🔴 Sold/Traded · ⚫ Closed  |  🏷️ For Sale · 🔄 For Trade" (browse itself only ever shows 🟢/🟡, since closed/sold listings aren't "active" — the legend still covers the full set members will see elsewhere, e.g. in `/marketplace my`)
 
 ### 1.7f `/marketplace my`
 
-**What it does:** Shows your own listings with their status, bids, and IDs.
+**What it does:** Shows your own listings with their status, offers, and IDs, followed by the same status/type legend as `/marketplace browse`. Sold/closed listings older than a week are left off the list entirely (they're done, and clutter this view once they've aged out) — active/pending listings always show regardless of age.
 
 - [ ] Run with no listings — confirm "You don't have any listings"
-- [ ] Run with listings — confirm all your listings are shown with status, price/offer, open bid count, and listing ID
+- [ ] Run with listings — confirm all your listings are shown with status, price/offer, an "(N open offer(s))" annotation when offers are open, and listing ID
+- [ ] Confirm the reply ends with the status/type legend (see 1.7e)
+- [ ] Close or let a listing sell, then run this again right away — confirm it still appears (within the retention window)
+- [ ] Take a sold/closed listing older than a week (e.g. edit its `updatedAt` in `data/marketplace.json` back by 8+ days) — confirm it no longer appears in the list
+- [ ] With only old sold/closed listings (no active/pending ones), confirm the reply reads "You don't have any active listings. (Sold/closed listings older than a week aren't shown here.)" rather than the "no listings at all" message — since you do have listings, just none worth showing right now
 
 ### 1.7g "I'm Interested" button flow
 
-**What it does:** Buyer clicks button, modal opens, bid is submitted, seller is notified.
+**What it does:** Buyer clicks button, modal opens, an offer is submitted, seller is notified. Firm-price listings also show a "Buy It Now" button that skips the seller-review step entirely.
 
-**Requires a second account — moved to Part 5.1a.** This flow needs a distinct buyer and seller identity (you can't bid on your own listing, and Discord won't let an account DM itself), so it can't be exercised by one tester alone — see Part 5.1a below.
+**Requires a second account — moved to Part 5.1a.** This flow needs a distinct buyer and seller identity (you can't make an offer on your own listing, and Discord won't let an account DM itself), so it can't be exercised by one tester alone — see Part 5.1a below.
 
 ### 1.7h Negotiation — Accept / Deny / Counter
 
-**What it does:** Seller responds to bids with Accept, Deny, or Counter buttons sent via DM (or thread fallback if DMs are disabled).
+**What it does:** Seller responds to offers with Accept, Deny, or Counter buttons sent via DM (or thread fallback if DMs are disabled).
 
 **Requires a second account — moved to Part 5.1b.** Accept/Deny/Counter is a live exchange between a seller's DM and a buyer's DM, so it needs two people/accounts watching for prompts around the same time — see Part 5.1b below.
 
 ### 1.7i Negotiation modes
 
-**What it does:** Controls whether bid negotiation is visible publicly in the forum thread or in a private thread.
+**What it does:** Controls whether offer negotiation is visible publicly in the forum thread or in a private thread.
 
 **Requires a second account — moved to Part 5.1c.** Verifying what each mode shows means comparing what the buyer's action produces against what the seller sees, which needs both identities — see Part 5.1c below.
 
@@ -455,7 +620,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 - [ ] Run `/marketplace close <id>` as the seller — confirm listing status becomes ⚫ Closed and forum post updates
 - [ ] 👑 Run `/marketplace close <id>` as a different user (non-admin) — confirm "You can only close your own listings"
-- [ ] Run `/marketplace reopen <id>` as the seller — confirm listing status returns to Active (or Pending if bids exist)
+- [ ] Run `/marketplace reopen <id>` as the seller — confirm listing status returns to Active (or Pending if offers exist)
 - [ ] Run `/marketplace reopen <id>` as a different user — confirm error
 
 ### 1.7k Transaction log
@@ -463,14 +628,246 @@ All `/game` commands should be used inside an active event channel unless otherw
 **What it does:** Every marketplace event is appended to `data/marketplace_log.jsonl`.
 
 - [ ] After creating a listing, open `data/marketplace_log.jsonl` — confirm a `listing_created` entry with correct `guildId`, `listingId`, `listingName`, `actorId`, and `timestamp`
-- [ ] After a bid is accepted, confirm `bid_accepted` and `listing_sold` entries appear
-- [ ] After a bid is denied, confirm `bid_denied` entry appears
+- [ ] After an offer is accepted, confirm `bid_accepted` and `listing_sold` entries appear
+- [ ] After an offer is denied, confirm `bid_denied` entry appears
 - [ ] Confirm no entries are missing for any action in the flow above
 
 ### 1.7l Permission boundaries (Regular Member)
 
-- [ ] Confirm a regular member CAN use `post sell`, `post trade`, `price`, `conditions`, `browse`, `my`, `close` (own listings), `reopen` (own listings)
+- [ ] Confirm a regular member CAN use `post sell`, `post trade`, `price`, `conditions`, `browse`, `my`, `close` (own listings), `reopen` (own listings), `edit` (own listings)
 - [ ] 👑 Try `/admin marketplace config` and `/admin marketplace purge` as a regular member — confirm "requires Manage Server permission"
+
+### 1.7m Quick Actions Hub (button panel)
+
+**What it does:** A pinned "🎮 Quick Actions" **forum post** (not a plain channel message — forum channels pin threads, not messages) in the configured marketplace channel, with buttons for 📦 Sell an Item, 🔄 Propose a Trade, 🔍 Browse Listings, and 📋 My Listings. Created (or refreshed) automatically whenever `/admin marketplace config` (3.9m) sets the channel. Sell/Trade need an item name, which a modal only supports as free text (no autocomplete like the slash command's `item` option) — so the wizard collects the name via modal, then condition via a native select, then a second step specific to each type (sell: offers-allowed via buttons; trade: a "what are you looking for?" modal), before handing off to the exact same listing-creation flow (BGG lookup, expansion select, price screen) the slash commands use.
+
+**Prerequisites:** a marketplace channel configured via `/admin marketplace config` (3.9m).
+
+- [ ] Configure the marketplace channel — confirm a "🎮 Quick Actions" post appears in the forum, pinned to the top
+- [ ] Tap "📦 Sell an Item" — confirm a modal asks for an item name
+- [ ] Submit the modal — confirm a condition select appears (New / Like New / Very Good / Good / Acceptable)
+- [ ] Select a condition — confirm "✅ Allow Offers" / "🔒 Firm Price" buttons appear
+- [ ] Tap either offers button — confirm it proceeds exactly like `/marketplace post sell` would from that point (BGG match on a base game → expansion select; BGG match on an expansion → include-base-game prompt; otherwise → price screen; no BGG match → reference-link prompt)
+- [ ] Tap "🔄 Propose a Trade" — confirm a modal asks for an item name
+- [ ] Submit the modal and select a condition — confirm a **second modal** appears asking "What are you looking for in return?" (regression: this step used to be skipped entirely, silently listing every hub-created trade as "Open to offers")
+- [ ] Submit the "looking for" modal with a value (e.g. "Wingspan or Ark Nova") — confirm the resulting listing's "Looking For" field shows that value, then proceeds through the listing flow exactly like `/marketplace post trade` would (BGG match → expansion select / include-base-game prompt; no match → reference-link prompt)
+- [ ] Submit the "looking for" modal blank — confirm the listing shows "Open to offers", same as leaving `/marketplace post trade`'s `looking_for` option unset
+- [ ] Tap "🔍 Browse Listings" — confirm it shows the same output as `/marketplace browse` with no type filter (all sell + trade listings), including the status/type legend (1.7e)
+- [ ] Tap "📋 My Listings" — confirm it shows the same output as `/marketplace my` for the tapping user, including the legend and the one-week retention filter on old sold/closed listings (1.7f)
+- [ ] Start the Sell (or Trade) wizard, then wait or restart the bot before finishing a step — confirm tapping a stale condition/offers button, or submitting the "looking for" modal after the session expired, shows a "session has expired" message rather than an error or a crash
+
+### 1.7n `/marketplace edit`
+
+**What it does:** Lets the owner of a still-active/pending listing update its price (sell) / looking-for (trade) / notes without reposting from scratch. Opens a modal pre-filled with the listing's current values; type, condition, and offers-allowed aren't editable (repost if those need to change). Saving refreshes the forum/text-channel post in place.
+
+- [ ] Run `/marketplace edit id:<your active sell listing>` — confirm a modal opens with the current asking price (or blank if "open to offers") and notes pre-filled
+- [ ] Change the price and submit — confirm the forum post's "Price" field updates to the new value (still labeled "Price", not "Sold For" — that label only appears once the listing actually sells, see 5.1b) and the ephemeral reply confirms "...has been updated"
+- [ ] Leave the price field blank and submit — confirm the listing reverts to "Open to offers"
+- [ ] Enter a non-numeric price (e.g. "free") — confirm "Invalid price..." and nothing is saved
+- [ ] Run `/marketplace edit` on a trade listing — confirm the modal shows a "Looking for" field (not a price field), pre-filled with the current value; changing it updates the post's "Looking For" field
+- [ ] Change only the notes field — confirm the post's Notes field updates and price/looking-for are untouched
+- [ ] 👑 Run as a different user (non-admin) on someone else's listing — confirm "You can only edit your own listings" and nothing is saved (note: unlike `close`, admins do **not** get an override here — editing another member's listing content stays owner-only)
+- [ ] Run on a sold or closed listing — confirm "Only active or pending listings can be edited" and no modal opens
+- [ ] Confirm the autocomplete on `id` only offers your own active/pending listings (same filter as `close`)
+
+## 1.8 `/room` — Private Rooms
+
+### 1.8a `/room create`
+
+**What it does:** Creates a new private text channel visible only to whoever you mention, plus hosts and admins — hidden from everyone else. Posts a message pinging each invited person, and creates the channel under a separate category (default "Private Rooms", configurable via `/admin room config`, 3.9o) so it's never mixed in with event/archive channels. Requires a `date` (when the room auto-closes — see 4.8), unless `persist:true` is set, which creates a room with no expiration at all — see 1.8c to toggle this later. A persistent room's channel name and topic are prefixed with 📌 so hosts/admins can spot it in the channel list without opening it.
+
+**Prerequisites:** none — any server member can run this, not just hosts/admins.
+
+- [ ] Run `/room create people:@Alice @Bob date:August 22` — confirm a new channel is created under the "Private Rooms" category, and the ping message + confirmation both state it expires August 22
+- [ ] Run `/room create people:@Alice persist:true` with no `date` — confirm the room is created with no expiration, the channel name and topic are prefixed with 📌, and the ping message + confirmation both say it persists until closed
+- [ ] Confirm a normal (non-persistent) room's channel name and topic are **not** prefixed with 📌
+- [ ] Attempt to create a room with neither `date` nor `persist:true` — confirm a clear "Provide a `date`..." error and no channel is created
+- [ ] Run with an unparseable `date` (e.g. "whenever") — confirm a clear parse error and no channel is created
+- [ ] Run with a `date` already in the past — confirm "That date has already passed" error and no channel is created
+- [ ] Confirm the channel is hidden from `@everyone` — a member who wasn't mentioned and has no Host/Admin role cannot see it
+- [ ] Confirm you (the creator), the mentioned people, and any Host/Admin role member can all see the channel
+- [ ] Confirm a message posts in the new channel `@`mentioning each invited person
+- [ ] Run with a `name` option — confirm the channel is named accordingly
+- [ ] Run without a `name` option — confirm a reasonable auto-generated name is used instead
+- [ ] Run with `people` containing no valid `@`mentions (e.g. plain text) — confirm a clear error and no channel is created
+- [ ] Mention yourself along with others — confirm you aren't invited twice/duplicated
+- [ ] Mention someone who has since left the server — confirm they're skipped with a note in the reply, and the room is still created for the remaining valid people
+- [ ] Mention only people who've all left the server — confirm a clear "couldn't find any" error and no channel is created
+- [ ] Create a second room in the same server — confirm it reuses the existing "Private Rooms" category rather than creating a duplicate
+
+### 1.8b `/room close`
+
+**What it does:** Deletes a private room. Must be run inside the room's own channel. The room's creator or any host/admin can close it — nobody else.
+
+- [ ] Run inside a room you created — confirm the channel is deleted
+- [ ] Run inside a room someone else created, as a Host or Admin — confirm it works
+- [ ] Run inside a room someone else created, as a regular member with no elevated role — confirm "Only the room's creator or a host/admin can close this room" error, and the channel is **not** deleted
+- [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
+
+### 1.8c `/room persist`
+
+**What it does:** Turns a private room's auto-expiration on (`enabled:true`) or off (`enabled:false`, requires a new `date`). Must be run inside the room's own channel. The room's creator or any host/admin can toggle it — nobody else. See 4.8 for how auto-expiration works. The channel's 📌 name/topic prefix updates immediately to match.
+
+- [ ] Run `/room persist enabled:true` inside a room that has a `date` — confirm the reply says the room will no longer auto-expire, the channel name and topic gain the 📌 prefix, and it survives past its original expiration date
+- [ ] Run `/room persist enabled:false` inside a persistent room, with a `date` — confirm the reply confirms the new expiration, the channel name and topic lose the 📌 prefix, and the room auto-closes on that date (4.8)
+- [ ] Run `/room persist enabled:false` inside a persistent room, with **no** `date` — confirm a clear "Provide a `date`..." error and the room remains persistent
+- [ ] Run as a Host or Admin on a room you didn't create — confirm it works
+- [ ] Run as a regular member with no elevated role on a room you didn't create — confirm "Only the room's creator or a host/admin can change this room's expiration" error, and nothing changes
+- [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
+
+### 1.8d `/room invite`
+
+**What it does:** Adds more people to an existing private room, granting them channel access and updating the stored room record. Must be run inside the room's own channel. The room's creator or any host/admin can invite — nobody else.
+
+- [ ] Run `/room invite people:@Carol` inside a room — confirm Carol gains access to the channel, is pinged in a message, and the confirmation reply says she was added
+- [ ] Confirm the newly added person now shows up if the room is later inspected (e.g. they count toward "already in this room" on a repeat invite)
+- [ ] Mention someone who's already the creator or an existing invitee — confirm a clear "isn't already in this room" error and no channel/reply changes
+- [ ] Mention someone who has since left the server — confirm they're skipped with a note in the reply, and any other valid mentions are still added
+- [ ] Mention only people who've all left the server — confirm a clear "couldn't find any" error
+- [ ] Run as a Host or Admin on a room you didn't create — confirm it works
+- [ ] Run as a regular member with no elevated role on a room you didn't create — confirm "Only the room's creator or a host/admin can invite people to this room" error, and nobody is added
+- [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
+
+### 1.8e `/room kick`
+
+**What it does:** Removes someone from an existing private room, revoking their channel access and updating the stored room record. Must be run inside the room's own channel. The room's creator or any host/admin can kick — nobody else. The room's creator cannot be kicked (close the room instead).
+
+- [ ] Run `/room kick user:@Carol` inside a room Carol was invited to — confirm Carol loses access to the channel, a message announces her removal, and the confirmation reply says she was removed
+- [ ] Attempt to kick the room's creator — confirm "You can't remove the room's creator..." error and nothing changes
+- [ ] Attempt to kick someone who was never invited to this room — confirm a clear "hasn't been individually invited" error and nothing changes
+- [ ] Run as a Host or Admin on a room you didn't create — confirm it works
+- [ ] Run as a regular member with no elevated role on a room you didn't create — confirm "Only the room's creator or a host/admin can remove people from this room" error, and nobody is removed
+- [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
+
+### 1.8f Quick Actions Hub (button panel)
+
+**What it does:** A pinned "🎮 Quick Actions" message posted automatically the moment a room is created, alongside the existing plain-text welcome message — buttons for 🎲 Suggest a Game, ➕ Invite, 👢 Kick, 📌 Toggle Auto-Expire, and 🍿 Snacks. Close Room isn't on this panel — with the row already at Discord's 5-button cap, closing (the one destructive action here) is left as a deliberate typed `/room close` rather than a tap target. The Suggest a Game button is the exact same one used in event channels (same modal, same underlying flow) — it just resolves this room instead of an event when tapped here. Invite/Kick use Discord's native member-picker (a dropdown of server members) instead of typing mentions or a user option. Every button enforces the same "room creator or host/admin" permission check as its slash-command equivalent — except 🍿 Snacks, which (like `/snacks`) has no creator/host/admin restriction at all.
+
+- [ ] Create a room — confirm the "🎮 Quick Actions" message appears, pinned, alongside the separate plain-text welcome message
+- [ ] Tap "🎲 Suggest a Game" — confirm the same modal/flow as the event-channel hub, correctly suggesting into this room
+- [ ] Tap "➕ Invite" as the room's creator — confirm a member-picker appears; selecting one or more people grants them channel access and adds them to the room, identical to `/room invite`
+- [ ] Tap "➕ Invite" as a member with no elevated role who isn't the room's creator — confirm the same permission error `/room invite` gives
+- [ ] Tap "👢 Kick" with nobody individually invited yet — confirm "Nobody has been individually invited to this room..." instead of an empty/broken picker
+- [ ] Tap "👢 Kick" and select someone invited to the room — confirm they lose access, identical to `/room kick`
+- [ ] Tap "👢 Kick" and select the room's creator — confirm "You can't remove the room's creator..." same as the command
+- [ ] Tap "📌 Toggle Auto-Expire" on a room with a set expiration date — confirm it immediately becomes persistent (no modal), same as `/room persist enabled:true`
+- [ ] Tap "📌 Toggle Auto-Expire" on a persistent room — confirm a modal asks for a new expiration date, and submitting it sets the date and turns persistence back off, same as `/room persist enabled:false date:...`
+- [ ] Tap "🍿 Snacks" — confirm the same panel described in 1.11d, scoped to this room; unlike every other button here, a member with no elevated role who didn't create the room can use it too
+- [ ] Confirm there is no "Close Room" button on this panel — closing a room is still available, just only via `/room close`
+
+## 1.9 General Chat — Quick Actions Hub
+
+### 1.9a Quick Actions Hub (button panel)
+
+**What it does:** A pinned "🎮 Quick Actions" message in a designated, already-populated chat channel (e.g. #general) — set via `/admin general config` (3.9q). Unlike the event/room/marketplace hubs, this one isn't tied to any single command; it's a standalone panel of the most-used member actions that don't otherwise have a home: 🔍 View a Game, 📚 Browse Library, 📋 My Games, 🎲 Random Game, and 🙋 Request a Game to Bring. All five are library-focused — there's no RSVP shortcut here; RSVP happens on the event's own announcement post. The Request button is the *exact same* `/library request` hub button used in event channels — since that flow already falls back to the soonest upcoming event when there's no specific event-channel context, it works correctly from any channel with no changes. View works the same way, delegating to `/library view` (1.4e) via a one-field modal (there's no autocomplete available in a modal, so it always goes through the same exact-match/partial-match resolution `/library view` itself uses).
+
+**Prerequisites:** a channel configured via `/admin general config` (3.9q).
+
+- [ ] Configure the general hub channel — confirm the "🎮 Quick Actions" message appears there, pinned
+- [ ] Tap "🔍 View a Game" — confirm a modal appears asking for a game name
+- [ ] Submit a name that's an exact match in the library — confirm the same embed `/library view` (1.4e) would show
+- [ ] Submit a partial/misspelled name — confirm a "did you mean" select menu appears, same as `/library view`
+- [ ] Submit a name with no match at all — confirm the same "wasn't found in the library" message as `/library view`
+- [ ] Tap "📚 Browse Library" — confirm the same output as `/library list` (1.4a)
+- [ ] Tap "📋 My Games" — confirm the same output as `/library mine` (1.4b), listing only your own (and shared-with-you) games
+- [ ] Tap "🎲 Random Game" — confirm the same output as running `/library random` with no options, including the personalization fallback to your `/myroles` (1.5) preferences if set
+- [ ] Tap "🙋 Request a Game to Bring" — confirm the same modal/flow as the event-channel hub (1.3h), targeting the soonest upcoming event since there's no specific event channel here
+
+---
+
+## 1.10 `/hub` — On-Demand Quick Actions
+
+**What it does:** Every pinned "Quick Actions" hub (event, 1.3h; room, 1.8f; marketplace, 1.7m; general chat, 1.9a) is a standing message someone can scroll past or lose track of. `/hub` reposts the same buttons on demand as an ephemeral reply only the runner can see, by detecting which context the channel it's run in matches — no arguments needed. Reuses the exact same embed/button-building functions as each pinned hub, so the buttons behave identically (same customIds, same handlers). The board game challenge channel (3.9s) is the one exception with no standing pinned message of its own — `/hub` there surfaces `/challenge status` and `/challenge leaderboard` (1.12a/b) as buttons instead.
+
+- [ ] Run `/hub` inside a private room — confirm an ephemeral reply with the same embed/buttons as that room's pinned hub (1.8f)
+- [ ] Run `/hub` inside an active event channel — confirm an ephemeral reply with the same embed/buttons as that event's pinned hub (1.3h)
+- [ ] Run `/hub` inside a **cancelled or archived** event's channel — confirm it falls through to the "no hub for this channel" message rather than showing a stale event hub
+- [ ] Run `/hub` inside the marketplace's pinned hub thread (Forum mode) — confirm an ephemeral reply with the same embed/buttons as the marketplace hub (1.7m)
+- [ ] Run `/hub` directly in the marketplace channel (Text mode — no separate hub thread, so this must match on the channel itself) — confirm the same ephemeral marketplace hub reply
+- [ ] Run `/hub` inside the configured general-chat hub channel (3.9q) — confirm an ephemeral reply with the same embed/buttons as the general hub (1.9a)
+- [ ] Run `/hub` inside the configured board game challenge channel (3.9s), with the feature enabled — confirm an ephemeral reply with "📊 Status" and "🏆 Leaderboard" buttons, and confirm each behaves exactly like the matching `/challenge` subcommand (1.12a/b)
+- [ ] Run `/hub` in the configured challenge channel while the feature is set to **disabled** — confirm it falls through to the "no hub for this channel" message rather than showing the challenge hub
+- [ ] Run `/hub` in any other channel (not a room, event, marketplace hub thread, configured general channel, or configured challenge channel) — confirm a graceful ephemeral message explaining no hub applies here, rather than an error
+- [ ] Confirm every button on the `/hub` reply works exactly the same as tapping it on the pinned message (same handlers, same customIds) — for the challenge channel, the same as running the matching `/challenge` subcommand directly
+
+---
+
+## 1.11 `/snacks` — Snack Sign-Up
+
+**Prerequisites:** an event channel or private room to run these in — `/snacks` replies with a context error anywhere else.
+
+### 1.11a `/snacks add`
+
+**What it does:** Adds an item to the snack sign-up list for the event or private room channel you run it in. There's no matching/dedup against what others already listed — it's just a running list of who's bringing what. Creates (on the first add) or updates a pinned "🍿 Snacks List" message in the channel, mirroring how the Game Lineup/Games to Bring pins work.
+
+- [ ] Run inside an event channel — confirm a pinned "🍿 Snacks List" message appears (created on first use) listing your item next to your display name
+- [ ] Run inside a private room — confirm the same, scoped to that room's channel
+- [ ] Run a second time with a different item, same person — confirm both items now show under your name, not just the latest
+- [ ] Run as a different person in the same channel — confirm both people's items show together on the same pinned list
+- [ ] Run outside of an event channel or private room — confirm "This must be used inside an event channel or a private room" and nothing is added
+- [ ] Manually un-pin the Snacks List message, then add another item — confirm the existing message is edited and re-pinned rather than a duplicate being posted
+
+### 1.11b `/snacks list`
+
+**What it does:** Shows the current snack sign-up list for this channel ephemerally — the same content as the pinned message, for anyone who wants a private look without scrolling.
+
+- [ ] Run with items already on the list — confirm the ephemeral reply matches the pinned message
+- [ ] Run with nothing added yet — confirm "No snacks have been added yet"
+- [ ] Run outside of an event channel or private room — confirm the same context error as `/snacks add`
+
+### 1.11c `/snacks remove`
+
+**What it does:** Removes one of your own snack items from this channel's list. If you've only added one item it's removed directly; if you've added more than one, you're shown a select menu to pick which one. Nobody can remove someone else's item.
+
+- [ ] Run having added exactly one item — confirm it's removed immediately and the pinned list updates
+- [ ] Run having added two or more items — confirm a select menu (listing only your own items) lets you choose which one to remove, and only that one disappears from the pinned list
+- [ ] Run having added nothing — confirm "You haven't added any snacks yet"
+- [ ] Run outside of an event channel or private room — confirm the same context error as `/snacks add`
+
+### 1.11d Quick Actions Hub (button panel)
+
+**What it does:** Both the event-channel hub (1.3h) and the private-room hub (1.8f) get a 🍿 Snacks button. Tapping it shows an ephemeral view of the current list, plus ➕ Add a Snack and 🗑️ Remove Mine buttons. Add opens the same one-field modal `/snacks add` fills in via options; Remove Mine follows the same direct-removal/select-menu logic as `/snacks remove`, depending on how many items you've personally added.
+
+- [ ] Tap "🍿 Snacks" — confirm an ephemeral reply showing the current list (or "No snacks have been added yet"), with Add and Remove Mine buttons
+- [ ] Tap "🍿 Snacks" having added nothing yourself — confirm "🗑️ Remove Mine" is disabled
+- [ ] Tap "➕ Add a Snack" — confirm a modal asks what you're bringing, and submitting it adds to the list and updates the pinned message, same as `/snacks add`
+- [ ] Tap "🗑️ Remove Mine" having added exactly one item — confirm it's removed directly, same as `/snacks remove`
+- [ ] Tap "🗑️ Remove Mine" having added more than one item — confirm a select menu lets you pick which one to remove
+
+## 1.12 `/challenge` — "Guess the Board Game"
+
+**Prerequisites:** an admin must run `/admin challenge config` (3.9s) to set a channel and turn the feature on — see 4.9 for the full automated hint/reveal flow, and 3.9s for the `frequency` setting (daily/weekly/bi-weekly) that governs how often a new challenge cycle starts. No permission differences between member/host/admin, so this section isn't mirrored into Parts 2/3.
+
+### 1.12a `/challenge leaderboard`
+
+**What it does:** Shows the top 10 point scorers for this server, most points first.
+
+- [ ] Run with nobody having scored yet — confirm "No points on the board yet — guess correctly in the board game challenge to get started!"
+- [ ] Run after at least one correct guess has been recorded — confirm an ephemeral leaderboard embed listing scorers ranked highest-first
+
+### 1.12b `/challenge status`
+
+**What it does:** Shows this cycle's hints so far and when the next one posts (or the reveal, once all 3 are out). Ephemeral, for anyone who missed the original posts. In daily mode, the schedule text shows only the hour (no day-of-week, since every stage falls on the cycle's own day) — see 3.9s.
+
+- [ ] Run when the feature isn't configured/enabled — confirm "The board game challenge isn't set up on this server yet"
+- [ ] Run when enabled but no challenge is currently active (e.g. Sunday, between reveal and the next Monday), with the default (weekly) schedule — confirm "No challenge is active right now — the next one starts Monday at 8am in #channel"
+- [ ] Run after hint 1 has posted, with the default schedule — confirm only hint 1's text is shown, plus "Next hint: Wednesday 8am"
+- [ ] Confirm the embed ends with a small-text note that the mystery game is always one of BGG's top 500 ranked base games, never an expansion
+- [ ] Run after all 3 hints have posted, with the default schedule — confirm all 3 hints are shown, plus "the answer reveals Saturday 6pm"
+- [ ] After changing the schedule via `/admin challenge config` (3.9s), e.g. hint 1 to Tuesday 9am — confirm the "next one starts" / "Next hint" text reflects the new day/time, not the old default
+- [ ] With `frequency:daily` set, run status at any point in the cycle — confirm the schedule text shows just the hour (e.g. "Next hint: **12pm**"), with no day-of-week name anywhere in it
+
+### 1.12c Guessing (plain messages in the configured channel)
+
+**What it does:** Reply with your guess as a normal message in the configured channel. A guess is matched against the game's title after normalizing case/punctuation/leading articles and a colon/parenthetical subtitle, with typo tolerance for small misspellings. A correct guess is deleted immediately (so the answer never sits visible for others to copy), a public "🎉 \<user\> guessed it! (+N points)" message posts in the channel so the win is obviously visible (without revealing the title), the guesser is separately DMed their exact points/running total, and the pinned leaderboard message updates immediately to reflect it (see 4.9's live-updating leaderboard pin note); an incorrect guess is left in place with a ❌ reaction. Points are 100 (guessed after hint 1), 80 (after hint 2), or 50 (after hint 3) — everyone who guesses correctly scores, not just the first person, and each person can only score once per cycle.
+
+- [ ] Post an obviously wrong guess after hint 1 — confirm it's reacted with ❌ and stays visible, and the pinned leaderboard is untouched
+- [ ] Post the exact title (any case/punctuation) — confirm the message is deleted, a public "guessed it! (+100 points)" message posts in the channel (without the title), you're DMed your points and running total, and the pinned leaderboard message updates to show it (without needing a new correct guess or the reveal)
+- [ ] Post a close typo of the title — confirm it's still accepted as correct
+- [ ] As a second person, post the correct title after the same hint — confirm they're also scored (both scored, not just the first), each getting their own public announcement, and both show up on the (single, same) pinned leaderboard message
+- [ ] As someone who already guessed correctly this cycle, post the correct title again — confirm nothing happens (no double DM, no double announcement, no double points, no extra pin update)
+- [ ] Post a guess in any other channel — confirm the bot ignores it entirely (no reaction, no deletion, no announcement, no pin update)
+- [ ] Check `/challenge leaderboard` after a correct guess — confirm the new total is reflected, matching the pinned leaderboard message
 
 ---
 
@@ -482,7 +879,7 @@ Hosts retain full Regular Member access, so this part fully repeats Part 1's che
 
 **What it does:** Displays an ephemeral embed listing all available commands, tier-filtered to the invoking user's permissions.
 
-- [ ] 👑 Run `/help` as a host — confirm the **🎙️ /host** section appears in addition to user commands, but **no Admin section**
+- [ ] 👑 Run `/help` as a host — confirm the **🎪 /host** section appears in addition to user commands, but **no Admin section**
 - [ ] Confirm `/game cancel` description says "Remove your own game suggestion"
 - [ ] Confirm `/library clear` description says "Remove all your own games at once"
 - [ ] Confirm the response is ephemeral
@@ -520,7 +917,14 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.3a `/game suggest`
 
-**What it does:** Suggests a game for the event. Checks the group library first (exact match → partial match → BGG search). Prompts to add tags if not already tagged.
+**What it does:** Suggests a game for the event (or, from inside a private room, for that room — see below). Checks the group library first (exact match → partial match → BGG search). Prompts to add tags if not already tagged.
+
+#### From a private room
+- [ ] Run `/game suggest title:Wingspan` from inside a `/room`-created private room channel (1.8a) — confirm it posts the game card directly in the room, with no event picker
+- [ ] Suggest a library game whose owner is a member of the room but not attending any event — confirm it's allowed (attendance is checked against room membership, not event RSVPs)
+- [ ] Suggest a library game whose owner is **not** a member of the room — confirm "None of the owners are attending" error, same wording as the event case
+- [ ] Confirm Join/Leave buttons on a room-suggested game card work the same as in an event channel
+- [ ] Confirm suggesting in a room does **not** create a request-pin or lineup-pin entry — "bring to a future event" tracking doesn't apply to an ad-hoc room
 
 #### From a library game (exact match)
 - [ ] Add a game to your library first (`/library add game:Wingspan`)
@@ -539,11 +943,15 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 #### From BGG search
 - [ ] Run `/game suggest title:Ticket to Ride` — confirm BGG results dropdown appears
+- [ ] Confirm results are sorted newest publish year first
 - [ ] Select a result — confirm game card is posted with BGG-sourced data
 - [ ] If the BGG game has no tags — confirm tag picker appears
 - [ ] Select tags, click Save — confirm tags appear on the game card and prompt to confirm bringing the game
 - [ ] Click Skip on tag picker — confirm bring prompt appears
-- [ ] Search a very generic term with many BGG matches — confirm the dropdown is capped at Discord's 25-option select menu limit rather than erroring
+- [ ] Search a generic term with more than 24 BGG matches — confirm **← Previous** / **Page X of Y** / **Next →** buttons appear below the dropdown, with Previous disabled on page 1
+- [ ] Click **Next →** — confirm the dropdown updates to the next page of results (newest-first order continues across pages) and **Previous** becomes enabled
+- [ ] Navigate to the last page — confirm **Next →** is disabled
+- [ ] Search a term with 24 or fewer matches — confirm no pagination buttons appear (dropdown only)
 
 #### With expansions
 - [ ] Run `/game suggest title:Wingspan with_expansions:True`
@@ -559,6 +967,10 @@ All `/game` commands should be used inside an active event channel unless otherw
 #### From outside an event channel
 - [ ] Run `/game suggest title:Catan` from a non-event channel — confirm an event picker dropdown appears
 - [ ] Select an event — confirm the suggest flow continues normally
+- [ ] With multiple upcoming events, run `/game suggest` for a title that has no library match, select an event from the picker — confirm the BGG search dropdown appears next (regression: the event picker used to lose track of the typed title if it wasn't resolved as part of the same interaction, making it look like nothing happened after picking an event)
+- [ ] Same as above but with a title that **is** an exact library match — confirm the game card posts directly (with the owner listed) right after picking the event, no extra step
+- [ ] Restart/redeploy the bot between running `/game suggest` (before picking an event) and selecting an event from the picker — confirm the picker still resolves the original title correctly afterward (the title/expansion choice now travels with the dropdown itself rather than living in the bot process's memory)
+- [ ] Select an event from the picker for a lineup that has already locked (4.7) — confirm the same "lineup is locked" message you'd get from suggesting directly in that event's channel
 
 ### 2.3b `/game list`
 
@@ -570,11 +982,13 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.3c `/game cancel`
 
-**What it does:** Removes your own game suggestion from the lineup. Only the person who suggested the game can remove it via this command; hosts can remove any game via `/host game cancel`.
+**What it does:** Removes a game suggestion from the lineup. The person who suggested the game, that event's host, or an admin can remove it via this command; hosts can also remove any game via `/host game cancel`. If the given title isn't an exact match, falls back to a fuzzy match against the current lineup (e.g. `catan` matches "Settlers of Catan").
 
 - [ ] Remove your own game suggestion: `/game cancel title:Wingspan` — confirm card is deleted
-- [ ] Attempt to remove another user's suggestion via this command (not `/host game cancel`) — confirm "Only the person who suggested... can remove it. Ask a host or admin if you need it removed." error
-- [ ] Attempt to cancel a game not in the lineup — confirm "No game called X found" error
+- [ ] Remove your own game suggestion using a partial/fuzzy title, e.g. `/game cancel title:catan` when "Settlers of Catan" is in the lineup — confirm it's found and removed
+- [ ] With two similarly-named games in the lineup (e.g. "Wingspan" and "Wingspan: Asia"), run `/game cancel title:wing` — confirm the bot asks you to be more specific instead of guessing, and neither game is removed
+- [ ] As the host of this event, remove a game suggested by someone else via `/game cancel` (not `/host game cancel`) — confirm it succeeds instead of the suggester-only error
+- [ ] Attempt to cancel a game not in the lineup (no exact or fuzzy match) — confirm "No game called X found" error
 
 ### 2.3d Game Card Buttons — Join / Leave
 
@@ -588,14 +1002,18 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.3e Game Card Buttons — Waitlist
 
-**What it does:** When a game is full, players join a waitlist. If the waitlist reaches the minimum player count, the request pin is updated to reflect 2 copies needed.
+**What it does:** When a game is full, players join a waitlist. If the waitlist reaches the minimum player count, the request pin is updated to reflect 2 copies needed — and if that game has a `/library request` (1.4h) outstanding, the bot automatically asks one more attending owner (load-balanced, excluding anyone already asked/confirmed/declined) to bring a second copy, the same "🎲 ... ✅ Confirm bringing / ❌ Can't bring it" DM as the initial request. If the waitlist later drops back below the threshold, that extra ask is retracted — its DM is edited to say it's no longer needed and its buttons removed — rather than left outstanding. When a seated player leaves and the game is full, the first waitlisted player is automatically promoted into the freed seat and removed from the waitlist (they get a DM if their DMs are open).
 
 - [ ] Fill a game to max players, then click **Join Waitlist** — confirm added to waitlist section
 - [ ] Click **Join Waitlist** when already on waitlist — confirm "You're already on the waitlist" error
 - [ ] Click **Join Waitlist** when a seat is still available — confirm "There's still an open seat" error
-- [ ] Add enough players to the waitlist to reach the minimum player count — confirm request pin updates to show "2 copies"
+- [ ] Add enough players to the waitlist to reach the minimum player count, with a `/library request` (1.4h) already outstanding for that game and 2+ attending owners — confirm the request pin updates to show "X/2 copies confirmed" and a second attending owner receives a "please bring a copy" DM
+- [ ] Do the same with only 1 owner attending — confirm the pin still shows the updated copy count, but no second DM is sent (no eligible second owner to ask)
 - [ ] Click **Leave Waitlist** — confirm removed from waitlist
-- [ ] Dropping below min players on waitlist — confirm request pin reverts to "1 copy"
+- [ ] Dropping below min players on waitlist, with a second owner's ask still outstanding (unconfirmed) — confirm the pin reverts to 1 copy needed and that owner's DM is edited to say it's no longer needed, with its buttons removed
+- [ ] Dropping below min players after the second owner already confirmed — confirm the pin reverts to 1 copy needed but the existing confirmation is left alone (a harmless extra confirmed copy), not retracted
+- [ ] With a full game and at least one person on the waitlist, have a seated player click **Leave** — confirm the first waitlisted person is moved into the freed seat, removed from the waitlist list, and (if their DMs are open) receives a DM saying a seat opened up
+- [ ] Do the same when promoting the waitlist below the minimum player count drops it back below 2 groups — confirm the request pin reverts to 1 copy needed
 
 ### 2.3f Bring Confirm / Cancel
 
@@ -613,15 +1031,18 @@ All `/game` commands should be used inside an active event channel unless otherw
 #### Basic add — already owned
 - [ ] `/library add game:Wingspan` when you already own it — confirm "already in your library" duplicate message
 - [ ] Case-insensitive: `/library add game:wingspan` when you own "Wingspan" — same duplicate message
+- [ ] `/library add game:Wingspan` when a member who's linked you as a delegate (2.4n) owns it, and you don't — confirm `**Wingspan** is already in your library (shared from <@owner>'s library).` rather than the "adding your copy?" prompt
 
 #### Others already own the game
 - [ ] When another user owns the game (exact name match), confirm "already in the group library — adding your copy?" prompt with **Yes, add my copy** and **Cancel** buttons
 - [ ] Click **Yes, add my copy** — confirm game is added
+- [ ] Confirm this "adding your copy?" prompt still appears for a stranger's matching entry when there's no library link between you — linking only changes the behavior for linked delegates (see 2.4n)
 
 #### Partial match in group library
 - [ ] `/library add game:wing` when "Wingspan" is in the group library — confirm a "similar games in the group library" select menu appears
 - [ ] Select a match — confirm "adding your copy?" flow
 - [ ] Select "None of these — search BGG" — confirm BGG catalog search continues
+- [ ] `/library add game:wing` where the only "Wingspan" entry in the group library is owned by a member who's linked you as a delegate (2.4n) — select it from the dropdown — confirm "already in your library (shared from @owner's library)" instead of the "adding your copy?" flow
 
 #### BGG exact match (confirm prompt)
 - [ ] `/library add game:Wingspan` on an empty library — confirm a "Found **Wingspan** on BGG — is that the game?" confirm prompt appears
@@ -634,8 +1055,12 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Confirm **Yes** — confirm game is added with BGG details
 - [ ] Search a very generic term with many BGG matches — confirm the dropdown is capped at Discord's 25-option select menu limit rather than erroring
 
+#### Live BGG search fallback
+- [ ] Type a game name that's new/obscure enough to miss the local BGG catalog but findable on BGG directly (e.g. a recent release) — confirm it still resolves (BGG confirm prompt or select UI) instead of falling through to the custom-game path
+- [ ] Repeat the same search a second time — confirm it now resolves instantly from the local catalog (no delay from a live BGG lookup)
+
 #### No matches anywhere — custom game
-- [ ] `/library add game:My Custom Game` with nothing matching anywhere — confirm game is added immediately and the "add details" modal appears
+- [ ] `/library add game:My Custom Game` with nothing matching anywhere (including a live BGG search) — confirm game is added immediately and the "add details" modal appears
 
 ### 2.4b `/library remove`
 
@@ -648,11 +1073,18 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.4c `/library mine`
 
-**What it does:** Lists all base games you've added to the library. Expansions imported via `/library import bgg` are excluded.
+**What it does:** Lists all base games you've added to the library, plus any linked delegates' games. Expansions imported via `/library import bgg` are excluded. Paginates with Previous/Next buttons when large (same pattern as `/library list`, 2.4d) — a member linked to several delegates' libraries can easily exceed a single embed field's capacity.
 
 - [ ] Run `/library mine` with games added — confirm all your base games are listed
 - [ ] If you have imported BGG expansions — confirm they do NOT appear in `/library mine`
 - [ ] Run `/library mine` with no games — confirm "You haven't added any games" message
+- [ ] With another member's library linked to you as a delegate (2.4n), run `/library mine` — confirm their games appear alongside your own, each marked `*(shared from <@ownerId>)*`
+- [ ] With enough games (yours plus any linked delegates') to exceed one page:
+  - [ ] Confirm **← Previous** and **Next →** buttons appear, with a "Page X of Y" indicator between them
+  - [ ] **← Previous** is disabled on the first page
+  - [ ] Click **Next →** — confirm page 2 is shown with different games
+  - [ ] **Next →** is disabled on the last page
+  - [ ] Confirm no error occurs regardless of how large the combined list is (regression: this previously crashed once the list exceeded Discord's embed description limit)
 
 ### 2.4d `/library list`
 
@@ -679,10 +1111,12 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.4f `/library edit`
 
-**What it does:** Lets you update the details of a game you own (player count, play time, tags, expansions, and complexity).
+**What it does:** Lets you update the details of a game you own (player count, play time, tags, expansions, and complexity). Every field in the modal is pre-filled with its current value, so deleting a field's text and saving clears that field rather than leaving the old value in place.
 
-- [ ] `/library edit game:Wingspan` — confirm the edit modal appears
+- [ ] `/library edit game:Wingspan` — confirm the edit modal appears, pre-filled with the game's current values
 - [ ] Update player range, save — confirm updated values appear in `/library view`
+- [ ] Set an expansion you own (e.g. `Prelude`), save, then re-open `/library edit` and clear the Expansions field entirely — confirm `/library view` no longer lists any expansions
+- [ ] Clear the player range, play time, tags, and complexity fields (leave every field blank), save — confirm `/library view` shows none of those values set, rather than the previous ones
 - [ ] Set Complexity to `Medium` — confirm 🟡 icon appears in `/library list`
 - [ ] Set Complexity to `light` (lowercase) — confirm it is accepted and normalized to `Light`
 - [ ] Set Complexity to an invalid value (e.g. `Extreme`) — confirm a warning is shown and the previous value is kept
@@ -698,7 +1132,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.4h `/library request`
 
-**What it does:** Requests a specific game be brought to an event.
+**What it does:** Requests a specific game be brought to an event. No "please bring this" DM goes out yet — asking is deferred until the event's lineup locks (4.7), so the bot can pick fairly from each owner's *final* confirmed-brings count instead of an early, mostly-arbitrary snapshot. At lock, the request is asked of the owner the copy-select assigned it to (an explicit pick), or — when no copy-select is shown, or **Bot decides** was selected — whichever attending owner currently has the fewest confirmed brings for that event, with "🎲 ... ✅ Confirm bringing" and "❌ Can't bring it" buttons. Confirming behaves the same as `/library bring game:<name>`; declining cascades the same DM to the next eligible attending owner (see "Declining via the DM button" below). If the waitlist for a suggested game grows enough to need a second copy (1.3e/2.3e/3.3e), that just updates how many owners get asked at lock — it doesn't trigger an ask itself. A request made *after* the lineup is already locked has no future lock to wait for, so it's asked immediately instead.
 
 **Prerequisites:** an active event must exist, and the game being requested must already be in the library, owned by someone who has RSVP'd (see 1.4a/2.4a/3.4a to add a game first).
 
@@ -707,11 +1141,22 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] `/library request game:Catan` from inside a specific event channel — confirm request targets that event
 - [ ] Request the same game twice — confirm duplicate is blocked
 - [ ] None of the game's owners are RSVP'd — confirm "None of the owners are attending" error
+- [ ] The literal owner has NOT RSVP'd, but a member they've linked as a delegate (2.4n) has RSVP'd yes/maybe — confirm the request still succeeds instead of hitting "None of the owners are attending"
+- [ ] On an event whose lineup hasn't locked yet, confirm no DM is sent to anyone, and the reply notes "An owner will be asked to bring it once the lineup locks"
+- [ ] Force the lineup to lock (4.7), then confirm the assigned owner receives a DM with a "✅ Confirm bringing" button for the requested game (include any owned expansions in the DM text)
+- [ ] With 2+ attending owners and no expansion copy-select shown, confirm the DM (once sent, at lock) goes to whichever owner currently has the fewest confirmed brings for that event, not just the first owner alphabetically/by id
+- [ ] Request a game on an event whose lineup is **already locked** — confirm the DM goes out immediately (no deferral) since there's no future lock left to wait for
 
 #### Request with expansion copy select
 - [ ] Request a game where at least one attending owner has expansions — confirm "Which copy would you like?" select appears
-- [ ] Select a specific owner's copy — confirm announcement includes "— bringing: @owner"
-- [ ] Select **Bot decides** — confirm the bot assigns the owner with fewest confirmed brings
+- [ ] Select a specific owner's copy — confirm announcement includes "— bringing: @owner" immediately, but (pre-lock) that owner doesn't receive the DM until the lineup locks
+- [ ] Select **Bot decides** — confirm no owner is chosen or announced yet (no "— bringing: @owner" in the reply); once the lineup locks, confirm the bot then assigns the owner with fewest confirmed brings and DMs them
+
+#### Confirming via the DM button
+- [ ] Tap "✅ Confirm bringing" in the DM — confirm it behaves the same as `/library bring game:<name>` (message edits to show confirmed, ✅ appears next to the game in the event's request pin)
+- [ ] Tap the DM button as an account that no longer owns the requested game — confirm "You can only confirm bringing games you own" reply, and the request is **not** marked confirmed
+- [ ] Confirm the same request via `/library bring game:<name>` instead of the DM button — confirm the earlier DM is edited afterward to note "Confirmed via /library bring", with its button removed
+- [ ] Tap a "please bring this" DM button for a request that's since been dropped (e.g. the game ended up with zero seated players at lock, 4.7) — confirm a graceful "no longer exists" edit rather than an error or a duplicate confirmation
 
 ### 2.4i `/library unrequest`
 
@@ -731,12 +1176,13 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run `/library bring game:Root` (where Root is requested with your copy preferred) — confirm success message with expansion list
 - [ ] Click Confirm — confirm ✅ appears next to the game in the event's request pin
 - [ ] Run with a game that hasn't been requested — confirm "That game hasn't been requested" error
+- [ ] As a member linked as a delegate (2.4n) of the owner whose copy was requested, run `/library bring` — confirm the owner's requested game appears in your view too, and `/library bring game:X` lets you see expansion availability and confirm bringing it exactly as if it were your own
 
 ### 2.4k `/library import`
 
 #### `/library import bgg`
 
-**What it does:** Imports all owned games and expansions from your linked BoardGameGeek collection.
+**What it does:** Imports all owned games and expansions from your linked BoardGameGeek collection. The "Import my library now" button shown after `/bgg link` (1.6a/2.6a/3.6a) triggers this same import.
 
 - [ ] Run without a linked BGG account — confirm "You don't have a BoardGameGeek account linked" error
 - [ ] Run with a linked account — confirm success message with game/expansion counts
@@ -752,7 +1198,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.4l `/library search`
 
-**What it does:** Searches the library with filters for player count, tags, duration, and complexity.
+**What it does:** Searches the library with filters for player count, tags, duration, and complexity. If no `tag`/`tag2`/`tag3` or `complexity` option is given, it defaults to your own `/myroles` preferences (2.5) instead of requiring you to type them every time.
 
 - [ ] `/library search players:4` — confirm results include games supporting 4 players, sorted by proximity to 4
 - [ ] `/library search players:2,4` (multiple counts) — confirm games matching either count appear
@@ -765,20 +1211,40 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] `/library search min_duration:30 max_duration:60` — confirm only games within that exact range appear
 - [ ] `/library search complexity:Light` — confirm only Light games appear
 - [ ] Combine filters (e.g. `players`, `tag`, and `complexity` together) — confirm all filters apply together (AND across filter types, OR within tag1/2/3)
-- [ ] Run `/library search` with no options at all — confirm error: "Provide at least one valid filter: `players`, `tag`, or `duration`."
+- [ ] Set genre/difficulty preferences via `/myroles` (2.5), then run `/library search` with no options at all — confirm it searches using those preferences instead of erroring, and the result description notes "(from your /myroles)"
+- [ ] With `/myroles` preferences set, run `/library search tag:Party` (a tag different from your preference) — confirm the explicit tag wins over your preferences, with no "(from your /myroles)" note
+- [ ] With no `/myroles` preferences set, run `/library search` with no options at all — confirm error: "Provide at least one valid filter: `players`, `tag`, or `duration` — or set your preferences with `/myroles` to search based on those."
 - [ ] Search with valid filters but no matches — confirm "No games matched your filters"
 
 ### 2.4m `/library random`
 
-**What it does:** Picks 3 random games from the library, optionally filtered by tags and complexity.
+**What it does:** Picks 3 random games from the library, optionally filtered by tags and complexity. If no `tag`/`tag2`/`tag3` or `complexity` option is given, it defaults to your own `/myroles` preferences (2.5) instead of picking from the whole library. Picks are weighted toward games that haven't been scheduled onto an event lineup recently (or ever) — never excluded, just less likely to come up again right away.
 
-- [ ] `/library random` with no filters — confirm 3 random games are shown
+- [ ] `/library random` with no filters and no `/myroles` preferences set — confirm 3 fully random games are shown, with a footer tip to set `/myroles`
 - [ ] `/library random tag:Co-op` — confirm all 3 results are Co-op tagged
 - [ ] `/library random tag:Co-op tag2:Party` — confirm results match EITHER tag (OR logic across tag/tag2/tag3)
 - [ ] `/library random complexity:Light` — confirm all 3 results are Light complexity
 - [ ] `/library random tag:Co-op complexity:Heavy` — confirm results match the tag AND the complexity together
+- [ ] Set genre/difficulty preferences via `/myroles` (2.5), then run `/library random` with no options at all — confirm the title includes "(from your /myroles)" and results are filtered to those preferences
+- [ ] With `/myroles` preferences set, run `/library random complexity:Heavy` (different from your preference) — confirm the explicit complexity wins, with no "(from your /myroles)" note
 - [ ] Filter for a tag/complexity combination with no matching games — confirm it falls back to 3 unfiltered random picks with a "No `<filter>` games found — here are 3 random picks instead" title
 - [ ] Run multiple times — confirm different results each time
+- [ ] With a mix of library games where some were scheduled onto a recent locked event's lineup and others never have been — run `/library random` many times — confirm the never-(recently-)scheduled games come up noticeably more often, though a recently-scheduled game can still occasionally appear (it's biased, not excluded)
+
+### 2.4n `/library link` / `/library unlink`
+
+**What it does:** `/library link user:@X` grants @X delegate access to your library — they can view your games in their own `/library mine`, and can request/bring them, but this never gives them write access (add/remove/edit/clear) and never gives you access to theirs. It's one-directional: for two people to fully share with each other, each runs `/library link` once naming the other. `/library unlink user:@X` removes the link and can be run by either party.
+
+- [ ] `/library link user:@Bob` (run by Alice) — confirm reply: "<@Bob> can now see your games in their `/library mine`, and can request/confirm bringing them. This only shares *your* library with them — if you'd like the same access to theirs, they'll need to run `/library link user:@you`."
+- [ ] As Bob, run `/library mine` (2.4c) — confirm Alice's games now appear, marked `*(shared from <@Alice>)*`
+- [ ] As Alice, run `/library mine` — confirm Bob's games do NOT appear — the link is one-directional, and Alice only granted access, she didn't receive any
+- [ ] Run `/library link user:@Bob` again as Alice (already linked) — confirm reply: "<@Bob> can already view and manage bringing for your library." and no duplicate link is created
+- [ ] `/library link user:@yourself` (target = yourself) — confirm "You can't link your own account to itself."
+- [ ] `/library link user:@SomeBot` (target = a bot account) — confirm "You can't link a bot account."
+- [ ] `/library unlink user:@Bob` run by Alice (the grantor) — confirm "Library link with <@Bob> removed." and Bob's `/library mine` no longer shows Alice's games
+- [ ] Re-link Alice → Bob, then run `/library unlink user:@Alice` as Bob (the delegate, not the original grantor) — confirm the link is still removed even though Bob didn't create it
+- [ ] `/library unlink user:@Carol` where no link exists between you and Carol — confirm "You don't have a library link with <@Carol>."
+- [ ] With Alice → Bob and Alice → Carol both linked, run `/library unlink user:@Bob` — confirm only the Alice–Bob link is removed; Carol's shared access to Alice's library is unaffected
 
 ## 2.5 `/myroles` — Game Preferences
 
@@ -794,10 +1260,12 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ## 2.6 `/bgg` — BGG Account Linking
 
-**What it does:** Lets members link their BoardGameGeek username to their Discord account on this server.
+**What it does:** Lets members link their BoardGameGeek username to their Discord account on this server, with a one-click option to sync their BGG collection into the library right away.
 
 ### 2.6a `/bgg link`
-- [ ] Run `/bgg link username:validuser` — confirm BGG API validates and success embed appears with "Powered by BGG" logo
+- [ ] Run `/bgg link username:validuser` — confirm BGG API validates and success embed appears with "Powered by BGG" logo and an "Import my library now" button
+- [ ] Click "Import my library now" — confirm it behaves like `/library import bgg` (2.4k): success message with game/expansion counts, and games appear in `/library mine`
+- [ ] Click "Import my library now" a second time — confirm all entries show as "already in your library" (no duplicates)
 - [ ] Run `/bgg link username:nonexistentuser` — confirm "We couldn't verify that BoardGameGeek account" message
 - [ ] Run with same username already linked — confirm "already linked" message
 
@@ -815,32 +1283,48 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 **What it does:** Creates a for-sale listing, optionally enriched with BGG game details and current BGG marketplace price data.
 
-**Prerequisites:** most cases below assume a marketplace forum channel is already configured via `/admin marketplace config` (3.9m) — the "no channel configured" case further down is intentionally tested without it.
+**Prerequisites:** most cases below assume a marketplace channel is already configured via `/admin marketplace config` (3.9m) — the "no channel configured" case further down is intentionally tested without it.
 
-- [ ] Run `/marketplace post sell item:Wingspan bids_allowed:true condition:Very Good` — confirm BGG price screen appears (ephemeral) with current marketplace prices and "Powered by BGG" logo
-- [ ] Select a price option (use suggested, enter custom, or open to offers) — confirm forum post created with item name, price, condition, and "I'm Interested" button
-- [ ] Run with `bids_allowed:false` — confirm the listing embed shows "*(firm)*" next to the price
+- [ ] Run `/marketplace post sell item:Wingspan offers_allowed:true condition:Very Good` (renamed from `bids_allowed`) — confirm BGG price screen appears (ephemeral) with current marketplace prices and "Powered by BGG" logo
+- [ ] Select a price option (use suggested, enter custom, or open to offers) — confirm forum post created with item name, price, a "Negotiable?" field showing "💬 Open to Offers", condition, and "I'm Interested" button
+- [ ] Run with `offers_allowed:false` (renamed from `bids_allowed`) — confirm the listing embed's "Negotiable?" field shows "🔒 Firm Price" instead of "💬 Open to Offers", and the forum post now also shows a "⚡ Buy It Now" button alongside "I'm Interested" (see 5.1a for the full Buy It Now flow)
+- [ ] Confirm the post-creation confirmation embed (shown right after posting) also has a "Negotiable?" field with the matching value ("💬 Open to Offers" / "🔒 Firm Price") — this field was previously named "Bids" with values "Allowed"/"Firm price"
 - [ ] Select "List as open to offers" — confirm listing shows "Open to offers"
 - [ ] Run with `notes` — confirm notes appear in the listing embed
 - [ ] Confirm BGG thumbnail appears in the embed (if BGG found the item)
 - [ ] Confirm "Powered by BGG" logo appears in the forum post embed
 - [ ] Run when no marketplace channel is configured — confirm listing is still created, response notes no channel configured
 - [ ] Run with an item that has expansions — confirm expansion select step appears; selecting expansions shows combined price estimate
+- [ ] Run with an item that IS an expansion (e.g. `Wingspan: European Expansion`) — confirm the expansion-select step is **skipped**; instead a prompt asks whether to include the base game, with "✅ Include `<Base Game>`" and "➡️ Just the Expansion" buttons
+- [ ] Choose to include the base game — confirm the price screen title includes "+ Base Game" and combines pricing for both items; the resulting listing embed's title also shows "+ Base Game" and includes an "Includes Base Game" field
+- [ ] Choose "Just the Expansion" — confirm the listing posts normally with no base-game bundling; the embed still shows a "Base game on BGG" reference link, marked "(not included)"
 
 #### Custom / non-BGG items
 - [ ] Start typing an item name that has no BGG match, then select the "📝 not on BGG / custom item" autocomplete option — confirm no BGG price screen appears and you're instead prompted to add a reference link (**Add Link** / **Skip** buttons)
 - [ ] Click **Add Link**, submit a URL in the modal — confirm the listing embed shows a "Reference link" entry pointing to that URL
 - [ ] Click **Skip** — confirm the listing posts with no reference link and no BGG thumbnail
 - [ ] Click **Add Link** and submit a non-URL string (e.g. plain text) — confirm graceful validation rather than a broken link field
+- [ ] Confirm a custom/non-BGG listing's forum/text post shows **no** "Powered by BGG" logo (there's no BGG data to attribute) — whether Add Link or Skip was chosen
+
+#### Catalog match confirmation (regression: a search like "gloom" no longer silently attaches the wrong game, e.g. "Gloom" instead of the intended "Gloomhaven")
+- [ ] Type an item name and pick a real suggestion from the autocomplete dropdown — confirm it goes straight to the next step (price screen / expansion select / include-base-game prompt) with **no** "Found a possible match" confirmation in between
+- [ ] Type an item name and submit **without** picking a suggestion (e.g. type "gloom" and press Enter before the dropdown is used) where that text happens to exactly match a *different*, shorter real BGG entry — confirm a "Found a possible match" prompt appears showing the matched game's name/year (and thumbnail, if any), instead of silently attaching it
+- [ ] On that prompt, tap "✅ Yes, that's it" — confirm the wizard continues normally from there (expansion select / include-base-game / price screen) using the matched game's data
+- [ ] On that prompt, tap "🔍 Search again" — confirm a modal appears asking for a new item name; submit one — confirm it re-resolves and shows another confirmation prompt if it matches something (still unconfirmed, since typed text is never an explicit pick), or the no-BGG-match reference-link prompt if it matches nothing
+- [ ] On that prompt, tap "📝 Not on BGG" — confirm it clears the matched game and falls through to the same reference-link prompt (Add Link / Skip) as an item with no BGG match at all
+- [ ] Type text and submit **without** picking a suggestion, using a name obscure/new enough to miss the local BGG catalog but findable via a live BGG search — confirm it still shows a "Found a possible match" prompt instead of falling straight to the no-BGG-match reference-link flow
+- [ ] Use the marketplace hub's "📦 Sell an Item" / "🔄 Propose a Trade" wizard (2.7m) instead of the slash command — confirm every item name entered there (always free-typed, since a modal has no autocomplete) goes through this same confirmation step whenever it matches a catalog entry
 
 ### 2.7b `/marketplace post trade`
 
 **What it does:** Creates a trade listing for an item you want to trade away.
 
-- [ ] Run `/marketplace post trade item:Catan condition:Good looking_for:Wingspan` — confirm trade listing posted to forum with "For Trade" tag and looking-for info
+- [ ] Run `/marketplace post trade item:Catan condition:Good looking_for:Wingspan` — confirm trade listing posted to forum with "For Trade" tag, an "Offering" field showing the item name, and a "Looking For" field showing "Wingspan" (the two fields display side by side)
+- [ ] Confirm the post-creation confirmation embed ("Trade listing created — Catan") also shows the "Offering" field immediately before the "Looking For" field
 - [ ] Run without `looking_for` — confirm listing shows "Open to offers"
 - [ ] Confirm "I'm Interested" button appears on the forum post
 - [ ] Select the "📝 not on BGG / custom item" autocomplete option — confirm the same Add Link / Skip reference-link flow as `/marketplace post sell` (see 2.7a) applies here too
+- [ ] Run with an item that IS an expansion — confirm the same include-base-game prompt from `/marketplace post sell` (see 2.7a) appears before the trade listing is created
 
 ### 2.7c `/marketplace price`
 
@@ -848,8 +1332,11 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 - [ ] Run `/marketplace price item:Wingspan` — confirm ephemeral embed shows price range, median, avg, distribution histogram, and "Powered by BGG" logo
 - [ ] Run with an item that has expansions — confirm expansion select step appears; selecting expansions shows per-item breakdown and combined estimate with total listing count
+- [ ] Run with an item that IS an expansion — confirm the include-base-game prompt appears instead of an expansion-select step; choosing to include the base game shows a per-item price breakdown including the base game
 - [ ] Run with a custom/non-BGG item (type a name not in the catalog) — confirm "not in the BGG catalog" error
 - [ ] Confirm no listing is created and nothing is posted to the marketplace channel
+- [ ] Pick a real autocomplete suggestion — confirm the price embed shows no "best-guess" note
+- [ ] Type text and submit **without** picking a suggestion, where it happens to exactly match a different real BGG entry — confirm the price embed includes a "⚠️ Best-guess match" note naming the actual game the prices are for (unlike `post sell`/`post trade`, price check has no interactive confirmation step — it's read-only, so the note is shown instead)
 
 ### 2.7d `/marketplace conditions`
 
@@ -860,36 +1347,42 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.7e `/marketplace browse`
 
-**What it does:** Shows active listings in an ephemeral text list (up to 5 at a time).
+**What it does:** Shows active listings in an ephemeral text list (up to 5 at a time), followed by a legend explaining the status/type icons.
 
 - [ ] Run with no listings — confirm "No active listings found"
 - [ ] Run with active listings — confirm list shows item name, price/offer, and seller username
+- [ ] Run with a listing that has open offers — confirm the list shows an inline "(N offer(s))" annotation next to the price/offer for that listing
 - [ ] Run with `type:sell` — confirm only sell listings appear
 - [ ] Run with `type:trade` — confirm only trade listings appear
 - [ ] Run with more than 5 active listings — confirm "Showing 5 of N. Check the marketplace channel for all listings."
+- [ ] Confirm the reply ends with a legend line: "🟢 Active · 🟡 Pending offer(s) · 🔴 Sold/Traded · ⚫ Closed  |  🏷️ For Sale · 🔄 For Trade" (browse itself only ever shows 🟢/🟡, since closed/sold listings aren't "active" — the legend still covers the full set members will see elsewhere, e.g. in `/marketplace my`)
 
 ### 2.7f `/marketplace my`
 
-**What it does:** Shows your own listings with their status, bids, and IDs.
+**What it does:** Shows your own listings with their status, offers, and IDs, followed by the same status/type legend as `/marketplace browse`. Sold/closed listings older than a week are left off the list entirely (they're done, and clutter this view once they've aged out) — active/pending listings always show regardless of age.
 
 - [ ] Run with no listings — confirm "You don't have any listings"
-- [ ] Run with listings — confirm all your listings are shown with status, price/offer, open bid count, and listing ID
+- [ ] Run with listings — confirm all your listings are shown with status, price/offer, an "(N open offer(s))" annotation when offers are open, and listing ID
+- [ ] Confirm the reply ends with the status/type legend (see 1.7e)
+- [ ] Close or let a listing sell, then run this again right away — confirm it still appears (within the retention window)
+- [ ] Take a sold/closed listing older than a week (e.g. edit its `updatedAt` in `data/marketplace.json` back by 8+ days) — confirm it no longer appears in the list
+- [ ] With only old sold/closed listings (no active/pending ones), confirm the reply reads "You don't have any active listings. (Sold/closed listings older than a week aren't shown here.)" rather than the "no listings at all" message — since you do have listings, just none worth showing right now
 
 ### 2.7g "I'm Interested" button flow
 
-**What it does:** Buyer clicks button, modal opens, bid is submitted, seller is notified.
+**What it does:** Buyer clicks button, modal opens, an offer is submitted, seller is notified. Firm-price listings also show a "Buy It Now" button that skips the seller-review step entirely.
 
-**Requires a second account — moved to Part 5.1a.** This flow needs a distinct buyer and seller identity (you can't bid on your own listing, and Discord won't let an account DM itself), so it can't be exercised by one tester alone — see Part 5.1a below.
+**Requires a second account — moved to Part 5.1a.** This flow needs a distinct buyer and seller identity (you can't make an offer on your own listing, and Discord won't let an account DM itself), so it can't be exercised by one tester alone — see Part 5.1a below.
 
 ### 2.7h Negotiation — Accept / Deny / Counter
 
-**What it does:** Seller responds to bids with Accept, Deny, or Counter buttons sent via DM (or thread fallback if DMs are disabled).
+**What it does:** Seller responds to offers with Accept, Deny, or Counter buttons sent via DM (or thread fallback if DMs are disabled).
 
 **Requires a second account — moved to Part 5.1b.** Accept/Deny/Counter is a live exchange between a seller's DM and a buyer's DM, so it needs two people/accounts watching for prompts around the same time — see Part 5.1b below.
 
 ### 2.7i Negotiation modes
 
-**What it does:** Controls whether bid negotiation is visible publicly in the forum thread or in a private thread.
+**What it does:** Controls whether offer negotiation is visible publicly in the forum thread or in a private thread.
 
 **Requires a second account — moved to Part 5.1c.** Verifying what each mode shows means comparing what the buyer's action produces against what the seller sees, which needs both identities — see Part 5.1c below.
 
@@ -899,7 +1392,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 - [ ] Run `/marketplace close <id>` as the seller — confirm listing status becomes ⚫ Closed and forum post updates
 - [ ] 👑 Run `/marketplace close <id>` as a different user (non-admin) — confirm "You can only close your own listings"
-- [ ] Run `/marketplace reopen <id>` as the seller — confirm listing status returns to Active (or Pending if bids exist)
+- [ ] Run `/marketplace reopen <id>` as the seller — confirm listing status returns to Active (or Pending if offers exist)
 - [ ] Run `/marketplace reopen <id>` as a different user — confirm error
 
 ### 2.7k Transaction log
@@ -907,14 +1400,44 @@ All `/game` commands should be used inside an active event channel unless otherw
 **What it does:** Every marketplace event is appended to `data/marketplace_log.jsonl`.
 
 - [ ] After creating a listing, open `data/marketplace_log.jsonl` — confirm a `listing_created` entry with correct `guildId`, `listingId`, `listingName`, `actorId`, and `timestamp`
-- [ ] After a bid is accepted, confirm `bid_accepted` and `listing_sold` entries appear
-- [ ] After a bid is denied, confirm `bid_denied` entry appears
+- [ ] After an offer is accepted, confirm `bid_accepted` and `listing_sold` entries appear
+- [ ] After an offer is denied, confirm `bid_denied` entry appears
 - [ ] Confirm no entries are missing for any action in the flow above
 
 ### 2.7l Permission boundaries (Host)
 
-- [ ] Confirm a Host CAN use `post sell`, `post trade`, `price`, `conditions`, `browse`, `my`, `close` (own listings), `reopen` (own listings) — same as a regular member
+- [ ] Confirm a Host CAN use `post sell`, `post trade`, `price`, `conditions`, `browse`, `my`, `close` (own listings), `reopen` (own listings), `edit` (own listings) — same as a regular member
 - [ ] 👑 Try `/admin marketplace config` and `/admin marketplace purge` as a Host — confirm "requires Manage Server permission" (Host role alone does not grant this)
+
+### 2.7m Quick Actions Hub (button panel)
+
+**What it does:** A pinned "🎮 Quick Actions" **forum post** (not a plain channel message — forum channels pin threads, not messages) in the configured marketplace channel, with buttons for 📦 Sell an Item, 🔄 Propose a Trade, 🔍 Browse Listings, and 📋 My Listings. Created (or refreshed) automatically whenever `/admin marketplace config` (3.9m) sets the channel. Sell/Trade need an item name, which a modal only supports as free text (no autocomplete like the slash command's `item` option) — so the wizard collects the name via modal, then condition via a native select, then a second step specific to each type (sell: offers-allowed via buttons; trade: a "what are you looking for?" modal), before handing off to the exact same listing-creation flow (BGG lookup, expansion select, price screen) the slash commands use.
+
+**Prerequisites:** a marketplace channel configured via `/admin marketplace config` (3.9m).
+
+- [ ] Configure the marketplace channel — confirm a "🎮 Quick Actions" post appears in the forum, pinned to the top
+- [ ] Tap "📦 Sell an Item" — confirm a modal asks for an item name
+- [ ] Submit the modal — confirm a condition select appears (New / Like New / Very Good / Good / Acceptable)
+- [ ] Select a condition — confirm "✅ Allow Offers" / "🔒 Firm Price" buttons appear
+- [ ] Tap either offers button — confirm it proceeds exactly like `/marketplace post sell` would from that point (BGG match on a base game → expansion select; BGG match on an expansion → include-base-game prompt; otherwise → price screen; no BGG match → reference-link prompt)
+- [ ] Tap "🔄 Propose a Trade" — confirm a modal asks for an item name
+- [ ] Submit the modal and select a condition — confirm a **second modal** appears asking "What are you looking for in return?" (regression: this step used to be skipped entirely, silently listing every hub-created trade as "Open to offers")
+- [ ] Submit the "looking for" modal with a value (e.g. "Wingspan or Ark Nova") — confirm the resulting listing's "Looking For" field shows that value, then proceeds through the listing flow exactly like `/marketplace post trade` would (BGG match → expansion select / include-base-game prompt; no match → reference-link prompt)
+- [ ] Submit the "looking for" modal blank — confirm the listing shows "Open to offers", same as leaving `/marketplace post trade`'s `looking_for` option unset
+- [ ] Tap "🔍 Browse Listings" — confirm it shows the same output as `/marketplace browse` with no type filter (all sell + trade listings), including the status/type legend (1.7e)
+- [ ] Tap "📋 My Listings" — confirm it shows the same output as `/marketplace my` for the tapping user, including the legend and the one-week retention filter on old sold/closed listings (1.7f)
+- [ ] Start the Sell (or Trade) wizard, then wait or restart the bot before finishing a step — confirm tapping a stale condition/offers button, or submitting the "looking for" modal after the session expired, shows a "session has expired" message rather than an error or a crash
+
+### 2.7n `/marketplace edit`
+
+**What it does:** Lets the owner of a still-active/pending listing update its price (sell) / looking-for (trade) / notes without reposting from scratch. Opens a modal pre-filled with the listing's current values; type, condition, and offers-allowed aren't editable (repost if those need to change). Saving refreshes the forum/text-channel post in place.
+
+- [ ] Run `/marketplace edit id:<your active sell listing>` — confirm a modal opens with the current asking price (or blank if "open to offers") and notes pre-filled; changing the price and submitting updates the post's "Price" field
+- [ ] Leave the price field blank and submit — confirm the listing reverts to "Open to offers"
+- [ ] Enter a non-numeric price (e.g. "free") — confirm "Invalid price..." and nothing is saved
+- [ ] Run `/marketplace edit` on a trade listing — confirm the modal shows a "Looking for" field (not a price field), pre-filled with the current value; changing it updates the post's "Looking For" field
+- [ ] 👑 Run as a different user on someone else's listing (Host, not the owner) — confirm "You can only edit your own listings" — Host does not grant an override here, unlike `close`
+- [ ] Run on a sold or closed listing — confirm "Only active or pending listings can be edited" and no modal opens
 
 ## 2.8 `/host` — Host Commands
 
@@ -922,41 +1445,105 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.8a `/host event create`
 
-**What it does:** Creates a Discord scheduled event, a text channel, and posts an RSVP embed in the configured announcements channel.
+**What it does:** Creates a Discord scheduled event, a text channel, and posts an RSVP embed in the configured announcements channel. If the announcements channel is a **Forum Channel**, the event becomes a forum thread instead of a plain message, tagged "Upcoming" (see 3.9a for eager tag creation).
 
-- [ ] Create an event with required fields only: `/host event create date:August 22 time:7pm` — confirm:
-  - Discord scheduled event is created
-  - A channel named `monthly-august-22` appears under "Monthly Events"
-  - RSVP embed is posted in the announcements channel
+- [ ] Create an event with required fields only: `/host event create title:Board Game Bash date:August 22 time:7pm` — confirm:
+  - Discord scheduled event is created, named `Board Game Bash — <full date>`
+  - A channel named `august-22-board-game-bash` appears under "Events" (the default event category name)
+  - Channel topic and welcome message both reference "Board Game Bash"
+  - Channel topic also ends with "Event ID: `<id>`" — confirm the ID matches the one shown in the RSVP embed footer, so the ID is visible from the event channel itself, not just the announcement post
+  - RSVP embed is posted in the announcements channel, titled `Board Game Bash — <full date>`
+- [ ] With the announcements channel set to a Forum Channel (3.9a), create an event — confirm a new forum thread is posted with the "Upcoming" tag applied
+- [ ] Attempt to create an event without `title` — confirm Discord rejects it as a missing required option
 - [ ] Create an event with all fields (end_time, location, link, description) — confirm all appear in the embed
-- [ ] Confirm date formats work: `aug 22`, `August 22`, `august 22, 2026`
+- [ ] Confirm date formats work: `aug 22`, `August 22`, `august 22, 2026`, `Sept 2nd` (regression: the 4-letter "Sept" abbreviation previously failed to parse — only 3-letter "Sep" and the full "September" worked)
 - [ ] Confirm time formats work: `7pm`, `7:00 PM`, `19:00`
 - [ ] Attempt to create an event with a date/time already in the past — confirm the bot handles it gracefully (rejects with a clear error, or accepts per design) rather than silently creating a broken past event
 
-### 2.8b `/host event cancel`
+### 2.8b `/host event edit`
 
-**What it does:** Cancels a game night, deletes the Discord scheduled event, removes the RSVP embed, and cleans up the event channel.
+**What it does:** Updates an existing game night in place — title, date, time, end_time, location, link, and description are all editable — without cancelling and recreating it. The Discord scheduled event, event channel name/topic, and RSVP embed are all kept in sync.
+
+**Prerequisites:** an event must already exist (created via 2.8a) — grab its ID from the RSVP embed footer or the event channel's topic.
+
+- [ ] Run `/host event edit id:<event-id>` with no other options — confirm "Provide at least one field to update" error
+- [ ] Run `/host event edit id:<event-id> location:New Venue` — confirm the RSVP embed updates to show the new location
+- [ ] Run `/host event edit id:<event-id> title:New Title` — confirm the event channel is renamed and re-topic'd, the Discord scheduled event's name updates, and the RSVP embed title updates
+- [ ] Run `/host event edit id:<event-id> date:<a new date>` with no `end_time` — confirm the event's overall duration is preserved (end time shifts by the same amount as the date/start time)
+- [ ] Run `/host event edit id:<event-id> end_time:<a new end time>` — confirm only the end time changes
+- [ ] Attempt to edit with an invalid ID — confirm "No event found" error
+- [ ] Attempt to edit a cancelled event — confirm "already cancelled and cannot be edited" error
+- [ ] Attempt to edit an archived event — confirm "already concluded and cannot be edited" error
+- [ ] Attempt to parse an invalid date/time — confirm a clear parse error, matching `/host event create`'s error style
+
+### 2.8c `/host event cancel`
+
+**What it does:** Cancels a game night, deletes the Discord scheduled event, removes the RSVP embed, and cleans up the event channel. If the RSVP was a forum thread, it's tagged "Cancelled" and locked/archived instead of deleted.
 
 - [ ] Cancel an event as the creator: `/host event cancel id:<event-id>` — confirm event is removed
 - [ ] Cancel an event as a host (non-creator) — confirm it works
+- [ ] With a forum announcements channel, cancel an event — confirm the forum thread is tagged "Cancelled", gets a "this event has been cancelled" message, and is locked/archived
 - [ ] Attempt to cancel with an invalid ID — confirm "No event found" error
 - [ ] Attempt to cancel an already-cancelled event — confirm "already cancelled" error
 
-### 2.8c `/host event archive`
+### 2.8d `/host event archive`
 
-**What it does:** Manually archives channels for all past events that haven't been archived yet.
+**What it does:** Manually archives channels for all past events that haven't been archived yet. If the RSVP was a forum thread, it's tagged "Concluded" and locked/archived.
 
 - [ ] Run `/host event archive` with no past events — confirm "No past event channels to archive"
 - [ ] Run with a past event — confirm channel moves to "Archive" category and a lock-date message is posted
+- [ ] With a forum announcements channel, archive a past event — confirm the forum thread is tagged "Concluded", gets a "this event has concluded" message, and is locked/archived
 
-### 2.8d `/host game cancel`
+### 2.8e `/host event privacy`
 
-**What it does:** Removes any game from the event lineup regardless of who suggested it.
+**What it does:** Opens or restricts a single event's channel, overriding the server-wide `open_channels` default (3.9a) for just that event — e.g. to open up a channel that was created RSVP-only, or lock down one that was created open, without changing the default for future events.
+
+- [ ] With an event created RSVP-only, run `/host event privacy id:<event-id> open:true` — confirm the channel becomes visible to everyone (no longer hidden from `@everyone`)
+- [ ] With an event created open, run `/host event privacy id:<event-id> open:false` — confirm the channel is hidden from `@everyone`, and that the event creator plus everyone currently RSVP'd Going/Maybe still has access
+- [ ] After closing an open event via `open:false`, have a new member RSVP Going — confirm they gain channel access same as any RSVP-only event (2.2b)
+- [ ] Run the same `open:true`/`open:false` value the channel is already set to — confirm a "already open to everyone"/"already RSVP-only" message and no channel changes
+- [ ] Attempt on an invalid event ID — confirm "No event found" error
+- [ ] Attempt on a cancelled or archived event — confirm the same "already cancelled"/"already concluded" errors as `/host event edit` (2.8b)
+- [ ] 👑 Attempt as a non-host — confirm "Only hosts can change an event's channel visibility" error
+
+### 2.8f `/host event greeters`
+
+**What it does:** Sets, views, or removes an event's greeters — up to 2 members who rotate each event. While assigned, a greeter can only join, waitlist, or suggest Light-complexity games (unconfirmed/unknown complexity counts as not-Light and is blocked too), keeping them free to help arriving guests. If there are two greeters, they can never both be seated (or waitlisted) on the same game. Assigning a greeter who's already seated somewhere that violates these rules automatically removes them from that seat/waitlist spot (and the other greeter's seat if they're doubled up), and reports what was removed. `remove:@user` removes just that one greeter (no seat reconciliation needed — lifting the restriction never creates a conflict), leaving any other greeter untouched; `clear:true` removes both at once; running the command with no options shows who's currently set instead of erroring.
+
+- [ ] Run `/host event greeters id:<event-id> greeter1:@Alice` — confirm the reply confirms Alice is now a greeter, restricted to Light games
+- [ ] Run `/host event greeters id:<event-id> greeter1:@Alice greeter2:@Bob` — confirm the reply also notes they can't both be seated on the same game
+- [ ] Run `/host event greeters id:<event-id> greeter1:@Alice greeter2:@Alice` — confirm a "must be different users" error and nothing changes
+- [ ] With Alice and Bob both set as greeters, run `/host event greeters id:<event-id> remove:@Alice` — confirm Alice is removed and can join/suggest any game again, while Bob remains a greeter with the restriction still in effect; reply notes "Remaining greeter: @Bob"
+- [ ] With only Alice set as a greeter, run `/host event greeters id:<event-id> remove:@Alice` — confirm the reply says "No greeters remain for this event"
+- [ ] Run `/host event greeters id:<event-id> remove:@Carol` when Carol isn't currently a greeter — confirm "isn't currently a greeter" error and nothing changes
+- [ ] Run `/host event greeters id:<event-id> clear:true` — confirm greeters are cleared and both members can freely join/suggest any game again
+- [ ] Run with no options at all, before any greeters are set — confirm the reply says "No greeters currently set" plus a usage hint (`greeter1`/`remove`/`clear:true`)
+- [ ] Run with no options at all, with Alice and Bob already set as greeters — confirm the reply shows "Current greeter(s) for event `<id>`: @Alice and @Bob"
+- [ ] Attempt on an invalid event ID — confirm "No event found" error
+- [ ] Attempt on a cancelled or archived event — confirm the same "already cancelled"/"already concluded" errors as `/host event edit` (2.8b)
+- [ ] 👑 Attempt as a non-host — confirm "Only hosts can set greeters" error
+- [ ] With Alice already seated on a Medium/Heavy game, assign her as `greeter1` — confirm she's automatically removed from that game's seats, its posted card updates live, and the reply lists what was removed
+- [ ] With Alice already on a Medium/Heavy game's waitlist, assign her as a greeter — confirm she's removed from the waitlist too, with the same live-card update
+- [ ] With Alice and Bob both already seated together on the same Light game, assign them as `greeter1`/`greeter2` — confirm Bob (the second-listed) is removed while Alice keeps her seat, and the reply explains why
+- [ ] As a greeter, attempt to Join a Medium/Heavy game — confirm "As a greeter for this event, you can only sign up for Light-complexity games..." error and the seat is not taken
+- [ ] As a greeter, attempt to Join a game with no confirmed complexity (BGG has no weight data) — confirm the same restriction applies (unknown complexity is treated as not-Light)
+- [ ] As a greeter, Join a Light-complexity game — confirm it works normally
+- [ ] As a greeter, attempt to `/game suggest` a Medium/Heavy (or unknown-complexity) game — confirm the suggestion is rejected before it's posted, with the same Light-complexity error (suggesting auto-seats you, so it counts as signing up)
+- [ ] As a greeter, `/game suggest` a Light-complexity game — confirm it posts normally
+- [ ] With two greeters assigned, have the first Join a Light game, then have the second attempt to Join or Waitlist that same game — confirm "Both greeters can't be on the same game..." error
+- [ ] With two greeters assigned, confirm each can freely join *different* Light games at the same time
+- [ ] Confirm a regular (non-greeter) member is unaffected by any of the above restrictions
+
+### 2.8g `/host game cancel`
+
+**What it does:** Removes any game from the event lineup regardless of who suggested it. If the given title isn't an exact match, falls back to a fuzzy match against the current lineup (e.g. `catan` matches "Settlers of Catan").
 
 - [ ] Remove another user's game: `/host game cancel title:Wingspan` — confirm card is deleted
-- [ ] Attempt to cancel a game not in the lineup — confirm "No game called X found" error
+- [ ] Remove a game using a partial/fuzzy title, e.g. `/host game cancel title:catan` — confirm it's found and removed
+- [ ] With two similarly-named games in the lineup, run `/host game cancel` with an ambiguous partial title — confirm the bot asks you to be more specific instead of guessing
+- [ ] Attempt to cancel a game not in the lineup (no exact or fuzzy match) — confirm "No game called X found" error
 
-### 2.8e `/host library unrequest`
+### 2.8h `/host library unrequest`
 
 **What it does:** Shows all game requests for an event (not just the host's own) and allows removing any of them.
 
@@ -964,6 +1551,109 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Remove another user's request — confirm it disappears from the request pin
 - [ ] Run with no requests — confirm "No games have been requested for this event"
 - [ ] Run from outside an event channel — confirm event picker appears; selecting an event shows all requests
+
+## 2.9 `/room` — Private Rooms
+
+### 2.9a `/room create`
+
+**What it does:** Creates a new private text channel visible only to whoever you mention, plus hosts and admins — hidden from everyone else. Posts a message pinging each invited person, and creates the channel under a separate category (default "Private Rooms", configurable via `/admin room config`, 3.9o) so it's never mixed in with event/archive channels. Requires a `date` (when the room auto-closes — see 4.8), unless `persist:true` is set, which creates a room with no expiration at all — see 2.9c to toggle this later. A persistent room's channel name and topic are prefixed with 📌 so hosts/admins can spot it in the channel list without opening it.
+
+**Prerequisites:** none — any server member can run this, not just hosts/admins.
+
+- [ ] Run `/room create people:@Alice @Bob date:August 22` — confirm a new channel is created under the "Private Rooms" category, and the ping message + confirmation both state it expires August 22
+- [ ] Run `/room create people:@Alice persist:true` with no `date` — confirm the room is created with no expiration, the channel name and topic are prefixed with 📌, and the ping message + confirmation both say it persists until closed
+- [ ] Confirm a normal (non-persistent) room's channel name and topic are **not** prefixed with 📌
+- [ ] Attempt to create a room with neither `date` nor `persist:true` — confirm a clear "Provide a `date`..." error and no channel is created
+- [ ] Run with an unparseable `date` (e.g. "whenever") — confirm a clear parse error and no channel is created
+- [ ] Run with a `date` already in the past — confirm "That date has already passed" error and no channel is created
+- [ ] Confirm the channel is hidden from `@everyone` — a member who wasn't mentioned and has no Host/Admin role cannot see it
+- [ ] Confirm you (the creator), the mentioned people, and any Host/Admin role member can all see the channel
+- [ ] Confirm a message posts in the new channel `@`mentioning each invited person
+- [ ] Run with a `name` option — confirm the channel is named accordingly
+- [ ] Run without a `name` option — confirm a reasonable auto-generated name is used instead
+- [ ] Run with `people` containing no valid `@`mentions (e.g. plain text) — confirm a clear error and no channel is created
+- [ ] Mention yourself along with others — confirm you aren't invited twice/duplicated
+- [ ] Mention someone who has since left the server — confirm they're skipped with a note in the reply, and the room is still created for the remaining valid people
+- [ ] Mention only people who've all left the server — confirm a clear "couldn't find any" error and no channel is created
+- [ ] Create a second room in the same server — confirm it reuses the existing "Private Rooms" category rather than creating a duplicate
+
+### 2.9b `/room close`
+
+**What it does:** Deletes a private room. Must be run inside the room's own channel. The room's creator or any host/admin can close it — nobody else.
+
+- [ ] Run inside a room you created — confirm the channel is deleted
+- [ ] Run inside a room someone else created, as a Host or Admin — confirm it works
+- [ ] Run inside a room someone else created, as a regular member with no elevated role — confirm "Only the room's creator or a host/admin can close this room" error, and the channel is **not** deleted
+- [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
+
+### 2.9c `/room persist`
+
+**What it does:** Turns a private room's auto-expiration on (`enabled:true`) or off (`enabled:false`, requires a new `date`). Must be run inside the room's own channel. The room's creator or any host/admin can toggle it — nobody else. See 4.8 for how auto-expiration works. The channel's 📌 name/topic prefix updates immediately to match.
+
+- [ ] Run `/room persist enabled:true` inside a room that has a `date` — confirm the reply says the room will no longer auto-expire, the channel name and topic gain the 📌 prefix, and it survives past its original expiration date
+- [ ] Run `/room persist enabled:false` inside a persistent room, with a `date` — confirm the reply confirms the new expiration, the channel name and topic lose the 📌 prefix, and the room auto-closes on that date (4.8)
+- [ ] Run `/room persist enabled:false` inside a persistent room, with **no** `date` — confirm a clear "Provide a `date`..." error and the room remains persistent
+- [ ] Run as a Host or Admin on a room you didn't create — confirm it works
+- [ ] Run as a regular member with no elevated role on a room you didn't create — confirm "Only the room's creator or a host/admin can change this room's expiration" error, and nothing changes
+- [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
+
+### 2.9d `/room invite`
+
+**What it does:** Adds more people to an existing private room, granting them channel access and updating the stored room record. Must be run inside the room's own channel. The room's creator or any host/admin can invite — nobody else.
+
+- [ ] Run `/room invite people:@Carol` inside a room — confirm Carol gains access to the channel, is pinged in a message, and the confirmation reply says she was added
+- [ ] Confirm the newly added person now shows up if the room is later inspected (e.g. they count toward "already in this room" on a repeat invite)
+- [ ] Mention someone who's already the creator or an existing invitee — confirm a clear "isn't already in this room" error and no channel/reply changes
+- [ ] Mention someone who has since left the server — confirm they're skipped with a note in the reply, and any other valid mentions are still added
+- [ ] Mention only people who've all left the server — confirm a clear "couldn't find any" error
+- [ ] Run as a Host or Admin on a room you didn't create — confirm it works
+- [ ] Run as a regular member with no elevated role on a room you didn't create — confirm "Only the room's creator or a host/admin can invite people to this room" error, and nobody is added
+- [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
+
+### 2.9e `/room kick`
+
+**What it does:** Removes someone from an existing private room, revoking their channel access and updating the stored room record. Must be run inside the room's own channel. The room's creator or any host/admin can kick — nobody else. The room's creator cannot be kicked (close the room instead).
+
+- [ ] Run `/room kick user:@Carol` inside a room Carol was invited to — confirm Carol loses access to the channel, a message announces her removal, and the confirmation reply says she was removed
+- [ ] Attempt to kick the room's creator — confirm "You can't remove the room's creator..." error and nothing changes
+- [ ] Attempt to kick someone who was never invited to this room — confirm a clear "hasn't been individually invited" error and nothing changes
+- [ ] Run as a Host or Admin on a room you didn't create — confirm it works
+- [ ] Run as a regular member with no elevated role on a room you didn't create — confirm "Only the room's creator or a host/admin can remove people from this room" error, and nobody is removed
+- [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
+
+### 2.9f Quick Actions Hub (button panel)
+
+**What it does:** A pinned "🎮 Quick Actions" message posted automatically the moment a room is created, alongside the existing plain-text welcome message — buttons for 🎲 Suggest a Game, ➕ Invite, 👢 Kick, 📌 Toggle Auto-Expire, and 🍿 Snacks. Close Room isn't on this panel — with the row already at Discord's 5-button cap, closing (the one destructive action here) is left as a deliberate typed `/room close` rather than a tap target. The Suggest a Game button is the exact same one used in event channels (same modal, same underlying flow) — it just resolves this room instead of an event when tapped here. Invite/Kick use Discord's native member-picker (a dropdown of server members) instead of typing mentions or a user option. Every button enforces the same "room creator or host/admin" permission check as its slash-command equivalent — except 🍿 Snacks, which (like `/snacks`) has no creator/host/admin restriction at all.
+
+- [ ] Create a room — confirm the "🎮 Quick Actions" message appears, pinned, alongside the separate plain-text welcome message
+- [ ] Tap "🎲 Suggest a Game" — confirm the same modal/flow as the event-channel hub, correctly suggesting into this room
+- [ ] Tap "➕ Invite" as the room's creator — confirm a member-picker appears; selecting one or more people grants them channel access and adds them to the room, identical to `/room invite`
+- [ ] Tap "➕ Invite" as a member with no elevated role who isn't the room's creator — confirm the same permission error `/room invite` gives
+- [ ] Tap "👢 Kick" with nobody individually invited yet — confirm "Nobody has been individually invited to this room..." instead of an empty/broken picker
+- [ ] Tap "👢 Kick" and select someone invited to the room — confirm they lose access, identical to `/room kick`
+- [ ] Tap "👢 Kick" and select the room's creator — confirm "You can't remove the room's creator..." same as the command
+- [ ] Tap "📌 Toggle Auto-Expire" on a room with a set expiration date — confirm it immediately becomes persistent (no modal), same as `/room persist enabled:true`
+- [ ] Tap "📌 Toggle Auto-Expire" on a persistent room — confirm a modal asks for a new expiration date, and submitting it sets the date and turns persistence back off, same as `/room persist enabled:false date:...`
+- [ ] Tap "🍿 Snacks" — confirm the same panel described in 1.11d, scoped to this room; unlike every other button here, a member with no elevated role who didn't create the room can use it too
+- [ ] Confirm there is no "Close Room" button on this panel — closing a room is still available, just only via `/room close`
+
+## 2.10 General Chat — Quick Actions Hub
+
+### 2.10a Quick Actions Hub (button panel)
+
+**What it does:** A pinned "🎮 Quick Actions" message in a designated, already-populated chat channel (e.g. #general) — set via `/admin general config` (3.9q). Unlike the event/room/marketplace hubs, this one isn't tied to any single command; it's a standalone panel of the most-used member actions that don't otherwise have a home: 🔍 View a Game, 📚 Browse Library, 📋 My Games, 🎲 Random Game, and 🙋 Request a Game to Bring. All five are library-focused — there's no RSVP shortcut here; RSVP happens on the event's own announcement post. The Request button is the *exact same* `/library request` hub button used in event channels — since that flow already falls back to the soonest upcoming event when there's no specific event-channel context, it works correctly from any channel with no changes. View works the same way, delegating to `/library view` (2.4e) via a one-field modal (there's no autocomplete available in a modal, so it always goes through the same exact-match/partial-match resolution `/library view` itself uses).
+
+**Prerequisites:** a channel configured via `/admin general config` (3.9q).
+
+- [ ] Configure the general hub channel — confirm the "🎮 Quick Actions" message appears there, pinned
+- [ ] Tap "🔍 View a Game" — confirm a modal appears asking for a game name
+- [ ] Submit a name that's an exact match in the library — confirm the same embed `/library view` (2.4e) would show
+- [ ] Submit a partial/misspelled name — confirm a "did you mean" select menu appears, same as `/library view`
+- [ ] Submit a name with no match at all — confirm the same "wasn't found in the library" message as `/library view`
+- [ ] Tap "📚 Browse Library" — confirm the same output as `/library list` (2.4a)
+- [ ] Tap "📋 My Games" — confirm the same output as `/library mine` (2.4b), listing only your own (and shared-with-you) games
+- [ ] Tap "🎲 Random Game" — confirm the same output as running `/library random` with no options, including the personalization fallback to your `/myroles` (2.5) preferences if set
+- [ ] Tap "🙋 Request a Game to Bring" — confirm the same modal/flow as the event-channel hub (1.3h), targeting the soonest upcoming event since there's no specific event channel here
 
 ---
 
@@ -975,7 +1665,7 @@ Admins retain full Regular Member and Host access, so this part fully repeats Pa
 
 **What it does:** Displays an ephemeral embed listing all available commands, tier-filtered to the invoking user's permissions.
 
-- [ ] Run `/help` as an admin — confirm all three sections appear: user commands, **🎙️ /host**, and **🔧 /admin**
+- [ ] Run `/help` as an admin — confirm all three sections appear: user commands, **🎪 /host**, and **🔧 /admin**, now split across **🔧 /admin — Server & library configuration** and **🔧 /admin — Welcome, marketplace & rooms** (regression check: this used to be one field that silently exceeded Discord's 1024-character field limit and made `/help` fail with no response at all for every admin)
 - [ ] Confirm `/game cancel` description says "Remove your own game suggestion"
 - [ ] Confirm `/library clear` description says "Remove all your own games at once"
 - [ ] Confirm the response is ephemeral
@@ -1014,7 +1704,14 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.3a `/game suggest`
 
-**What it does:** Suggests a game for the event. Checks the group library first (exact match → partial match → BGG search). Prompts to add tags if not already tagged.
+**What it does:** Suggests a game for the event (or, from inside a private room, for that room — see below). Checks the group library first (exact match → partial match → BGG search). Prompts to add tags if not already tagged.
+
+#### From a private room
+- [ ] Run `/game suggest title:Wingspan` from inside a `/room`-created private room channel (1.8a) — confirm it posts the game card directly in the room, with no event picker
+- [ ] Suggest a library game whose owner is a member of the room but not attending any event — confirm it's allowed (attendance is checked against room membership, not event RSVPs)
+- [ ] Suggest a library game whose owner is **not** a member of the room — confirm "None of the owners are attending" error, same wording as the event case
+- [ ] Confirm Join/Leave buttons on a room-suggested game card work the same as in an event channel
+- [ ] Confirm suggesting in a room does **not** create a request-pin or lineup-pin entry — "bring to a future event" tracking doesn't apply to an ad-hoc room
 
 #### From a library game (exact match)
 - [ ] Add a game to your library first (`/library add game:Wingspan`)
@@ -1033,11 +1730,15 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 #### From BGG search
 - [ ] Run `/game suggest title:Ticket to Ride` — confirm BGG results dropdown appears
+- [ ] Confirm results are sorted newest publish year first
 - [ ] Select a result — confirm game card is posted with BGG-sourced data
 - [ ] If the BGG game has no tags — confirm tag picker appears
 - [ ] Select tags, click Save — confirm tags appear on the game card and prompt to confirm bringing the game
 - [ ] Click Skip on tag picker — confirm bring prompt appears
-- [ ] Search a very generic term with many BGG matches — confirm the dropdown is capped at Discord's 25-option select menu limit rather than erroring
+- [ ] Search a generic term with more than 24 BGG matches — confirm **← Previous** / **Page X of Y** / **Next →** buttons appear below the dropdown, with Previous disabled on page 1
+- [ ] Click **Next →** — confirm the dropdown updates to the next page of results (newest-first order continues across pages) and **Previous** becomes enabled
+- [ ] Navigate to the last page — confirm **Next →** is disabled
+- [ ] Search a term with 24 or fewer matches — confirm no pagination buttons appear (dropdown only)
 
 #### With expansions
 - [ ] Run `/game suggest title:Wingspan with_expansions:True`
@@ -1053,6 +1754,10 @@ All `/game` commands should be used inside an active event channel unless otherw
 #### From outside an event channel
 - [ ] Run `/game suggest title:Catan` from a non-event channel — confirm an event picker dropdown appears
 - [ ] Select an event — confirm the suggest flow continues normally
+- [ ] With multiple upcoming events, run `/game suggest` for a title that has no library match, select an event from the picker — confirm the BGG search dropdown appears next (regression: the event picker used to lose track of the typed title if it wasn't resolved as part of the same interaction, making it look like nothing happened after picking an event)
+- [ ] Same as above but with a title that **is** an exact library match — confirm the game card posts directly (with the owner listed) right after picking the event, no extra step
+- [ ] Restart/redeploy the bot between running `/game suggest` (before picking an event) and selecting an event from the picker — confirm the picker still resolves the original title correctly afterward (the title/expansion choice now travels with the dropdown itself rather than living in the bot process's memory)
+- [ ] Select an event from the picker for a lineup that has already locked (4.7) — confirm the same "lineup is locked" message you'd get from suggesting directly in that event's channel
 
 ### 3.3b `/game list`
 
@@ -1064,11 +1769,13 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.3c `/game cancel`
 
-**What it does:** Removes your own game suggestion from the lineup. Only the person who suggested the game can remove it via this command; hosts/admins can remove any game via `/host game cancel`.
+**What it does:** Removes a game suggestion from the lineup. The person who suggested the game, that event's host, or an admin can remove it via this command; hosts/admins can also remove any game via `/host game cancel`. If the given title isn't an exact match, falls back to a fuzzy match against the current lineup (e.g. `catan` matches "Settlers of Catan").
 
 - [ ] Remove your own game suggestion: `/game cancel title:Wingspan` — confirm card is deleted
-- [ ] Attempt to remove another user's suggestion via this command (not `/host game cancel`) — confirm "Only the person who suggested... can remove it. Ask a host or admin if you need it removed." error
-- [ ] Attempt to cancel a game not in the lineup — confirm "No game called X found" error
+- [ ] Remove your own game suggestion using a partial/fuzzy title, e.g. `/game cancel title:catan` when "Settlers of Catan" is in the lineup — confirm it's found and removed
+- [ ] With two similarly-named games in the lineup (e.g. "Wingspan" and "Wingspan: Asia"), run `/game cancel title:wing` — confirm the bot asks you to be more specific instead of guessing, and neither game is removed
+- [ ] As an admin, remove a game suggested by someone else via `/game cancel` (not `/host game cancel`) — confirm it succeeds instead of the suggester-only error
+- [ ] Attempt to cancel a game not in the lineup (no exact or fuzzy match) — confirm "No game called X found" error
 
 ### 3.3d Game Card Buttons — Join / Leave
 
@@ -1082,14 +1789,18 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.3e Game Card Buttons — Waitlist
 
-**What it does:** When a game is full, players join a waitlist. If the waitlist reaches the minimum player count, the request pin is updated to reflect 2 copies needed.
+**What it does:** When a game is full, players join a waitlist. If the waitlist reaches the minimum player count, the request pin is updated to reflect 2 copies needed — and if that game has a `/library request` (1.4h) outstanding, the bot automatically asks one more attending owner (load-balanced, excluding anyone already asked/confirmed/declined) to bring a second copy, the same "🎲 ... ✅ Confirm bringing / ❌ Can't bring it" DM as the initial request. If the waitlist later drops back below the threshold, that extra ask is retracted — its DM is edited to say it's no longer needed and its buttons removed — rather than left outstanding. When a seated player leaves and the game is full, the first waitlisted player is automatically promoted into the freed seat and removed from the waitlist (they get a DM if their DMs are open).
 
 - [ ] Fill a game to max players, then click **Join Waitlist** — confirm added to waitlist section
 - [ ] Click **Join Waitlist** when already on waitlist — confirm "You're already on the waitlist" error
 - [ ] Click **Join Waitlist** when a seat is still available — confirm "There's still an open seat" error
-- [ ] Add enough players to the waitlist to reach the minimum player count — confirm request pin updates to show "2 copies"
+- [ ] Add enough players to the waitlist to reach the minimum player count, with a `/library request` (1.4h) already outstanding for that game and 2+ attending owners — confirm the request pin updates to show "X/2 copies confirmed" and a second attending owner receives a "please bring a copy" DM
+- [ ] Do the same with only 1 owner attending — confirm the pin still shows the updated copy count, but no second DM is sent (no eligible second owner to ask)
 - [ ] Click **Leave Waitlist** — confirm removed from waitlist
-- [ ] Dropping below min players on waitlist — confirm request pin reverts to "1 copy"
+- [ ] Dropping below min players on waitlist, with a second owner's ask still outstanding (unconfirmed) — confirm the pin reverts to 1 copy needed and that owner's DM is edited to say it's no longer needed, with its buttons removed
+- [ ] Dropping below min players after the second owner already confirmed — confirm the pin reverts to 1 copy needed but the existing confirmation is left alone (a harmless extra confirmed copy), not retracted
+- [ ] With a full game and at least one person on the waitlist, have a seated player click **Leave** — confirm the first waitlisted person is moved into the freed seat, removed from the waitlist list, and (if their DMs are open) receives a DM saying a seat opened up
+- [ ] Do the same when promoting the waitlist below the minimum player count drops it back below 2 groups — confirm the request pin reverts to 1 copy needed
 
 ### 3.3f Bring Confirm / Cancel
 
@@ -1107,15 +1818,18 @@ All `/game` commands should be used inside an active event channel unless otherw
 #### Basic add — already owned
 - [ ] `/library add game:Wingspan` when you already own it — confirm "already in your library" duplicate message
 - [ ] Case-insensitive: `/library add game:wingspan` when you own "Wingspan" — same duplicate message
+- [ ] `/library add game:Wingspan` when a member who's linked you as a delegate (3.4n) owns it, and you don't — confirm `**Wingspan** is already in your library (shared from <@owner>'s library).` rather than the "adding your copy?" prompt
 
 #### Others already own the game
 - [ ] When another user owns the game (exact name match), confirm "already in the group library — adding your copy?" prompt with **Yes, add my copy** and **Cancel** buttons
 - [ ] Click **Yes, add my copy** — confirm game is added
+- [ ] Confirm this "adding your copy?" prompt still appears for a stranger's matching entry when there's no library link between you — linking only changes the behavior for linked delegates (see 3.4n)
 
 #### Partial match in group library
 - [ ] `/library add game:wing` when "Wingspan" is in the group library — confirm a "similar games in the group library" select menu appears
 - [ ] Select a match — confirm "adding your copy?" flow
 - [ ] Select "None of these — search BGG" — confirm BGG catalog search continues
+- [ ] `/library add game:wing` where the only "Wingspan" entry in the group library is owned by a member who's linked you as a delegate (3.4n) — select it from the dropdown — confirm "already in your library (shared from @owner's library)" instead of the "adding your copy?" flow
 
 #### BGG exact match (confirm prompt)
 - [ ] `/library add game:Wingspan` on an empty library — confirm a "Found **Wingspan** on BGG — is that the game?" confirm prompt appears
@@ -1128,8 +1842,12 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Confirm **Yes** — confirm game is added with BGG details
 - [ ] Search a very generic term with many BGG matches — confirm the dropdown is capped at Discord's 25-option select menu limit rather than erroring
 
+#### Live BGG search fallback
+- [ ] Type a game name that's new/obscure enough to miss the local BGG catalog but findable on BGG directly (e.g. a recent release) — confirm it still resolves (BGG confirm prompt or select UI) instead of falling through to the custom-game path
+- [ ] Repeat the same search a second time — confirm it now resolves instantly from the local catalog (no delay from a live BGG lookup)
+
 #### No matches anywhere — custom game
-- [ ] `/library add game:My Custom Game` with nothing matching anywhere — confirm game is added immediately and the "add details" modal appears
+- [ ] `/library add game:My Custom Game` with nothing matching anywhere (including a live BGG search) — confirm game is added immediately and the "add details" modal appears
 
 ### 3.4b `/library remove`
 
@@ -1142,11 +1860,18 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.4c `/library mine`
 
-**What it does:** Lists all base games you've added to the library. Expansions imported via `/library import bgg` are excluded.
+**What it does:** Lists all base games you've added to the library, plus any linked delegates' games. Expansions imported via `/library import bgg` are excluded. Paginates with Previous/Next buttons when large (same pattern as `/library list`, 3.4d) — a member linked to several delegates' libraries can easily exceed a single embed field's capacity.
 
 - [ ] Run `/library mine` with games added — confirm all your base games are listed
 - [ ] If you have imported BGG expansions — confirm they do NOT appear in `/library mine`
 - [ ] Run `/library mine` with no games — confirm "You haven't added any games" message
+- [ ] With another member's library linked to you as a delegate (3.4n), run `/library mine` — confirm their games appear alongside your own, each marked `*(shared from <@ownerId>)*`
+- [ ] With enough games (yours plus any linked delegates') to exceed one page:
+  - [ ] Confirm **← Previous** and **Next →** buttons appear, with a "Page X of Y" indicator between them
+  - [ ] **← Previous** is disabled on the first page
+  - [ ] Click **Next →** — confirm page 2 is shown with different games
+  - [ ] **Next →** is disabled on the last page
+  - [ ] Confirm no error occurs regardless of how large the combined list is (regression: this previously crashed once the list exceeded Discord's embed description limit)
 
 ### 3.4d `/library list`
 
@@ -1173,10 +1898,12 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.4f `/library edit`
 
-**What it does:** Lets you update the details of a game you own (player count, play time, tags, expansions, and complexity).
+**What it does:** Lets you update the details of a game you own (player count, play time, tags, expansions, and complexity). Every field in the modal is pre-filled with its current value, so deleting a field's text and saving clears that field rather than leaving the old value in place.
 
-- [ ] `/library edit game:Wingspan` — confirm the edit modal appears
+- [ ] `/library edit game:Wingspan` — confirm the edit modal appears, pre-filled with the game's current values
 - [ ] Update player range, save — confirm updated values appear in `/library view`
+- [ ] Set an expansion you own (e.g. `Prelude`), save, then re-open `/library edit` and clear the Expansions field entirely — confirm `/library view` no longer lists any expansions
+- [ ] Clear the player range, play time, tags, and complexity fields (leave every field blank), save — confirm `/library view` shows none of those values set, rather than the previous ones
 - [ ] Set Complexity to `Medium` — confirm 🟡 icon appears in `/library list`
 - [ ] Set Complexity to `light` (lowercase) — confirm it is accepted and normalized to `Light`
 - [ ] Set Complexity to an invalid value (e.g. `Extreme`) — confirm a warning is shown and the previous value is kept
@@ -1192,7 +1919,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.4h `/library request`
 
-**What it does:** Requests a specific game be brought to an event.
+**What it does:** Requests a specific game be brought to an event. No "please bring this" DM goes out yet — asking is deferred until the event's lineup locks (4.7), so the bot can pick fairly from each owner's *final* confirmed-brings count instead of an early, mostly-arbitrary snapshot. At lock, the request is asked of the owner the copy-select assigned it to (an explicit pick), or — when no copy-select is shown, or **Bot decides** was selected — whichever attending owner currently has the fewest confirmed brings for that event, with "🎲 ... ✅ Confirm bringing" and "❌ Can't bring it" buttons. Confirming behaves the same as `/library bring game:<name>`; declining cascades the same DM to the next eligible attending owner (see "Declining via the DM button" below). If the waitlist for a suggested game grows enough to need a second copy (1.3e/2.3e/3.3e), that just updates how many owners get asked at lock — it doesn't trigger an ask itself. A request made *after* the lineup is already locked has no future lock to wait for, so it's asked immediately instead.
 
 **Prerequisites:** an active event must exist, and the game being requested must already be in the library, owned by someone who has RSVP'd (see 1.4a/2.4a/3.4a to add a game first).
 
@@ -1201,11 +1928,22 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] `/library request game:Catan` from inside a specific event channel — confirm request targets that event
 - [ ] Request the same game twice — confirm duplicate is blocked
 - [ ] None of the game's owners are RSVP'd — confirm "None of the owners are attending" error
+- [ ] The literal owner has NOT RSVP'd, but a member they've linked as a delegate (3.4n) has RSVP'd yes/maybe — confirm the request still succeeds instead of hitting "None of the owners are attending"
+- [ ] On an event whose lineup hasn't locked yet, confirm no DM is sent to anyone, and the reply notes "An owner will be asked to bring it once the lineup locks"
+- [ ] Force the lineup to lock (4.7), then confirm the assigned owner receives a DM with a "✅ Confirm bringing" button for the requested game (include any owned expansions in the DM text)
+- [ ] With 2+ attending owners and no expansion copy-select shown, confirm the DM (once sent, at lock) goes to whichever owner currently has the fewest confirmed brings for that event, not just the first owner alphabetically/by id
+- [ ] Request a game on an event whose lineup is **already locked** — confirm the DM goes out immediately (no deferral) since there's no future lock left to wait for
 
 #### Request with expansion copy select
 - [ ] Request a game where at least one attending owner has expansions — confirm "Which copy would you like?" select appears
-- [ ] Select a specific owner's copy — confirm announcement includes "— bringing: @owner"
-- [ ] Select **Bot decides** — confirm the bot assigns the owner with fewest confirmed brings
+- [ ] Select a specific owner's copy — confirm announcement includes "— bringing: @owner" immediately, but (pre-lock) that owner doesn't receive the DM until the lineup locks
+- [ ] Select **Bot decides** — confirm no owner is chosen or announced yet (no "— bringing: @owner" in the reply); once the lineup locks, confirm the bot then assigns the owner with fewest confirmed brings and DMs them
+
+#### Confirming via the DM button
+- [ ] Tap "✅ Confirm bringing" in the DM — confirm it behaves the same as `/library bring game:<name>` (message edits to show confirmed, ✅ appears next to the game in the event's request pin)
+- [ ] Tap the DM button as an account that no longer owns the requested game — confirm "You can only confirm bringing games you own" reply, and the request is **not** marked confirmed
+- [ ] Confirm the same request via `/library bring game:<name>` instead of the DM button — confirm the earlier DM is edited afterward to note "Confirmed via /library bring", with its button removed
+- [ ] Tap a "please bring this" DM button for a request that's since been dropped (e.g. the game ended up with zero seated players at lock, 4.7) — confirm a graceful "no longer exists" edit rather than an error or a duplicate confirmation
 
 ### 3.4i `/library unrequest`
 
@@ -1224,12 +1962,13 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run `/library bring game:Root` (where Root is requested with your copy preferred) — confirm success message with expansion list
 - [ ] Click Confirm — confirm ✅ appears next to the game in the event's request pin
 - [ ] Run with a game that hasn't been requested — confirm "That game hasn't been requested" error
+- [ ] As a member linked as a delegate (3.4n) of the owner whose copy was requested, run `/library bring` — confirm the owner's requested game appears in your view too, and `/library bring game:X` lets you see expansion availability and confirm bringing it exactly as if it were your own
 
 ### 3.4k `/library import`
 
 #### `/library import bgg`
 
-**What it does:** Imports all owned games and expansions from your linked BoardGameGeek collection.
+**What it does:** Imports all owned games and expansions from your linked BoardGameGeek collection. The "Import my library now" button shown after `/bgg link` (1.6a/2.6a/3.6a) triggers this same import.
 
 - [ ] Run without a linked BGG account — confirm "You don't have a BoardGameGeek account linked" error
 - [ ] Run with a linked account — confirm success message with game/expansion counts
@@ -1245,7 +1984,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.4l `/library search`
 
-**What it does:** Searches the library with filters for player count, tags, duration, and complexity.
+**What it does:** Searches the library with filters for player count, tags, duration, and complexity. If no `tag`/`tag2`/`tag3` or `complexity` option is given, it defaults to your own `/myroles` preferences (3.5) instead of requiring you to type them every time.
 
 - [ ] `/library search players:4` — confirm results include games supporting 4 players, sorted by proximity to 4
 - [ ] `/library search players:2,4` (multiple counts) — confirm games matching either count appear
@@ -1258,20 +1997,40 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] `/library search min_duration:30 max_duration:60` — confirm only games within that exact range appear
 - [ ] `/library search complexity:Light` — confirm only Light games appear
 - [ ] Combine filters (e.g. `players`, `tag`, and `complexity` together) — confirm all filters apply together (AND across filter types, OR within tag1/2/3)
-- [ ] Run `/library search` with no options at all — confirm error: "Provide at least one valid filter: `players`, `tag`, or `duration`."
+- [ ] Set genre/difficulty preferences via `/myroles` (3.5), then run `/library search` with no options at all — confirm it searches using those preferences instead of erroring, and the result description notes "(from your /myroles)"
+- [ ] With `/myroles` preferences set, run `/library search tag:Party` (a tag different from your preference) — confirm the explicit tag wins over your preferences, with no "(from your /myroles)" note
+- [ ] With no `/myroles` preferences set, run `/library search` with no options at all — confirm error: "Provide at least one valid filter: `players`, `tag`, or `duration` — or set your preferences with `/myroles` to search based on those."
 - [ ] Search with valid filters but no matches — confirm "No games matched your filters"
 
 ### 3.4m `/library random`
 
-**What it does:** Picks 3 random games from the library, optionally filtered by tags and complexity.
+**What it does:** Picks 3 random games from the library, optionally filtered by tags and complexity. If no `tag`/`tag2`/`tag3` or `complexity` option is given, it defaults to your own `/myroles` preferences (3.5) instead of picking from the whole library. Picks are weighted toward games that haven't been scheduled onto an event lineup recently (or ever) — never excluded, just less likely to come up again right away.
 
-- [ ] `/library random` with no filters — confirm 3 random games are shown
+- [ ] `/library random` with no filters and no `/myroles` preferences set — confirm 3 fully random games are shown, with a footer tip to set `/myroles`
 - [ ] `/library random tag:Co-op` — confirm all 3 results are Co-op tagged
 - [ ] `/library random tag:Co-op tag2:Party` — confirm results match EITHER tag (OR logic across tag/tag2/tag3)
 - [ ] `/library random complexity:Light` — confirm all 3 results are Light complexity
 - [ ] `/library random tag:Co-op complexity:Heavy` — confirm results match the tag AND the complexity together
+- [ ] Set genre/difficulty preferences via `/myroles` (3.5), then run `/library random` with no options at all — confirm the title includes "(from your /myroles)" and results are filtered to those preferences
+- [ ] With `/myroles` preferences set, run `/library random complexity:Heavy` (different from your preference) — confirm the explicit complexity wins, with no "(from your /myroles)" note
 - [ ] Filter for a tag/complexity combination with no matching games — confirm it falls back to 3 unfiltered random picks with a "No `<filter>` games found — here are 3 random picks instead" title
 - [ ] Run multiple times — confirm different results each time
+- [ ] With a mix of library games where some were scheduled onto a recent locked event's lineup and others never have been — run `/library random` many times — confirm the never-(recently-)scheduled games come up noticeably more often, though a recently-scheduled game can still occasionally appear (it's biased, not excluded)
+
+### 3.4n `/library link` / `/library unlink`
+
+**What it does:** `/library link user:@X` grants @X delegate access to your library — they can view your games in their own `/library mine`, and can request/bring them, but this never gives them write access (add/remove/edit/clear) and never gives you access to theirs. It's one-directional: for two people to fully share with each other, each runs `/library link` once naming the other. `/library unlink user:@X` removes the link and can be run by either party.
+
+- [ ] `/library link user:@Bob` (run by Alice) — confirm reply: "<@Bob> can now see your games in their `/library mine`, and can request/confirm bringing them. This only shares *your* library with them — if you'd like the same access to theirs, they'll need to run `/library link user:@you`."
+- [ ] As Bob, run `/library mine` (3.4c) — confirm Alice's games now appear, marked `*(shared from <@Alice>)*`
+- [ ] As Alice, run `/library mine` — confirm Bob's games do NOT appear — the link is one-directional, and Alice only granted access, she didn't receive any
+- [ ] Run `/library link user:@Bob` again as Alice (already linked) — confirm reply: "<@Bob> can already view and manage bringing for your library." and no duplicate link is created
+- [ ] `/library link user:@yourself` (target = yourself) — confirm "You can't link your own account to itself."
+- [ ] `/library link user:@SomeBot` (target = a bot account) — confirm "You can't link a bot account."
+- [ ] `/library unlink user:@Bob` run by Alice (the grantor) — confirm "Library link with <@Bob> removed." and Bob's `/library mine` no longer shows Alice's games
+- [ ] Re-link Alice → Bob, then run `/library unlink user:@Alice` as Bob (the delegate, not the original grantor) — confirm the link is still removed even though Bob didn't create it
+- [ ] `/library unlink user:@Carol` where no link exists between you and Carol — confirm "You don't have a library link with <@Carol>."
+- [ ] With Alice → Bob and Alice → Carol both linked, run `/library unlink user:@Bob` — confirm only the Alice–Bob link is removed; Carol's shared access to Alice's library is unaffected
 
 ## 3.5 `/myroles` — Game Preferences
 
@@ -1287,10 +2046,12 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ## 3.6 `/bgg` — BGG Account Linking
 
-**What it does:** Lets members link their BoardGameGeek username to their Discord account on this server.
+**What it does:** Lets members link their BoardGameGeek username to their Discord account on this server, with a one-click option to sync their BGG collection into the library right away.
 
 ### 3.6a `/bgg link`
-- [ ] Run `/bgg link username:validuser` — confirm BGG API validates and success embed appears with "Powered by BGG" logo
+- [ ] Run `/bgg link username:validuser` — confirm BGG API validates and success embed appears with "Powered by BGG" logo and an "Import my library now" button
+- [ ] Click "Import my library now" — confirm it behaves like `/library import bgg` (3.4k): success message with game/expansion counts, and games appear in `/library mine`
+- [ ] Click "Import my library now" a second time — confirm all entries show as "already in your library" (no duplicates)
 - [ ] Run `/bgg link username:nonexistentuser` — confirm "We couldn't verify that BoardGameGeek account" message
 - [ ] Run with same username already linked — confirm "already linked" message
 
@@ -1308,32 +2069,48 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 **What it does:** Creates a for-sale listing, optionally enriched with BGG game details and current BGG marketplace price data.
 
-**Prerequisites:** most cases below assume a marketplace forum channel is already configured via `/admin marketplace config` (3.9m) — the "no channel configured" case further down is intentionally tested without it.
+**Prerequisites:** most cases below assume a marketplace channel is already configured via `/admin marketplace config` (3.9m) — the "no channel configured" case further down is intentionally tested without it.
 
-- [ ] Run `/marketplace post sell item:Wingspan bids_allowed:true condition:Very Good` — confirm BGG price screen appears (ephemeral) with current marketplace prices and "Powered by BGG" logo
-- [ ] Select a price option (use suggested, enter custom, or open to offers) — confirm forum post created with item name, price, condition, and "I'm Interested" button
-- [ ] Run with `bids_allowed:false` — confirm the listing embed shows "*(firm)*" next to the price
+- [ ] Run `/marketplace post sell item:Wingspan offers_allowed:true condition:Very Good` (renamed from `bids_allowed`) — confirm BGG price screen appears (ephemeral) with current marketplace prices and "Powered by BGG" logo
+- [ ] Select a price option (use suggested, enter custom, or open to offers) — confirm forum post created with item name, price, a "Negotiable?" field showing "💬 Open to Offers", condition, and "I'm Interested" button
+- [ ] Run with `offers_allowed:false` (renamed from `bids_allowed`) — confirm the listing embed's "Negotiable?" field shows "🔒 Firm Price" instead of "💬 Open to Offers", and the forum post now also shows a "⚡ Buy It Now" button alongside "I'm Interested" (see 5.1a for the full Buy It Now flow)
+- [ ] Confirm the post-creation confirmation embed (shown right after posting) also has a "Negotiable?" field with the matching value ("💬 Open to Offers" / "🔒 Firm Price") — this field was previously named "Bids" with values "Allowed"/"Firm price"
 - [ ] Select "List as open to offers" — confirm listing shows "Open to offers"
 - [ ] Run with `notes` — confirm notes appear in the listing embed
 - [ ] Confirm BGG thumbnail appears in the embed (if BGG found the item)
 - [ ] Confirm "Powered by BGG" logo appears in the forum post embed
 - [ ] Run when no marketplace channel is configured — confirm listing is still created, response notes no channel configured
 - [ ] Run with an item that has expansions — confirm expansion select step appears; selecting expansions shows combined price estimate
+- [ ] Run with an item that IS an expansion (e.g. `Wingspan: European Expansion`) — confirm the expansion-select step is **skipped**; instead a prompt asks whether to include the base game, with "✅ Include `<Base Game>`" and "➡️ Just the Expansion" buttons
+- [ ] Choose to include the base game — confirm the price screen title includes "+ Base Game" and combines pricing for both items; the resulting listing embed's title also shows "+ Base Game" and includes an "Includes Base Game" field
+- [ ] Choose "Just the Expansion" — confirm the listing posts normally with no base-game bundling; the embed still shows a "Base game on BGG" reference link, marked "(not included)"
 
 #### Custom / non-BGG items
 - [ ] Start typing an item name that has no BGG match, then select the "📝 not on BGG / custom item" autocomplete option — confirm no BGG price screen appears and you're instead prompted to add a reference link (**Add Link** / **Skip** buttons)
 - [ ] Click **Add Link**, submit a URL in the modal — confirm the listing embed shows a "Reference link" entry pointing to that URL
 - [ ] Click **Skip** — confirm the listing posts with no reference link and no BGG thumbnail
 - [ ] Click **Add Link** and submit a non-URL string (e.g. plain text) — confirm graceful validation rather than a broken link field
+- [ ] Confirm a custom/non-BGG listing's forum/text post shows **no** "Powered by BGG" logo (there's no BGG data to attribute) — whether Add Link or Skip was chosen
+
+#### Catalog match confirmation (regression: a search like "gloom" no longer silently attaches the wrong game, e.g. "Gloom" instead of the intended "Gloomhaven")
+- [ ] Type an item name and pick a real suggestion from the autocomplete dropdown — confirm it goes straight to the next step (price screen / expansion select / include-base-game prompt) with **no** "Found a possible match" confirmation in between
+- [ ] Type an item name and submit **without** picking a suggestion (e.g. type "gloom" and press Enter before the dropdown is used) where that text happens to exactly match a *different*, shorter real BGG entry — confirm a "Found a possible match" prompt appears showing the matched game's name/year (and thumbnail, if any), instead of silently attaching it
+- [ ] On that prompt, tap "✅ Yes, that's it" — confirm the wizard continues normally from there (expansion select / include-base-game / price screen) using the matched game's data
+- [ ] On that prompt, tap "🔍 Search again" — confirm a modal appears asking for a new item name; submit one — confirm it re-resolves and shows another confirmation prompt if it matches something (still unconfirmed, since typed text is never an explicit pick), or the no-BGG-match reference-link prompt if it matches nothing
+- [ ] On that prompt, tap "📝 Not on BGG" — confirm it clears the matched game and falls through to the same reference-link prompt (Add Link / Skip) as an item with no BGG match at all
+- [ ] Type text and submit **without** picking a suggestion, using a name obscure/new enough to miss the local BGG catalog but findable via a live BGG search — confirm it still shows a "Found a possible match" prompt instead of falling straight to the no-BGG-match reference-link flow
+- [ ] The marketplace hub's "📦 Sell an Item" / "🔄 Propose a Trade" wizard (1.7m) always free-types the item name (a modal has no autocomplete) — already covered when repeating Part 1's checks
 
 ### 3.7b `/marketplace post trade`
 
 **What it does:** Creates a trade listing for an item you want to trade away.
 
-- [ ] Run `/marketplace post trade item:Catan condition:Good looking_for:Wingspan` — confirm trade listing posted to forum with "For Trade" tag and looking-for info
+- [ ] Run `/marketplace post trade item:Catan condition:Good looking_for:Wingspan` — confirm trade listing posted to forum with "For Trade" tag, an "Offering" field showing the item name, and a "Looking For" field showing "Wingspan" (the two fields display side by side)
+- [ ] Confirm the post-creation confirmation embed ("Trade listing created — Catan") also shows the "Offering" field immediately before the "Looking For" field
 - [ ] Run without `looking_for` — confirm listing shows "Open to offers"
 - [ ] Confirm "I'm Interested" button appears on the forum post
 - [ ] Select the "📝 not on BGG / custom item" autocomplete option — confirm the same Add Link / Skip reference-link flow as `/marketplace post sell` (see 3.7a) applies here too
+- [ ] Run with an item that IS an expansion — confirm the same include-base-game prompt from `/marketplace post sell` (see 3.7a) appears before the trade listing is created
 
 ### 3.7c `/marketplace price`
 
@@ -1341,8 +2118,11 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 - [ ] Run `/marketplace price item:Wingspan` — confirm ephemeral embed shows price range, median, avg, distribution histogram, and "Powered by BGG" logo
 - [ ] Run with an item that has expansions — confirm expansion select step appears; selecting expansions shows per-item breakdown and combined estimate with total listing count
+- [ ] Run with an item that IS an expansion — confirm the include-base-game prompt appears instead of an expansion-select step; choosing to include the base game shows a per-item price breakdown including the base game
 - [ ] Run with a custom/non-BGG item (type a name not in the catalog) — confirm "not in the BGG catalog" error
 - [ ] Confirm no listing is created and nothing is posted to the marketplace channel
+- [ ] Pick a real autocomplete suggestion — confirm the price embed shows no "best-guess" note
+- [ ] Type text and submit **without** picking a suggestion, where it happens to exactly match a different real BGG entry — confirm the price embed includes a "⚠️ Best-guess match" note naming the actual game the prices are for (unlike `post sell`/`post trade`, price check has no interactive confirmation step — it's read-only, so the note is shown instead)
 
 ### 3.7d `/marketplace conditions`
 
@@ -1353,36 +2133,42 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.7e `/marketplace browse`
 
-**What it does:** Shows active listings in an ephemeral text list (up to 5 at a time).
+**What it does:** Shows active listings in an ephemeral text list (up to 5 at a time), followed by a legend explaining the status/type icons.
 
 - [ ] Run with no listings — confirm "No active listings found"
 - [ ] Run with active listings — confirm list shows item name, price/offer, and seller username
+- [ ] Run with a listing that has open offers — confirm the list shows an inline "(N offer(s))" annotation next to the price/offer for that listing
 - [ ] Run with `type:sell` — confirm only sell listings appear
 - [ ] Run with `type:trade` — confirm only trade listings appear
 - [ ] Run with more than 5 active listings — confirm "Showing 5 of N. Check the marketplace channel for all listings."
+- [ ] Confirm the reply ends with a legend line: "🟢 Active · 🟡 Pending offer(s) · 🔴 Sold/Traded · ⚫ Closed  |  🏷️ For Sale · 🔄 For Trade" (browse itself only ever shows 🟢/🟡, since closed/sold listings aren't "active" — the legend still covers the full set members will see elsewhere, e.g. in `/marketplace my`)
 
 ### 3.7f `/marketplace my`
 
-**What it does:** Shows your own listings with their status, bids, and IDs.
+**What it does:** Shows your own listings with their status, offers, and IDs, followed by the same status/type legend as `/marketplace browse`. Sold/closed listings older than a week are left off the list entirely (they're done, and clutter this view once they've aged out) — active/pending listings always show regardless of age.
 
 - [ ] Run with no listings — confirm "You don't have any listings"
-- [ ] Run with listings — confirm all your listings are shown with status, price/offer, open bid count, and listing ID
+- [ ] Run with listings — confirm all your listings are shown with status, price/offer, an "(N open offer(s))" annotation when offers are open, and listing ID
+- [ ] Confirm the reply ends with the status/type legend (see 1.7e)
+- [ ] Close or let a listing sell, then run this again right away — confirm it still appears (within the retention window)
+- [ ] Take a sold/closed listing older than a week (e.g. edit its `updatedAt` in `data/marketplace.json` back by 8+ days) — confirm it no longer appears in the list
+- [ ] With only old sold/closed listings (no active/pending ones), confirm the reply reads "You don't have any active listings. (Sold/closed listings older than a week aren't shown here.)" rather than the "no listings at all" message — since you do have listings, just none worth showing right now
 
 ### 3.7g "I'm Interested" button flow
 
-**What it does:** Buyer clicks button, modal opens, bid is submitted, seller is notified.
+**What it does:** Buyer clicks button, modal opens, an offer is submitted, seller is notified. Firm-price listings also show a "Buy It Now" button that skips the seller-review step entirely.
 
-**Requires a second account — moved to Part 5.1a.** This flow needs a distinct buyer and seller identity (you can't bid on your own listing, and Discord won't let an account DM itself), so it can't be exercised by one tester alone — see Part 5.1a below.
+**Requires a second account — moved to Part 5.1a.** This flow needs a distinct buyer and seller identity (you can't make an offer on your own listing, and Discord won't let an account DM itself), so it can't be exercised by one tester alone — see Part 5.1a below.
 
 ### 3.7h Negotiation — Accept / Deny / Counter
 
-**What it does:** Seller responds to bids with Accept, Deny, or Counter buttons sent via DM (or thread fallback if DMs are disabled).
+**What it does:** Seller responds to offers with Accept, Deny, or Counter buttons sent via DM (or thread fallback if DMs are disabled).
 
 **Requires a second account — moved to Part 5.1b.** Accept/Deny/Counter is a live exchange between a seller's DM and a buyer's DM, so it needs two people/accounts watching for prompts around the same time — see Part 5.1b below.
 
 ### 3.7i Negotiation modes
 
-**What it does:** Controls whether bid negotiation is visible publicly in the forum thread or in a private thread.
+**What it does:** Controls whether offer negotiation is visible publicly in the forum thread or in a private thread.
 
 **Requires a second account — moved to Part 5.1c.** Verifying what each mode shows means comparing what the buyer's action produces against what the seller sees, which needs both identities — see Part 5.1c below.
 
@@ -1392,16 +2178,27 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 - [ ] Run `/marketplace close <id>` as the seller — confirm listing status becomes ⚫ Closed and forum post updates
 - [ ] Run `/marketplace close <id>` on **another user's** listing as an Admin — confirm it succeeds (Admins bypass the ownership check)
-- [ ] Run `/marketplace reopen <id>` as the seller — confirm listing status returns to Active (or Pending if bids exist)
+- [ ] Run `/marketplace reopen <id>` as the seller — confirm listing status returns to Active (or Pending if offers exist)
 
 ### 3.7k Transaction log
 
 **What it does:** Every marketplace event is appended to `data/marketplace_log.jsonl`.
 
 - [ ] After creating a listing, open `data/marketplace_log.jsonl` — confirm a `listing_created` entry with correct `guildId`, `listingId`, `listingName`, `actorId`, and `timestamp`
-- [ ] After a bid is accepted, confirm `bid_accepted` and `listing_sold` entries appear
-- [ ] After a bid is denied, confirm `bid_denied` entry appears
+- [ ] After an offer is accepted, confirm `bid_accepted` and `listing_sold` entries appear
+- [ ] After an offer is denied, confirm `bid_denied` entry appears
 - [ ] Confirm no entries are missing for any action in the flow above
+
+### 3.7l `/marketplace edit`
+
+**What it does:** Lets the owner of a still-active/pending listing update its price (sell) / looking-for (trade) / notes without reposting from scratch. Opens a modal pre-filled with the listing's current values; type, condition, and offers-allowed aren't editable (repost if those need to change). Saving refreshes the forum/text-channel post in place, and logs a `listing_edited` entry (3.7k).
+
+- [ ] Run `/marketplace edit id:<your active sell listing>` — confirm a modal opens with the current asking price (or blank if "open to offers") and notes pre-filled; changing the price and submitting updates the post's "Price" field
+- [ ] Leave the price field blank and submit — confirm the listing reverts to "Open to offers"
+- [ ] Enter a non-numeric price (e.g. "free") — confirm "Invalid price..." and nothing is saved
+- [ ] Run `/marketplace edit` on a trade listing — confirm the modal shows a "Looking for" field (not a price field), pre-filled with the current value; changing it updates the post's "Looking For" field
+- [ ] 👑 As an Admin, try editing another member's listing — confirm "You can only edit your own listings" — Admin does not grant an override here, unlike `/admin marketplace purge`
+- [ ] Run on a sold or closed listing — confirm "Only active or pending listings can be edited" and no modal opens
 
 ## 3.8 `/host` — Host Commands
 
@@ -1409,41 +2206,86 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.8a `/host event create`
 
-**What it does:** Creates a Discord scheduled event, a text channel, and posts an RSVP embed in the configured announcements channel.
+**What it does:** Creates a Discord scheduled event, a text channel, and posts an RSVP embed in the configured announcements channel. If the announcements channel is a **Forum Channel**, the event becomes a forum thread instead of a plain message, tagged "Upcoming" (see 3.9a for eager tag creation).
 
-- [ ] Create an event with required fields only: `/host event create date:August 22 time:7pm` — confirm:
-  - Discord scheduled event is created
-  - A channel named `monthly-august-22` appears under "Monthly Events"
-  - RSVP embed is posted in the announcements channel
+- [ ] Create an event with required fields only: `/host event create title:Board Game Bash date:August 22 time:7pm` — confirm:
+  - Discord scheduled event is created, named `Board Game Bash — <full date>`
+  - A channel named `august-22-board-game-bash` appears under "Events" (the default event category name)
+  - Channel topic and welcome message both reference "Board Game Bash"
+  - Channel topic also ends with "Event ID: `<id>`" — confirm the ID matches the one shown in the RSVP embed footer, so the ID is visible from the event channel itself, not just the announcement post
+  - RSVP embed is posted in the announcements channel, titled `Board Game Bash — <full date>`
+- [ ] With the announcements channel set to a Forum Channel (3.9a), create an event — confirm a new forum thread is posted with the "Upcoming" tag applied
+- [ ] Attempt to create an event without `title` — confirm Discord rejects it as a missing required option
 - [ ] Create an event with all fields (end_time, location, link, description) — confirm all appear in the embed
-- [ ] Confirm date formats work: `aug 22`, `August 22`, `august 22, 2026`
+- [ ] Confirm date formats work: `aug 22`, `August 22`, `august 22, 2026`, `Sept 2nd` (regression: the 4-letter "Sept" abbreviation previously failed to parse — only 3-letter "Sep" and the full "September" worked)
 - [ ] Confirm time formats work: `7pm`, `7:00 PM`, `19:00`
 - [ ] Attempt to create an event with a date/time already in the past — confirm the bot handles it gracefully (rejects with a clear error, or accepts per design) rather than silently creating a broken past event
 
-### 3.8b `/host event cancel`
+### 3.8b `/host event edit`
 
-**What it does:** Cancels a game night, deletes the Discord scheduled event, removes the RSVP embed, and cleans up the event channel.
+**What it does:** Updates an existing game night in place — title, date, time, end_time, location, link, and description are all editable — without cancelling and recreating it. The Discord scheduled event, event channel name/topic, and RSVP embed are all kept in sync.
+
+**Prerequisites:** an event must already exist (created via 3.8a) — grab its ID from the RSVP embed footer or the event channel's topic.
+
+- [ ] Run `/host event edit id:<event-id>` with no other options — confirm "Provide at least one field to update" error
+- [ ] Run `/host event edit id:<event-id> location:New Venue` — confirm the RSVP embed updates to show the new location
+- [ ] Run `/host event edit id:<event-id> title:New Title` — confirm the event channel is renamed and re-topic'd, the Discord scheduled event's name updates, and the RSVP embed title updates
+- [ ] Run `/host event edit id:<event-id> date:<a new date>` with no `end_time` — confirm the event's overall duration is preserved (end time shifts by the same amount as the date/start time)
+- [ ] Run `/host event edit id:<event-id> end_time:<a new end time>` — confirm only the end time changes
+- [ ] Attempt to edit with an invalid ID — confirm "No event found" error
+- [ ] Attempt to edit a cancelled event — confirm "already cancelled and cannot be edited" error
+- [ ] Attempt to edit an archived event — confirm "already concluded and cannot be edited" error
+- [ ] Attempt to parse an invalid date/time — confirm a clear parse error, matching `/host event create`'s error style
+
+### 3.8c `/host event cancel`
+
+**What it does:** Cancels a game night, deletes the Discord scheduled event, removes the RSVP embed, and cleans up the event channel. If the RSVP was a forum thread, it's tagged "Cancelled" and locked/archived instead of deleted.
 
 - [ ] Cancel an event as the creator: `/host event cancel id:<event-id>` — confirm event is removed
 - [ ] Cancel an event created by someone else — confirm it works (Admin can cancel any event)
+- [ ] With a forum announcements channel, cancel an event — confirm the forum thread is tagged "Cancelled", gets a "this event has been cancelled" message, and is locked/archived
 - [ ] Attempt to cancel with an invalid ID — confirm "No event found" error
 - [ ] Attempt to cancel an already-cancelled event — confirm "already cancelled" error
 
-### 3.8c `/host event archive`
+### 3.8d `/host event archive`
 
-**What it does:** Manually archives channels for all past events that haven't been archived yet.
+**What it does:** Manually archives channels for all past events that haven't been archived yet. If the RSVP was a forum thread, it's tagged "Concluded" and locked/archived.
 
 - [ ] Run `/host event archive` with no past events — confirm "No past event channels to archive"
 - [ ] Run with a past event — confirm channel moves to "Archive" category and a lock-date message is posted
+- [ ] With a forum announcements channel, archive a past event — confirm the forum thread is tagged "Concluded", gets a "this event has concluded" message, and is locked/archived
 
-### 3.8d `/host game cancel`
+### 3.8e `/host event privacy`
 
-**What it does:** Removes any game from the event lineup regardless of who suggested it.
+**What it does:** Opens or restricts a single event's channel, overriding the server-wide `open_channels` default (3.9a) for just that event — e.g. to open up a channel that was created RSVP-only, or lock down one that was created open, without changing the default for future events.
+
+- [ ] With an event created RSVP-only, run `/host event privacy id:<event-id> open:true` — confirm the channel becomes visible to everyone (no longer hidden from `@everyone`)
+- [ ] With an event created open, run `/host event privacy id:<event-id> open:false` — confirm the channel is hidden from `@everyone`, and that the event creator plus everyone currently RSVP'd Going/Maybe still has access
+- [ ] After closing an open event via `open:false`, have a new member RSVP Going — confirm they gain channel access same as any RSVP-only event (2.2b)
+- [ ] Run the same `open:true`/`open:false` value the channel is already set to — confirm a "already open to everyone"/"already RSVP-only" message and no channel changes
+- [ ] Attempt on an invalid event ID — confirm "No event found" error
+- [ ] Attempt on a cancelled or archived event — confirm the same "already cancelled"/"already concluded" errors as `/host event edit` (3.8b)
+- [ ] 👑 Attempt as a non-host — confirm "Only hosts can change an event's channel visibility" error
+
+### 3.8f `/host event greeters`
+
+**What it does:** Sets, views, or removes an event's greeters — up to 2 members who rotate each event. While assigned, a greeter can only join, waitlist, or suggest Light-complexity games (unconfirmed/unknown complexity counts as not-Light and is blocked too), keeping them free to help arriving guests. If there are two greeters, they can never both be seated (or waitlisted) on the same game. Assigning a greeter who's already seated somewhere that violates these rules automatically removes them from that seat/waitlist spot (and the other greeter's seat if they're doubled up), and reports what was removed. `remove:@user` removes just that one greeter, leaving any other in place; `clear:true` removes both; no options shows who's currently set.
+
+See 2.8f for the full checklist — this Admin-tier pass just confirms Admins retain the same access Hosts have:
+
+- [ ] Run `/host event greeters id:<event-id> greeter1:@Alice greeter2:@Bob` as an Admin — confirm it works the same as for a Host
+- [ ] As a greeter, confirm the Join/Waitlist/`/game suggest` restrictions from 2.8f still apply regardless of who assigned the greeter role
+
+### 3.8g `/host game cancel`
+
+**What it does:** Removes any game from the event lineup regardless of who suggested it. If the given title isn't an exact match, falls back to a fuzzy match against the current lineup (e.g. `catan` matches "Settlers of Catan").
 
 - [ ] Remove another user's game: `/host game cancel title:Wingspan` — confirm card is deleted
-- [ ] Attempt to cancel a game not in the lineup — confirm "No game called X found" error
+- [ ] Remove a game using a partial/fuzzy title, e.g. `/host game cancel title:catan` — confirm it's found and removed
+- [ ] With two similarly-named games in the lineup, run `/host game cancel` with an ambiguous partial title — confirm the bot asks you to be more specific instead of guessing
+- [ ] Attempt to cancel a game not in the lineup (no exact or fuzzy match) — confirm "No game called X found" error
 
-### 3.8e `/host library unrequest`
+### 3.8h `/host library unrequest`
 
 **What it does:** Shows all game requests for an event (not just the caller's own) and allows removing any of them.
 
@@ -1467,11 +2309,29 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Set a default location: `/admin event config location:Library Room 1` — confirm it saves
 - [ ] Set a default start time: `/admin event config time:7:00 PM` — confirm it saves
 - [ ] Set an announcements channel: `/admin event config announcements:#announcements` — confirm it saves
+- [ ] Set the announcements channel to a **Forum Channel** — confirm it saves and the forum channel's tag list is eagerly populated with "Upcoming", "Cancelled", and "Concluded" tags (check the forum channel's tag settings in Discord) before any event is created
 - [ ] Set open channels to true/false — confirm it saves and new events respect the setting
 - [ ] Set event category and archive category — confirm new events and archives use the correct category
 - [ ] Set `archive_retention_days:14` — confirm it saves and the config summary shows "14 days"
 - [ ] Set `archive_retention_days:3` (below the 7-day minimum) — confirm it is floored to 7 days
 - [ ] Set `archive_retention_days:0` — confirm the config summary shows "Never auto-delete"
+- [ ] Run `/admin event config` on a server that has never touched this setting — confirm the config summary shows "48h before event" (the default — lineup locking is on by default, not opt-in)
+- [ ] Set `lock_hours_before_event:24` — confirm the config summary shows "24h before event"
+- [ ] Set `lock_hours_before_event:0` — confirm the config summary shows "Disabled" (this is how to opt out, since 0 is no longer the default)
+- [ ] Set `table_count:2` — confirm it saves and the config summary reflects it (see 4.7 for the scheduler behavior this feeds — note this is now a *floor*, the actual lock-time table count can be higher based on RSVPs)
+- [ ] Set `max_tables:6` (e.g. a venue's physical table count) — confirm the config summary shows "(capped at 6)" next to the scheduler tables line; set to `0` — confirm the "(capped at ...)" note disappears (uncapped, the default)
+- [ ] Set `light_buffer_minutes`, `medium_buffer_minutes`, `heavy_buffer_minutes` — confirm all three save independently and appear in the config summary
+- [ ] Set `heavy_game_break_minutes:15` — confirm it saves and the config summary reflects it (see 4.7 for the scheduler behavior this feeds); set to `0` — confirm the config summary shows "Disabled"
+- [ ] Run `/admin event config` on a server that has never touched `break_minutes` — confirm the config summary shows "Disabled" (0 is now the default — see 4.7 for why: padding comes from each game's own complexity buffer instead of a flat extra break)
+- [ ] Set `break_minutes:45` — confirm the config summary shows "45m before a person's next game can start" (see 4.7); set back to `0` — confirm it shows "Disabled" again
+- [ ] Set `flex_tables:1` — confirm it saves and the config summary shows "(1 reserved for Light games)" alongside the Scheduler tables line (see 4.7); set back to `0` — confirm that note disappears
+- [ ] Set `max_game_repeats:1` — confirm it saves and the config summary shows "1x" (see 4.7)
+- [ ] Set `post_bgstats_links:true` — confirm the config summary shows "Enabled" (see 4.7 for the behavior this feeds); set back to `false` — confirm it shows "Disabled" (the default)
+- [ ] Run `/admin event config` with no options on a server that's never set a timezone — confirm the config summary shows "Timezone: UTC ⚠️ *not configured...*" with a nudge to set a real IANA timezone
+- [ ] Set `timezone:America/New_York` — confirm it saves and the config summary shows "Timezone: America/New_York"
+- [ ] Set an invalid value, e.g. `timezone:Not/A_Zone` — confirm a clear ephemeral error naming the bad value and suggesting the IANA format (e.g. `America/New_York`), and that the config is **not** changed
+- [ ] With `timezone` set to a non-UTC zone (e.g. `America/New_York`), create an event (2.8a) with a date/time — confirm the RSVP embed's Date/Time and the native Discord scheduled event ("Interested" tab) show the **same** time to you as the viewer (regression: previously the announcement text was formatted in the host server's own local timezone rather than the configured one, so it could silently disagree with the native event depending on where the bot process happened to be running)
+- [ ] Confirm the RSVP embed's Date/Time fields render as Discord's own auto-localizing timestamp (hover/click behavior, or compare against a teammate in a different timezone if available) rather than fixed text
 
 ### 3.9b `/admin library clear`
 
@@ -1492,11 +2352,13 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.9d `/admin library syncall`
 
-**What it does:** Force re-syncs every game in the library from BoardGameGeek in one pass (slow, rate-limited). Admin-only.
+**What it does:** Re-syncs every game in the library from BoardGameGeek in one pass (slow, rate-limited), batching up to 20 BGG IDs per request. Admin-only. `force:true` (default, or omitted) overwrites existing data on every game with a BGG ID. `force:false` only fetches and fills in games that are missing at least one BGG-sourced field (tags, expansions, best player count, complexity, how-to-play video, or thumbnail) — a non-destructive "enrich" pass that leaves already-enriched games untouched and doesn't re-query BGG for them.
 
 **Prerequisites:** the library should contain a small mix of games with and without a BGG ID, so both the "refreshed" and "skipped" counts can be verified in one run.
 
-- [ ] Run `/admin library syncall` with a small library — confirm all games with a BGG ID are refreshed and a summary count is shown
+- [ ] Run `/admin library syncall` (no `force` option) with a small library — confirm all games with a BGG ID are refreshed and a summary count is shown, including overwriting a game that already had different manually-set data
+- [ ] Run `/admin library syncall force:False` — confirm only games missing BGG data are queried/updated, and an already fully-enriched game's existing data is left unchanged
+- [ ] Run `/admin library syncall force:False` again immediately after — confirm the reply says nothing is missing BGG data and no BGG request is made
 - [ ] Confirm games with no BGG ID are skipped and counted separately (not treated as failures)
 - [ ] Run with an empty library — confirm an appropriate "nothing to sync" message
 - [ ] Confirm the command does not time out or double-reply on a larger library (should defer/edit the reply while syncing)
@@ -1545,19 +2407,22 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.9j `/admin welcome config`
 
-**What it does:** Sets the welcome channel, rules channel, and Facebook group URL for the automatic welcome message.
+**What it does:** Sets the welcome channel, rules channel, Facebook group URL, and BGG group URL for the automatic welcome message.
 
 - [ ] Run with no options — confirm current config is displayed
 - [ ] Set channel: `/admin welcome config channel:#welcome`
 - [ ] Set rules channel: `/admin welcome config rules_channel:#rules`
 - [ ] Set Facebook URL: `/admin welcome config facebook_url:https://facebook.com/groups/...`
-- [ ] Confirm all three values persist after setting them
+- [ ] Set BGG URL: `/admin welcome config bgg_url:https://boardgamegeek.com/guild/...`
+- [ ] Confirm all four values persist after setting them
 
 ### 3.9k `/admin welcome test`
 
 **What it does:** Sends the welcome message to yourself as a preview.
 
 - [ ] Run `/admin welcome test` — confirm welcome message appears in the welcome channel and a DM is sent
+- [ ] With a BGG group URL configured (3.9j), confirm the welcome embed includes a "🎲 BoardGameGeek" field linking to it
+- [ ] With no BGG group URL configured, confirm the welcome embed omits the BoardGameGeek field entirely
 
 ### 3.9l `/admin welcome greet`
 
@@ -1567,17 +2432,34 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.9m `/admin marketplace config`
 
-**What it does:** Configures the forum channel and negotiation mode for the marketplace.
+**What it does:** Configures the marketplace channel — either a Forum channel or a Text channel, both supported side by side per server — and the negotiation mode.
 
 - [ ] Run `/admin marketplace config` with no options — confirm current config is displayed (channel and mode)
-- [ ] Run `/admin marketplace config channel:#marketplace-channel negotiation_mode:Public` — confirm settings saved, echoed back, and "Forum tags created/verified" shown
-- [ ] Try setting a regular text channel instead of a forum channel — confirm error: "must be a Forum Channel"
+- [ ] Run `/admin marketplace config channel:#marketplace-forum negotiation_mode:Public` pointing at a **Forum channel** — confirm settings saved, echoed back, and "Forum tags created/verified and Quick Actions hub posted" shown
+- [ ] Try setting a voice channel (or another unsupported type) — confirm error: "must be a Forum Channel or a Text Channel"
 - [ ] Run `/admin marketplace config negotiation_mode:Private` — confirm mode changes to private
 - [ ] After setting a forum channel, confirm the six tags (`For Sale`, `For Trade`, `Active`, `Pending`, `Sold`, `Closed`) are visible in the channel's tag list
+- [ ] After setting a forum channel, also confirm a pinned "🎮 Quick Actions" post appears (1.7m/2.7m) — created alongside the tags, not requiring a listing to be posted first
+- [ ] Re-run `/admin marketplace config channel:...` pointing at the same forum channel again — confirm the existing "🎮 Quick Actions" post is refreshed in place rather than a second one being created
+
+#### Text-channel mode (comparison checklist)
+
+Text channels have no forum tags and no thread is created for a listing — each listing is a single plain message (embed + button) in the channel. Status/type visibility is provided by a pinned "🛒 Marketplace Listings" index message instead, grouped by For Sale / For Trade and linking to each listing message, refreshed automatically whenever a listing is created, closed, reopened, or sold. Follow-up activity that would post into a forum thread (new-offer notifications, DM-disabled fallback buttons, sold/closed announcements) is instead posted as a **reply** to the listing message.
+
+- [ ] Run `/admin marketplace config channel:#marketplace-text` pointing at a **Text channel** — confirm it's accepted (no "must be a Forum Channel" error) and the reply shows "Quick Actions hub and listing index posted"
+- [ ] Confirm a pinned "🎮 Quick Actions" **message** (not a thread) appears in the text channel, with the same Sell/Trade/Browse/My Listings buttons as the forum hub
+- [ ] Confirm a pinned "🛒 Marketplace Listings" message appears, initially reading "No active listings right now"
+- [ ] Post a sell listing (via `/marketplace post sell` or the hub's "📦 Sell an Item" button) — confirm it posts as a single plain message in the text channel (embed + "I'm Interested"/"Buy It Now" button, no thread created), and the pinned listing index updates to include it under "🏷️ For Sale" with a working link
+- [ ] Post a trade listing — confirm it appears under "🔄 For Trade" in the pinned index
+- [ ] With negotiation mode set to Public, submit an offer on a text-mode listing — confirm the "new offer" notification appears as a **reply** to the listing message (not a new top-level message, no thread), and the seller still gets DM action buttons
+- [ ] Temporarily disable DMs from server members, submit an offer on a text-mode listing — confirm the DM-fallback response buttons are posted as a reply to the listing message
+- [ ] Close, then reopen, a text-mode listing — confirm the button is removed/restored on the listing message on each transition (no lock/archive, since there's no thread), and the pinned index drops/re-adds the listing accordingly
+- [ ] Sell a text-mode listing via Buy It Now or Accept Offer — confirm the pinned index removes it, the listing message's button is removed, and a "sold" reply is posted to the listing message
+- [ ] Reconfigure the marketplace channel from Text back to Forum (or vice versa) — confirm the previously-configured mode's pinned messages/posts are left untouched (not deleted) and the newly configured mode's hub/tags or hub/index are set up fresh
 
 ### 3.9n `/admin marketplace purge`
 
-**What it does:** Admin bulk-deletes listings by status, with an optional user filter.
+**What it does:** Admin bulk-deletes listings by status, with an optional user filter. Any thread or message backing a purged listing is deleted too (forum post thread, or the plain listing message in text-channel mode), so purged listings don't linger as posts in the marketplace channel; in text-channel mode the pinned listing index is also refreshed to drop purged listings.
 
 - [ ] 👑 Run as non-admin — confirm "requires Manage Server permission"
 - [ ] Run as admin with no options — confirm sold + closed listings deleted, active/pending remain; reply shows `(filter: sold_closed)`
@@ -1586,7 +2468,166 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run with `status:Active + Pending` — confirm active and pending listings are removed
 - [ ] Run with `status:All` — confirm every listing is removed
 - [ ] Confirm purge count and filter label are reported accurately in the reply
+- [ ] For a purged listing that has a forum post, confirm its forum thread is deleted from the marketplace channel (not just archived/left behind)
+- [ ] For a purged listing with no forum thread (e.g. never posted), confirm the purge still completes cleanly with no error
+- [ ] In text-channel mode, purge an active listing — confirm its listing message is deleted and it disappears from the pinned listing index
 - [ ] After an admin purge, open `data/marketplace_log.jsonl` — confirm an `admin_purge` entry with count in `details`
+
+### 3.9o `/admin room config`
+
+**What it does:** Sets the Discord category name used for `/room` private channels (default "Private Rooms").
+
+- [ ] Run `/admin room config` with no options — confirm it shows the current category name
+- [ ] Run `/admin room config category:Secret Rooms` — confirm it saves and the reply reflects the new name
+- [ ] Create a room after changing the category — confirm it's placed under the newly configured category, creating it if it doesn't already exist
+
+### 3.9p `/admin usage`
+
+**What it does:** Shows, per this server, which slash commands (and subcommands) have been called and how many times, plus a count of how often each optional parameter was supplied — never the parameter values themselves. Tracking starts from whenever this feature was deployed; nothing is backfilled.
+
+- [ ] 👑 Run as non-admin — confirm "requires Manage Server permission"
+- [ ] On a server with no prior command activity since this feature was deployed, run `/admin usage` — confirm "No command usage recorded yet."
+- [ ] Run a few different commands and subcommands (e.g. `/help`, `/library add`, `/admin event config location:...`), then run `/admin usage` — confirm each shows up as its full path (e.g. `/library add`, `/admin event config`) with an accurate call count, sorted most-used first
+- [ ] For a command run with an optional parameter (e.g. `/admin event config location:...`), confirm the reply shows that parameter name and count (e.g. `location: 1`) — and confirm the actual value typed (e.g. the location text) never appears anywhere in the reply
+- [ ] Run the same command again without that optional parameter — confirm the total call count increases but the parameter's count does not
+- [ ] Confirm this is per-server: running commands on a different server the bot is in does not affect this server's counts
+
+### 3.9q `/admin general config`
+
+**What it does:** Sets the text channel where the general chat "🎮 Quick Actions" hub (1.9a/2.10a) is posted and pinned. Distinct from `/admin welcome config` (3.9j) — that's for the one-time new-member greeting; this is meant for an ongoing, already-populated channel like #general.
+
+- [ ] Run `/admin general config` with no options — confirm it shows the current channel (or "*not set*")
+- [ ] Run `/admin general config channel:#general` — confirm the "🎮 Quick Actions" message is posted and pinned there, and the reply confirms it
+- [ ] Try setting a voice channel or other non-text channel — confirm "must be a regular text channel" error, and nothing is saved
+- [ ] Run `/admin general config channel:#general` again pointing at the same channel — confirm the existing hub message is refreshed in place rather than a second one being posted
+- [ ] 👑 Run as non-admin — confirm "requires Manage Server permission"
+
+### 3.9r `/admin bgstats`
+
+**What it does:** Shows, for this server's most recently locked event, which scheduled games' BG Stats links/QR codes have actually been opened at least once, and which haven't — plus a summary count. This is the closest available signal to "did anyone use this," since BG Stats gives the bot no callback once someone opens the link.
+
+- [ ] 👑 Run as non-admin — confirm "requires Manage Server permission"
+- [ ] On a server with no locked events, run `/admin bgstats` — confirm "No locked events yet"
+- [ ] Lock an event whose lineup ended up with zero scheduled games — confirm "locked with no scheduled games"
+- [ ] Lock an event with 2+ scheduled games, open one game's link/QR, leave the rest untouched, then run `/admin bgstats` — confirm the opened game shows its open count and a relative "last opened" time, the others show "not opened yet", and the summary line reads "N of M scheduled games opened at least once"
+- [ ] Run `/game bgstats` again for the same game to regenerate its link, then open the new link — confirm `/admin bgstats` shows the combined open count across both links for that game, not a reset count
+- [ ] With multiple locked events in this server's history, confirm `/admin bgstats` always reflects only the most recently locked one
+- [ ] Confirm a walk-up (1-seated) game appears in the list alongside table-scheduled games — it never gets a real table slot (4.7), but a BG Stats link is still posted for it, so it's still eligible for open-tracking here
+- [ ] Confirm this is per-server: a locked event in a different server the bot is in doesn't appear here
+
+### 3.9s `/admin challenge config`
+
+**What it does:** Sets the text channel where the "Guess the Board Game" challenge posts hints/reveals and reads guesses, turns the feature on or off (default: off), sets how often a new cycle starts (`frequency`: daily/weekly/bi-weekly, default weekly), sets the day-of-week + local hour (interpreted using the server's `timezone`, `/admin event config` 3.9a) each of the 3 hints and the reveal post at, and sets whether starting a new cycle first deletes the previous cycle's hint + reveal posts (`cleanup_old_posts`, default off). Each `*_hour` option accepts either 12-hour ("8am", "8pm") or 24-hour ("20") input. Defaults reproduce the original fixed weekly schedule: hint 1 Monday 8am, hint 2 Wednesday 8am, hint 3 Friday 8am, reveal Saturday 6pm. Options: `channel`, `enabled`, `frequency`, `start_date`, `cleanup_old_posts`, `clue1_day`/`clue1_hour`, `clue2_day`/`clue2_hour`, `clue3_day`/`clue3_hour`, `reveal_day`/`reveal_hour`. If `enabled:true` is set with no channel given and none already configured, the bot auto-creates a **#board-game-challenge** text channel (reusing one by that name if it already exists) and posts a short welcome message there explaining the feature, instead of blocking with an error.
+
+**Frequency:**
+- **Weekly** (default): one cycle per week, starting Monday — the `*_day` options set which weekday each stage falls on, exactly as before this setting existed.
+- **Daily**: all 3 hints + the reveal happen within a single day — the `*_day` options are ignored entirely (there's no "day of week" within a 1-day cycle); only the `*_hour` options matter, and they should be spread across the day (e.g. 8am/12pm/4pm/8pm) rather than all the same hour.
+- **Bi-weekly**: reuses the same weekday-based schedule as weekly, but only starts a new cycle every *other* week — the week in between is idle. Which weeks are "on" is anchored to `start_date` (any date in the desired starting week — it's normalized to that week's Monday); if `start_date` isn't given the first time bi-weekly is turned on, it defaults to the current week.
+
+- [ ] 👑 Run as non-admin — confirm "requires Manage Server permission"
+- [ ] Run with no options — confirm it shows the current channel ("*not set*" if none), enabled state, **Frequency: Weekly**, "Cleanup old posts on new cycle: **No**", and all 4 schedule lines (hint 1/2/3 + reveal, each as "Weekday Hour[am/pm]") — confirm nothing is auto-created just from viewing config
+- [ ] Run with `cleanup_old_posts:true` — confirm the reply shows "Cleanup old posts on new cycle: **Yes**" and no other setting changes
+- [ ] Run with a non-text channel (e.g. a voice or forum channel) as `channel` — confirm "The challenge channel must be a **Text Channel**" and nothing is saved
+- [ ] Run with a valid text channel and `enabled:true` — confirm both save, and the reply reflects the new channel/state
+- [ ] Run with only `channel` set (no `enabled` option) — confirm the channel saves and the reply still shows "Enabled: No", since the feature needs both a channel and `enabled:true` before it posts
+- [ ] With no channel ever set, run with only `enabled:true` (no `channel` option) — confirm a **#board-game-challenge** channel is created, a welcome message posts in it, and the reply shows "📌 Created #board-game-challenge since no channel was configured" plus the new channel in "Channel:"
+- [ ] Repeat the above in a server that already has a **#board-game-challenge** text channel (not yet configured) — confirm that existing channel is reused instead of a second one being created
+- [ ] Run with e.g. `clue1_day:tuesday clue1_hour:9` (24-hour form) — confirm the reply's "Hint 1" line now reads "Tuesday 9am", and only that line changes (hint 2/3/reveal keep their prior values)
+- [ ] Run with `clue1_hour:9pm` (12-hour form) — confirm the "Hint 1" line reads "Tuesday 9pm"
+- [ ] Run with an unparseable hour (e.g. `clue1_hour:noon`) — confirm a clear "Could not parse..." error and nothing is saved
+- [ ] Set all 4 schedule pairs to distinct day/hour combinations in one call, mixing 12-hour and 24-hour input — confirm all 4 save and the reply reflects each independently
+- [ ] Run `/challenge status` afterward (with both channel and enabled set) — confirm it now reflects the newly configured channel and schedule instead of "isn't set up"
+
+**Frequency-specific:**
+- [ ] Run with `frequency:daily` — confirm the reply shows "Frequency: **Daily**" and the schedule lines show just the hour (e.g. "Hint 1: **8am** (daily)") with no weekday name; the welcome message posted when auto-creating a channel (or the next time one is created) reflects "Each day..." instead of "Each week..."
+- [ ] Run with `frequency:weekly` after having set daily/bi-weekly — confirm it reverts to showing weekday names on the schedule lines
+- [ ] Run with `frequency:biweekly` and no `start_date` — confirm the reply shows "Frequency: **Bi-weekly**" and an "On weeks: starting `<this week's Monday>`, then every other week" line
+- [ ] Run with `frequency:biweekly start_date:"August 22"` (any day of the desired starting week, not necessarily a Monday) — confirm the anchor shown is normalized to that week's Monday
+- [ ] Run with an unparseable `start_date` (e.g. "whenever") — confirm a clear "Could not parse..." error and nothing is saved
+- [ ] Having already set a bi-weekly anchor, run `/admin challenge config` again changing only an unrelated setting (e.g. a schedule hour) — confirm the existing anchor is left untouched, not silently reset
+
+## 3.10 `/room` — Private Rooms
+
+### 3.10a `/room create`
+
+**What it does:** Creates a new private text channel visible only to whoever you mention, plus hosts and admins — hidden from everyone else. Posts a message pinging each invited person, and creates the channel under a separate category (default "Private Rooms", configurable via `/admin room config`, 3.9o) so it's never mixed in with event/archive channels. Requires a `date` (when the room auto-closes — see 4.8), unless `persist:true` is set, which creates a room with no expiration at all — see 3.10c to toggle this later. A persistent room's channel name and topic are prefixed with 📌 so hosts/admins can spot it in the channel list without opening it.
+
+**Prerequisites:** none — any server member can run this, not just hosts/admins.
+
+- [ ] Run `/room create people:@Alice @Bob date:August 22` — confirm a new channel is created under the "Private Rooms" category, and the ping message + confirmation both state it expires August 22
+- [ ] Run `/room create people:@Alice persist:true` with no `date` — confirm the room is created with no expiration, the channel name and topic are prefixed with 📌, and the ping message + confirmation both say it persists until closed
+- [ ] Confirm a normal (non-persistent) room's channel name and topic are **not** prefixed with 📌
+- [ ] Attempt to create a room with neither `date` nor `persist:true` — confirm a clear "Provide a `date`..." error and no channel is created
+- [ ] Run with an unparseable `date` (e.g. "whenever") — confirm a clear parse error and no channel is created
+- [ ] Run with a `date` already in the past — confirm "That date has already passed" error and no channel is created
+- [ ] Confirm the channel is hidden from `@everyone` — a member who wasn't mentioned and has no Host/Admin role cannot see it
+- [ ] Confirm you (the creator), the mentioned people, and any Host/Admin role member can all see the channel
+- [ ] Confirm a message posts in the new channel `@`mentioning each invited person
+- [ ] Run with a `name` option — confirm the channel is named accordingly
+- [ ] Run without a `name` option — confirm a reasonable auto-generated name is used instead
+- [ ] Run with `people` containing no valid `@`mentions (e.g. plain text) — confirm a clear error and no channel is created
+- [ ] Mention yourself along with others — confirm you aren't invited twice/duplicated
+- [ ] Mention someone who has since left the server — confirm they're skipped with a note in the reply, and the room is still created for the remaining valid people
+- [ ] Mention only people who've all left the server — confirm a clear "couldn't find any" error and no channel is created
+- [ ] Create a second room in the same server — confirm it reuses the existing "Private Rooms" category rather than creating a duplicate
+
+### 3.10b `/room close`
+
+**What it does:** Deletes a private room. Must be run inside the room's own channel. The room's creator or any host/admin can close it — nobody else.
+
+- [ ] Run inside a room you created — confirm the channel is deleted
+- [ ] Run inside a room someone else created, as a Host or Admin — confirm it works
+- [ ] Run inside a room someone else created, as a regular member with no elevated role — confirm "Only the room's creator or a host/admin can close this room" error, and the channel is **not** deleted
+- [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
+
+### 3.10c `/room persist`
+
+**What it does:** Turns a private room's auto-expiration on (`enabled:true`) or off (`enabled:false`, requires a new `date`). Must be run inside the room's own channel. The room's creator or any host/admin can toggle it — nobody else. See 4.8 for how auto-expiration works. The channel's 📌 name/topic prefix updates immediately to match.
+
+- [ ] Run `/room persist enabled:true` inside a room that has a `date` — confirm the reply says the room will no longer auto-expire, the channel name and topic gain the 📌 prefix, and it survives past its original expiration date
+- [ ] Run `/room persist enabled:false` inside a persistent room, with a `date` — confirm the reply confirms the new expiration, the channel name and topic lose the 📌 prefix, and the room auto-closes on that date (4.8)
+- [ ] Run `/room persist enabled:false` inside a persistent room, with **no** `date` — confirm a clear "Provide a `date`..." error and the room remains persistent
+- [ ] Run as a Host or Admin on a room you didn't create — confirm it works
+- [ ] Run as a regular member with no elevated role on a room you didn't create — confirm "Only the room's creator or a host/admin can change this room's expiration" error, and nothing changes
+- [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
+
+### 3.10d `/room invite`
+
+**What it does:** Adds more people to an existing private room, granting them channel access and updating the stored room record. Must be run inside the room's own channel. The room's creator or any host/admin can invite — nobody else.
+
+- [ ] Run `/room invite people:@Carol` inside a room — confirm Carol gains access to the channel, is pinged in a message, and the confirmation reply says she was added
+- [ ] Confirm the newly added person now shows up if the room is later inspected (e.g. they count toward "already in this room" on a repeat invite)
+- [ ] Mention someone who's already the creator or an existing invitee — confirm a clear "isn't already in this room" error and no channel/reply changes
+- [ ] Mention someone who has since left the server — confirm they're skipped with a note in the reply, and any other valid mentions are still added
+- [ ] Mention only people who've all left the server — confirm a clear "couldn't find any" error
+- [ ] Run as a Host or Admin on a room you didn't create — confirm it works
+- [ ] Run as a regular member with no elevated role on a room you didn't create — confirm "Only the room's creator or a host/admin can invite people to this room" error, and nobody is added
+- [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
+
+### 3.10e `/room kick`
+
+**What it does:** Removes someone from an existing private room, revoking their channel access and updating the stored room record. Must be run inside the room's own channel. The room's creator or any host/admin can kick — nobody else. The room's creator cannot be kicked (close the room instead).
+
+- [ ] Run `/room kick user:@Carol` inside a room Carol was invited to — confirm Carol loses access to the channel, a message announces her removal, and the confirmation reply says she was removed
+- [ ] Attempt to kick the room's creator — confirm "You can't remove the room's creator..." error and nothing changes
+- [ ] Attempt to kick someone who was never invited to this room — confirm a clear "hasn't been individually invited" error and nothing changes
+- [ ] Run as a Host or Admin on a room you didn't create — confirm it works
+- [ ] Run as a regular member with no elevated role on a room you didn't create — confirm "Only the room's creator or a host/admin can remove people from this room" error, and nobody is removed
+- [ ] Run outside of any private room channel — confirm "This command must be run inside a private room channel..." error
+
+### 3.10f Quick Actions Hub (button panel)
+
+**What it does:** A pinned "🎮 Quick Actions" message posted automatically the moment a room is created, alongside the existing plain-text welcome message — buttons for 🎲 Suggest a Game, ➕ Invite, 👢 Kick, 📌 Toggle Auto-Expire, and 🍿 Snacks. Close Room isn't on this panel — with the row already at Discord's 5-button cap, closing (the one destructive action here) is left as a deliberate typed `/room close` rather than a tap target. The Suggest a Game button is the exact same one used in event channels (same modal, same underlying flow) — it just resolves this room instead of an event when tapped here. Invite/Kick use Discord's native member-picker (a dropdown of server members) instead of typing mentions or a user option. Every button enforces the same "room creator or host/admin" permission check as its slash-command equivalent — except 🍿 Snacks, which (like `/snacks`) has no creator/host/admin restriction at all.
+
+- [ ] Create a room — confirm the "🎮 Quick Actions" message appears, pinned, alongside the separate plain-text welcome message
+- [ ] Tap "🎲 Suggest a Game" — confirm the same modal/flow as the event-channel hub, correctly suggesting into this room
+- [ ] Tap "➕ Invite" as an Admin on a room you didn't create — confirm a member-picker appears; selecting one or more people grants them channel access and adds them to the room, identical to `/room invite`
+- [ ] Tap "👢 Kick" and select someone invited to the room — confirm they lose access, identical to `/room kick`
+- [ ] Tap "👢 Kick" and select the room's creator — confirm "You can't remove the room's creator..." same as the command
+- [ ] Tap "📌 Toggle Auto-Expire" on a room with a set expiration date — confirm it immediately becomes persistent (no modal), same as `/room persist enabled:true`
+- [ ] Tap "📌 Toggle Auto-Expire" on a persistent room — confirm a modal asks for a new expiration date, and submitting it sets the date and turns persistence back off, same as `/room persist enabled:false date:...`
+- [ ] Tap "🍿 Snacks" — confirm the same panel described in 1.11d, scoped to this room
+- [ ] Confirm there is no "Close Room" button on this panel — closing a room is still available, just only via `/room close`
 
 ---
 
@@ -1596,12 +2637,13 @@ These features are triggered by Discord events and scheduled timers rather than 
 
 ## 4.1 Automatic Archiving (Event Completion)
 
-**What it does:** When a Discord scheduled event is marked as "Completed" by the server, the bot automatically archives the associated channel.
+**What it does:** When a Discord scheduled event is marked as "Completed" by the server, the bot automatically archives the associated channel. If the RSVP was a forum thread, it's tagged "Concluded" and locked/archived.
 
 - [ ] Mark a test event as completed in Discord — confirm:
   - Event channel moves to Archive category
   - Lock-date message is posted in the channel
   - Channel remains writable for 7 days
+- [ ] With a forum announcements channel, let an event auto-archive — confirm the forum thread is tagged "Concluded" and locked/archived
 
 ## 4.2 Delayed Channel Lock
 
@@ -1651,7 +2693,7 @@ These features are triggered by Discord events and scheduled timers rather than 
 - [ ] Re-add the bot to the same server within the 30-day window — confirm `bot.log` shows `[GuildCreate] Bot re-added to "<server>" — data restored (was pending deletion)`
 - [ ] Confirm the guild's entry is removed from `deleted_guilds.json` and prior data (library, config, tags, etc.) is intact after rejoining
 - [ ] Manually set a guild's `deletedAt` to more than 30 days ago and trigger the retention cleanup (restart the bot, or wait for the daily interval) — confirm `bot.log` shows `[GuildLifecycle] Retention window expired for "<server>" — purging data` followed by `[GuildLifecycle] Purged all data for guild <id>`
-- [ ] After purge, confirm the guild's entries are gone from `gamenights.json`, `library.json`, `games.json`, `config.json`, `bgg_accounts.json`, `gameroles.json`, and `user_collections.json`, and any `library_requests.json` entries pointing to that guild's (now-deleted) events are also removed
+- [ ] After purge, confirm the guild's entries are gone from `gamenights.json`, `library.json`, `games.json`, `privateRooms.json`, `config.json`, `bgg_accounts.json`, `gameroles.json`, and `user_collections.json`, and any `library_requests.json` entries pointing to that guild's (now-deleted) events are also removed
 - [ ] Confirm a guild that is NOT past the 30-day window is untouched by the cleanup job
 
 ## 4.6 Automatic Welcome (New Member Join)
@@ -1660,93 +2702,244 @@ These features are triggered by Discord events and scheduled timers rather than 
 
 **Requires a second account — moved to Part 5.2.** Triggering this needs an account actually joining the server (a `guildMemberAdd` event), which requires a second identity or a kick-and-reinvite of an alt — see Part 5.2 below.
 
----
+## 4.7 Lineup Lock + Scheduler
 
-# Part 5 — Multi-Person Tests
+**What it does:** `lock_hours_before_event` (via `/admin event config`, 3.9a) defaults to 48h — locking is on out of the box; set it to `0` to disable it entirely. When non-zero, the bot locks an event's game suggestions and seats that many hours before its start time, then posts a suggested schedule. Each table runs its own independent timeline — freed the instant its current game ends, not synchronized to any shared "round" boundary — and each player has their own next-available clock, so a game can't start until enough of its seated players have cleared their configured break from their last game (see "Quorum-based starts" below — not necessarily *every* seated player). `table_count` (3.9a) is a **floor, not a fixed number**: the bot computes an effective table count at lock time from how many people RSVP'd "yes" and their `/myroles` complexity preferences (see "Smart table-count sizing" below), and uses whichever is higher — capped by `max_tables` (3.9a) if set, e.g. to a venue's actual physical table count. Game duration estimates use each game's stored playtime plus a teach/overflow buffer based on complexity (Light/Medium/Heavy, 3.9a) — a rough estimate, not a precision model; a bigger table doesn't add any further padding on top, since the complexity buffer is what already accounts for a game running long. This runs on the same hourly check as archiving (4.1-4.3), plus once on bot startup.
 
-These test cases involve genuine back-and-forth between two distinct Discord identities, or a real join event — they can't be completed by one tester working alone, even with several test accounts on hand. Grouped by which pairing you need to recruit, so you can knock out everything for one pairing in a single sitting.
+**Quorum-based starts.** A game doesn't wait for every signed-up player — only enough to reach its **recommended player count** (`suggestedPlayers`, BGG's community "best with N players" figure), using whichever seated players are ready soonest. This is deliberately *not* based on the game's bare minimum player count, since plenty of games technically support 1-2 players but don't actually play well that low. If a game has no recommended count on file, it falls back to waiting for every seated player, same as before this existed. A signed-up player left out of the quorum isn't dropped — their name still appears on the game's line as "(+ `@mention` can join once free)", and they're left completely free the whole time (never marked busy by a game they aren't estimated to actually be at), so they remain available for another suggestion or simply stay open the rest of the day if that was their only signup. **Trimming only happens when the excluded remainder is big enough to be its own genuine group (at or above the game's minimum player count).** A game only runs once, so anyone left out has no path back into it — that's an acceptable tradeoff when 2+ people are excluded together (there's at least a plausible group there), but not when it would strand a single leftover signup (or any remainder under the minimum) with literally nowhere to go. In that narrow case the game falls back to waiting for everyone, same as when there's no recommended count on file at all — a specific player never simply vanishes from a game they signed up for.
+
+**A game with more real interest than fits at one table splits into groups, each getting a real session.** Once a game's seats fill to its `maxPlayers`, further joiners land on a waitlist — previously that waitlist was purely informational (the signup card's own "Group 2 forming" display already showed it, but nothing was ever actually scheduled for it; at lock time the whole waitlist was simply dropped). Now, if seats + waitlist together exceed `maxPlayers`, everyone interested is split into evenly-sized groups (e.g. 9 people at a max-4 table become three groups of 3, never an uneven 4/4/1 that would strand the last group below the game's minimum) and each group gets a real table session — group 1 keeps the game's plain title, group 2+ show as "`<Game>` (Group N)" so it's clear at a glance these are separate sessions, not a duplicate-listing bug. Every group requires its own **full** roster before it starts (no quorum-based partial trimming within a group — that would risk excluding someone from the specific group they were deliberately assigned to, with nowhere else to go); quorum-based partial starts (above) still work exactly as before for a game that isn't split. Extra groups are chained onto the **same table** as group 1, back-to-back, rather than spread across separate tables — this assumes there's normally only one physical copy of the game available, so a second group has to wait its turn at the same table rather than needing a duplicate copy elsewhere; it does not check whether a second copy was actually confirmed via the separate `/library request` "bring a 2nd copy" flow. If seats + waitlist exceed `maxPlayers` but no even split can keep every group at or above `minPlayers` (e.g. a max-6 game with 7 total interested and a minimum of 4), the game isn't split at all — only its `seats` get scheduled, and the excess simply stays waitlisted, same as before this existed. With `post_bgstats_links` on, each group posts its own separate BG Stats message/QR/link with its own play id, and `/admin bgstats` reports opens per group rather than collapsing a split game into a single, misleadingly low-looking count.
+
+The schedule embed has one field per table (sorted by table number), listing that table's games in chronological order, each with its own real clock start/end time (Discord's auto-localizing `<t:...:t>` timestamp markup). Every displayed start/end time is rounded **up** to the next quarter-hour (:00/:15/:30/:45) — never down or to nearest — so a host or player can plan around a clean "starts at 2:15" rather than an arbitrary "2:19"; rounding up (not down) means a game is never shown as available before it actually is. This is purely a display concern — the scheduler's own placement/quorum/chaining math underneath always runs on the exact minute, unaffected by how times get rounded for posting. Every table line also lists that game's seated players as `@mention`s (comma-separated) right after the title/time, so it doubles as a call sheet. A game with no seated players (shouldn't normally happen for anything scheduled) simply omits the player list rather than showing an empty dash. Only the *last* game currently on a table can opportunistically repeat back-to-back into any remaining time before the event's end — under 30 minutes of raw playtime, before the complexity buffer — up to `max_game_repeats` total plays (3.9a); its line notes the play count, e.g. "(3x)". This only applies when the event has a real end time — an open-ended event has no edge to fill up against, so nothing repeats automatically. A repeat is also capped short of double-booking anyone: if one of the repeating game's players is also seated in another already-scheduled game elsewhere, the repeats stop right before that player's other game starts, rather than growing straight through it. If a table would play two Heavy-complexity games back-to-back, a `heavy_game_break_minutes`-long break (3.9a) is inserted beforehand — this now applies uniformly per table, regardless of how many other games came before it elsewhere.
+
+**`break_minutes` (3.9a) now defaults to `0` — no separate flat break between a person's games.** Padding between someone's games comes entirely from each game's own complexity buffer (Light/Medium/Heavy, 3.9a) instead, which already scales to what was actually played — a Heavy game's 45-minute buffer is a more realistic recovery gap than a flat number applied identically after a 10-minute party game. Recap validation showed a flat extra break on top of the buffer compounds badly for anyone seated in several games without actually changing whether the whole day fits in the event window — it just delays the same total overrun further into the night. Set `break_minutes` to a non-zero value if a server wants extra breathing room on top of the buffer anyway (e.g. for a venue with a slow snack table).
+
+**Table selection spreads load instead of always refilling the same low-numbered tables.** When a game could start at the exact same moment on more than one table (most often the same group returning for another game, with several tables equally free right then), the scheduler picks whichever of those tables has hosted the least total game-time so far, not just whichever table number happens to come first. Without this, a handful of low-numbered tables end up doing all the work — running into overtime — while higher-numbered ones barely get touched all day, even though there was nothing wrong with the signups themselves.
+
+**Placing longer games before shorter ones, alone, made things worse.** A "longest game first" placement order was implemented and validated against a real recap, on the theory that a player signed up for both a short filler and a long/heavy game shouldn't have the short one grab their early availability and push the long game later. In an isolated case that held up — but against a real, densely-connected event (most players signed up for several overlapping games) used *by itself*, the effect cascaded hard: nearly every short game ended up queuing behind whichever long game claimed a shared player first, which grew the estimated span by several hours, roughly doubled the at-risk list, and pushed 2 real games out of the schedule entirely. Rather than pick one rule and hope it generalizes, the bot now runs **multiple placement strategies and keeps whichever actual result is best** — see below.
+
+**Multi-pass placement: try a few strategies, keep the best result.** No single priority rule for "which game should claim a table/player next" wins in every situation — that's a known property of this class of scheduling problem (parallel tables + shared players with no fixed game order, i.e. resource-constrained project scheduling), not something specific to this bot. So instead of committing to one rule, the scheduler runs **three** deterministic placement passes from scratch — (1) today's original greedy-soonest (whichever game/table pair can start earliest wins, ties broken by longer duration, then by least-loaded table), (2) longest-game-first, (3) most-entangled-game-first (whichever game shares a seated player with the most *other* games gets priority, since a heavily-entangled game is more schedule-critical than a merely long one) — and keeps whichever of the three actually produces the best result: fewest games left unscheduled first, then lowest estimated total span, then fewest at-risk players. If every pass ties (the common case — most events don't have enough real contention for the rules to disagree), the original greedy-soonest pass wins by default, so a normal event's schedule looks exactly as it always has. This is fully automatic — no config, no toggle — and is logged internally (which pass won) for debugging, but isn't shown anywhere in the posted schedule.
+
+**Games with exactly one seated player never occupy a real table/timeline slot.** They're too speculative to reserve table-time for — a handful of them could otherwise crowd out real signups' access to tables all day — so they never enter the per-table placement loop at all. Instead they're listed in their own "🌱 Open to walk-ups" field, below the table breakdown, with no table number or time estimate, so someone can still set the table up on their own and use it (plus its BG Stats QR code, if enabled) to recruit interest through the day. A game with 2+ seated players below its minimum player count still lands in "Not scheduled" with a reason; a game with zero seated players does too.
+
+**`flex_tables` (3.9a) reserves the last N tables of the event's effective table count exclusively for Light-complexity games.** A Medium/Heavy game — and any game with no complexity set at all, treated conservatively as not flex-eligible — is restricted to the regular table pool and will never land on a reserved flex table even if every regular table is busy and a flex table sits idle; that idle time is the deliberate tradeoff for guaranteeing players who only want quick/light games always have somewhere to go, even when longer games dominate the rest of the venue. A Light game may use either pool, whichever gives it the earliest start — eligibility never forces it onto the flex table specifically. If `flex_tables` is set to or above the event's effective table count, at least 1 regular table is always kept — it never fully locks out non-Light games entirely. Defaults to `0` (disabled).
+
+If a game's start was pushed later by a specific seated player still finishing an earlier game (rather than by table availability), its line notes "⏳ waiting on `@mention` to finish an earlier game" — this is shown on the delayed game's own line, visible to everyone seated in it, since the whole table waits on that player, not just a private inconvenience of theirs. When a table simply wasn't free yet (no specific player was the bottleneck), no such note appears.
+
+If a game's start or end is projected to run past the event's configured end time, its line gets an inline "⚠️" note. Players seated in 2+ games where at least one is at risk of that (or never got scheduled at all) show up in a new "⚠️ May not get to play everything" field, `@mention`ed with a reason that names the specific at-risk game(s) rather than a bare count — a best-effort heads-up, not a guarantee the scheduler tried to prevent by rearranging anything. A player with only one game never appears here even if that single game is at risk (it's already visible via the "⚠️" note or "Not scheduled").
+
+If the event has greeters set (`/host event greeters`, 2.8f), a "👋 Greeters" field listing them (`@mention`s, "and"-joined for two) appears as the very first field, ahead of the table breakdown. Events with no greeters set show no such field at all.
+
+Locking also cleans up and follows up on the "Games to Bring" request pin (`/library request`, 1.4h/2.4h/3.4h) — in this order, all before the public schedule embed is posted: (1) any request whose title matches a suggested game that ends up with zero seated players is dropped and the pin is refreshed, even if an owner had already confirmed bringing it via `/library bring` — nobody signed up to play it, so there's no reason to ask an owner to lug it over; if that request had a pending "please bring this" DM outstanding, that DM is edited to say it's no longer needed and its button removed; (2) every request still on the pin at this point gets asked, for real, for the first time — no "please bring this" DM goes out before lock (see 1.4h), so this is the actual first ask for nearly every request, not a reminder to someone already pending. The bot picks whichever attending owner currently has the fewest confirmed brings for the event (or an explicitly copy-selected owner, if the requester picked one), same fairness logic as an immediate post-lock request. A request already fully covered by a proactive `/library bring` confirmation before lock isn't asked at all. A request with no matching suggested game at all (e.g. something brought along just to teach or show off, never suggested as a game to play) is left alone by the drop step — it was never tied to the signup system in the first place — but is still asked at lock like any other request. A request whose game has no owner in the library at all is simply left unasked (nobody eligible).
 
 **Prerequisites:**
-- A second, distinct Discord account (see the global Prerequisites section above — reusing one of your three test accounts is fine).
-- For 5.1: a marketplace forum channel configured (`/admin marketplace config`, 3.9m), and one account with an active sell or trade listing posted (`/marketplace post sell`/`post trade`, 1.7a/1.7b).
-- For 5.2: a welcome channel configured (`/admin welcome config`, 3.9j).
+- `lock_hours_before_event` at its default (48h) or another non-zero value via `/admin event config` (3.9a) — this is on by default, so no setup is needed unless you want a different threshold.
+- An event with several suggested games (`/game suggest`, 1.3a), seated by more than one confirmed player each — use several test accounts so some games can be given overlapping players (to see one delayed until the shared player's break clears) and others distinct players (to see them run concurrently on separate tables). Include a mix: at least one Light/Medium/Heavy game, one game under 30 minutes playtime, two Heavy games that can land at the same table back-to-back, a player seated in 2+ games, one game with exactly 1 seated player, and one game with a BGG-sourced recommended player count (`suggestedPlayers`) seated by more people than that count (so a straggler can be left out of its quorum). To test `flex_tables`, include at least one Light and one Medium/Heavy game competing for the same tables.
+- To trigger the lock without waiting for real time to pass, manually set a game night's `startTimeISO` in storage to fall within the configured lock window and wait for the next hourly check (or restart the bot).
+- To test the BG Stats buttons specifically, also set `post_bgstats_links:true` (3.9a), and link at least one seated test account's BGG account (`/bgg link`) so you can see the username-vs-display-name fallback in action.
+- To test group-splitting, fill a game's seats to its `maxPlayers` and add enough waitlist joiners past that for at least 2 full groups (e.g. a max-4 game filled to 4 seats plus 5 more on the waitlist, for a 3/3/3 split).
 
-## 5.1 Buyer + Seller — Marketplace Negotiation
+- [ ] With the lock threshold crossed, confirm the bot posts a "🔒 Lineup Locked" embed in the event channel with one field per table
+- [ ] With greeters set on the event (2.8f) before it locks, confirm the locked schedule embed's first field is "👋 Greeters" listing them by mention, ahead of the table fields
+- [ ] With no greeters set, confirm the schedule embed has no "👋 Greeters" field at all
+- [ ] Confirm every game's line shows a real `(<t:...:t>–<t:...:t>)` start/end time, not just an estimated duration
+- [ ] Seat a game so its computed start or end lands off a quarter-hour (e.g. a table that naturally frees up at :07 or :52) — confirm the posted time is rounded **up** to the next :00/:15/:30/:45, never down and never to the nearest quarter
+- [ ] Confirm each table's line lists that game's seated players as `@mention`s, comma-separated, after the title/time
+- [ ] Confirm two games sharing a seated player never overlap in time — the second one starts no earlier than the shared player's break clears after the first ends
+- [ ] With two tables free the whole time, seat a shared player in games at both — confirm the second game's line notes "⏳ waiting on `@mention` to finish an earlier game", naming the shared player, rather than silently showing a later time with no explanation
+- [ ] Confirm two games with no shared players can run fully concurrently on separate tables, both starting immediately, with no "waiting on" note on either
+- [ ] Queue a game on a single table behind another (no player overlap, just no second table available) — confirm it does **not** get a "waiting on" note, since a specific player wasn't the reason it waited
+- [ ] Seat the same table's group across two different games back-to-back (a shorter game finishing while other tables are still mid-game) — confirm the second game starts the moment the first ends at that table, without waiting on any other table
+- [ ] With `break_minutes` set (3.9a) to a non-zero value, seat a player in two games with no other conflicts — confirm their second game starts at least `break_minutes` after their first game ends, not immediately
+- [ ] Set `break_minutes:0` — confirm a shared player's second game can start immediately after their first ends, with no gap
+- [ ] Seat a game with 4 signed-up players where the game's recommended count is 2 (BGG-sourced `suggestedPlayers`), and the other two are tied up in another game the whole time — confirm the game starts as soon as the first two are ready, without waiting for the other two (a 2-person excluded remainder meets the game's minimum, so it's not stranding anyone below a viable size)
+- [ ] On that same game's line, confirm the two tied-up players still appear as "(+ `@mention`, `@mention` can join once free)" rather than vanishing from the schedule entirely
+- [ ] Confirm the tied-up players' *other* game is completely unaffected — they're never marked busy by a game they were left out of
+- [ ] Seat a game with exactly 3 signed-up players where the recommended count is 2, and one of the three is tied up elsewhere — confirm the game does **not** start with just the other two; it waits for the third player too, since excluding a lone straggler (1 person, below the game's minimum) would strand them with no path back into a game they signed up for
+- [ ] Seat a game with no `suggestedPlayers` on file — confirm it falls back to waiting for every seated player (today's original behavior), with no "can join once free" note
+- [ ] Seat a game with only 2 signed-up players total — confirm it never waits for a "3rd" player who doesn't exist, regardless of `suggestedPlayers`
+- [ ] Fill a game to `maxPlayers` and add enough waitlist joiners for exactly 2 full groups (no remainder) — confirm both groups get real table sessions, group 2's line reads "`<Game>` (Group 2)", and both land on the **same** table number, group 2 starting only once group 1's table time ends there
+- [ ] Repeat with enough waitlist for 3 groups where a naive split would leave an uneven leftover (e.g. 9 people at `maxPlayers:4`) — confirm the groups come out evenly sized (3/3/3), never an uneven split that strands the last group below `minPlayers`
+- [ ] Seat one of a split game's later groups with a player who's individually tied up in an unrelated game elsewhere — confirm that specific group waits for them (not just for the previous group to finish at the table), and the group's line names them via the usual "⏳ waiting on" note
+- [ ] With a split game whose `suggestedPlayers` is lower than its own group size, confirm each group still waits for its **full** assigned roster before starting — a group is never partially trimmed the way an un-split game's quorum can be
+- [ ] Fill a game's seats to `maxPlayers` and add just enough waitlist that seats+waitlist exceed it, but not enough for any valid multi-group split to clear `minPlayers` — confirm the game is **not** split (only its seats get a table), and the excess stays waitlisted exactly as it did before this existed
+- [ ] With `post_bgstats_links:true`, confirm a split game posts one BG Stats message/QR/link per group (not just for group 1), each with its own roster
+- [ ] Run `/admin bgstats` after locking an event with a split game — confirm it reports opens per group rather than a single combined count for the whole game
+- [ ] Seat a <30-min game as the only or last game currently on its table, with the event's end time still comfortably far off — confirm its line shows a play-count suffix like "(2x)" or "(3x)", repeating back-to-back until the window or `max_game_repeats` (3.9a) is reached
+- [ ] Set `max_game_repeats:2` (3.9a) — confirm repeats are capped at 2 even where the remaining window would allow more
+- [ ] Seat a <30-min game alone at its table, sharing a player with a second game placed on a different table right as the first one's single play would end — confirm the first game does **not** repeat-fill into a second play (that would double-book the shared player); confirm it repeats normally when no such conflict exists
+- [ ] With no `end_time` set on the event, confirm short games never auto-repeat (there's no window edge to fill up against)
+- [ ] With `heavy_game_break_minutes` set (3.9a), seat two Heavy-complexity games so they land back-to-back at the same table — confirm the second one's start time is pushed back by the break minutes relative to the first one's end, and that an unrelated table running its own back-to-back games (Heavy or not) is completely unaffected by that break
+- [ ] Chain a Heavy game directly after a non-Heavy game at the same table — confirm no break is inserted between them
+- [ ] Seat the same 2 players in two games back-to-back (the second only playable once the first ends), with a 3rd table that's sat idle since minute 0 — confirm the second game lands on the idle table, not back on the table the first game used, so load spreads across tables instead of piling onto the same one(s) all day
+- [ ] Construct an event with enough shared-player contention that a naive single-strategy scheduler would leave more games unscheduled than necessary (e.g. several players each signed up for many overlapping games) — confirm the posted schedule's "Not scheduled" list and estimated total span are no worse than what a simple earliest-start approach alone would produce (see 4.7's multi-pass note above)
+- [ ] Confirm an ordinary event with little or no real player overlap between games produces a schedule that looks exactly like it always has — multi-pass only changes anything when the 3 internal strategies would actually disagree, which most events won't trigger
+- [ ] Set `flex_tables:1` (3.9a), then seat a Medium or Heavy game with every regular table busy and the flex table idle — confirm it does **not** use the flex table (queues behind a regular table instead), even though the flex table is sitting empty
+- [ ] With the same setup, seat a Light game instead — confirm it **can** use the flex table when that gives it the earliest start
+- [ ] Seat a game with no complexity set at all — confirm it's treated as not flex-eligible, restricted to regular tables the same as Medium/Heavy
+- [ ] Set `flex_tables` equal to or higher than the event's effective table count — confirm at least 1 regular table remains usable by non-Light games rather than every table becoming flex-only
+- [ ] Seat exactly 1 player on a game — confirm it appears in a "🌱 Open to walk-ups" field with no table number or time estimate, rather than being omitted from the schedule entirely
+- [ ] With a 1-seated (walk-up) game and a fully-signed-up game both wanting a table at the same moment, confirm the walk-up game never takes a table slot from the fully-signed-up game — it never enters the table breakdown at all, only the "🌱 Open to walk-ups" list
+- [ ] Confirm a game below its minimum player count (with 2+ seated) appears under "Not scheduled" with a reason, rather than being silently dropped
+- [ ] Confirm the embed footer notes whether the estimated total fits within the event's start–end window
+- [ ] Set up an event whose suggested games clearly overrun `end_time` (seat enough back-to-back/conflicting games, or a short `end_time`, that a game's start or end pushes past it) — confirm that specific game's line (and only that one) shows an inline "⚠️", while other games that still fit do not
+- [ ] With no `end_time` set on the event, confirm nothing is ever flagged with "⚠️", regardless of total length
+- [ ] Seat one player in 2+ games where at least one is pushed past the event's end time (or never gets scheduled because it can't meet its minimum players) — confirm a new "⚠️ May not get to play everything" field lists that player by mention, naming the specific at-risk game(s) in the reason rather than just a count
+- [ ] Seat a different player in only 1 game that's similarly at risk — confirm they do **not** appear in the "May not get to play everything" field (already covered by the "⚠️" note or "Not scheduled")
+- [ ] Seat a player in 2+ games that all comfortably fit — confirm they do not appear in the warning field at all
+- [ ] After locking, run `/game suggest` in that event's channel — confirm it's rejected with a lineup-locked message instead of prompting to add a game
+- [ ] After locking, click **Join** or **Leave** on an existing game card — confirm both are rejected with the same lineup-locked message
+- [ ] After locking, click **Join Waitlist** or **Leave Waitlist** — confirm both are rejected the same way
+- [ ] Confirm an event is only locked/scheduled once — running the hourly check again after locking doesn't re-post the schedule or re-lock
+- [ ] Confirm a cancelled or already-archived event is never locked/scheduled, even past its threshold
+- [ ] Set `lock_hours_before_event` back to `0` — confirm no further events get locked, and existing unlocked events remain fully open
+- [ ] Request a game (`/library request`, 1.4h) that ends up with zero seated players at lock — confirm the request disappears from the "Games to Bring" pin after locking, even if `/library bring` (1.4j) was used to confirm it beforehand
+- [ ] Request a game that keeps at least one seated player through lock, alongside a zero-seat one — confirm only the zero-seat game's request is dropped; the other remains on the pin
+- [ ] Request a game that was never suggested via `/game suggest` at all (no matching `GameSuggestion`) — confirm it's left on the "Games to Bring" pin after lock, since it was never part of the signup system to begin with
+- [ ] Confirm locking an event with no zero-seat requests to drop doesn't touch or re-post the "Games to Bring" pin at all
+- [ ] Request a game that keeps its seated players through lock, and leave it unconfirmed via `/library bring` (1.4j) — confirm an owner (whichever attending owner has the fewest confirmed brings for the event) receives the "please bring this" DM with a "✅ Confirm bringing" button only once the event locks, not at request time
+- [ ] Confirm an owner who already confirmed via `/library bring` (proactively, before lock) does **not** get asked at all
+- [ ] Confirm the zero-signup drop and the owner-asking pass happen before the "🔒 Lineup Locked" schedule embed is posted, not after
+- [ ] Request a game that ends up with zero seated players — since no DM is sent until lock, and the drop check runs first, its owner is never asked in the first place; there's no dangling DM to edit for a request created and dropped entirely within one lock cycle
 
-### 5.1a "I'm Interested" button flow
+**Smart table-count sizing:**
 
-**What it does:** Buyer clicks button, modal opens, bid is submitted, seller is notified.
+The effective table count used at lock time is `max(headcount floor, preference-split floor, table_count)`, capped at `max_tables` (3.9a) when set. The **headcount floor** assumes real games seat 3-6 players: it checks how evenly the RSVP "yes" count divides by 3, 4, 5, and 6 (normalized by the decimal remainder, not raw remainder, so e.g. 13 people cleanly picks size 6 → 3 tables, not a tie between sizes 3/4/6), and ties prefer the larger size (fewer, fuller tables). The **preference-split floor** sums a same-formula floor across however many of Light/Medium/Heavy have RSVP'd members with that exact `/myroles` complexity preference set — members with no preference set don't count toward any tier. Neither calculation reassigns or contacts any player; it only sizes how many parallel tables the scheduler is allowed to use. `max_tables` exists for the opposite reason — a real, physical ceiling (e.g. a venue only has 6 tables) that no amount of RSVP-driven sizing should exceed.
 
-**Fixed-price sell listing:**
-- [ ] Click "I'm Interested" on a firm-price listing — confirm modal opens with a message field only (no bid amount field)
-- [ ] Submit the modal — confirm seller gets a DM notification with Accept/Deny/Counter buttons
-- [ ] Confirm the DM buttons disappear and a result stamp appears after the seller acts
+- [ ] With `table_count:1` and fewer than 3 RSVP "yes"s, lock the event — confirm the schedule still only uses 1 table (both floors are ≤1)
+- [ ] With `table_count:1` and 13 RSVP "yes"s (none with a `/myroles` complexity preference set), and 3 mutually non-conflicting suggested games, lock the event — confirm all 3 run concurrently across 3 separate tables, all starting immediately (the headcount floor for 13 people is 3 tables), rather than 2 of them queuing sequentially as they would under the flat `table_count:1` default
+- [ ] With `table_count:1`, RSVP 3 members who set `/myroles` complexity to Light and 3 who set it to Medium (6 total), and 2 non-conflicting suggested games (one Light, one Medium) — confirm both can run concurrently (preference-split floor of 2 outranks the headcount floor of 1 for a homogeneous group of 6)
+- [ ] Confirm a member who RSVP'd "yes" but has since left the server doesn't break the lock — they're silently skipped rather than counted in either floor
+- [ ] Confirm `table_count` still acts as a true floor — set it higher than either computed floor (e.g. `table_count:5` with only a couple of RSVPs) and confirm the event still gets sized for at least 5 tables
+- [ ] Set `max_tables:2` with enough RSVPs/preferences that the computed floor would otherwise be higher — confirm the event never uses more than 2 tables, with any remaining games queuing sequentially instead
+- [ ] Confirm `max_tables:0` (the default) leaves the computed floor uncapped
 
-**Negotiable sell listing:**
-- [ ] Click "I'm Interested" on a negotiable listing — confirm modal shows asking price as reference and a bid amount field
-- [ ] Enter a bid amount and submit — confirm bid posted in forum thread (public mode) or private thread (private mode)
-- [ ] Confirm seller gets DM with bid amount and Accept/Deny/Counter buttons
-- [ ] Confirm listing status updates to 🟡 Pending in the forum post
-- [ ] Click "I'm Interested" again as the same user — confirm error: "You already have an open bid"
-- [ ] Click "I'm Interested" as the seller — confirm error: "You can't bid on your own listing"
+**`/admin event preview` (dry run):**
+- [ ] Before the lock threshold is reached, run `/admin event preview` inside an event channel — confirm it shows an ephemeral embed shaped the same as a real lock's schedule embed (per-table itinerary with clock times, repeats, "May not get to play everything", "Not scheduled")
+- [ ] After running the preview, confirm suggestions are still unlocked — `/game suggest` still works, and Join/Leave on game cards still works normally
+- [ ] Confirm nothing is posted to the event channel itself, and no games have `scheduledTable`/`scheduledStartMinutes`/`scheduledEndMinutes`/`scheduledPlayCount`/`scheduledSessions` set in storage after a preview (including a game that would split into groups — its `scheduledSessions` array must stay unset too)
+- [ ] Run `/admin event preview` again after changing `table_count`, `max_tables`, `flex_tables`, `heavy_game_break_minutes`, `break_minutes`, or `max_game_repeats` (3.9a) — confirm the preview reflects the new config immediately
+- [ ] Run `/admin event preview` in a channel that isn't an event channel — confirm a clear "isn't an event channel" ephemeral error instead of a crash
 
-**Trade listing:**
-- [ ] Click "I'm Interested" on a trade listing — confirm modal shows "what I'll offer in exchange" field instead of price field
-- [ ] Submit with offer text — confirm offer appears in the forum thread notification
+**With `post_bgstats_links:true`:**
+- [ ] Confirm a separate message with a QR code image is posted for each table-scheduled game *and* each "🌱 Open to walk-ups" game — but not for games listed under "Not scheduled"
+- [ ] For a walk-up (1-seated) game's BG Stats post, confirm the message says it's open for walk-ups rather than showing a table/time range
+- [ ] **With `SHORT_LINK_BASE_URL` configured** (see 4.7a below): confirm a "📊 Log in BG Stats" button is present regardless of how many players are seated, and tapping it opens directly to a new-play screen pre-filled with the correct game, location (the event's configured location), and the full seated roster for that table
+- [ ] **Without `SHORT_LINK_BASE_URL` configured**: confirm the button is **omitted** for essentially any game with at least one seated player (the full BG Stats payload — including the `winner`/`startPlayer`/`highestWins`/`noPoints` fields BG Stats' app requires — now exceeds Discord's 512-char limit even for a solo play) and the message text explains why ("too many players for a tappable link") rather than silently vanishing
+- [ ] Scan the QR code with a phone camera — confirm it scans quickly and decodes to (or, via the short link, redirects to) the exact same play details regardless of player count. The QR encodes the short link when one exists (small/simple code, easy to scan) and only falls back to the full raw link when `SHORT_LINK_BASE_URL` isn't configured (denser code, still functional but harder for a camera to lock onto)
+- [ ] Scan the QR code (or tap the button) and confirm BG Stats opens the pre-filled play screen **without** an "Invalid data" JSON error (regression: BG Stats' Android app requires explicit `winner`, `startPlayer`, `highestWins`, and `noPoints` values even though all four are documented as optional — omitting any of them threw `JSONException: No value for <field>`)
+- [ ] For a scheduled game with a BGG id, confirm BG Stats opens successfully on iOS **and** macOS/Mac Catalyst without crashing (regression: `game.bggId` was sent as a quoted JSON string instead of the number BG Stats' schema expects, throwing a Core Data type-coercion exception — crashed outright on macOS, and silently closed the app on iOS)
+- [ ] For a seated player with a linked BGG account (`/bgg link`), confirm their BGG username is used as their player name in BG Stats rather than their Discord display name
+- [ ] For a seated player without a linked BGG account, confirm their Discord display name is used instead
 
-**Edge cases:**
-- [ ] As buyer, submit a bid amount of 0 or a non-numeric value on a negotiable listing — confirm graceful validation rather than a broken bid
-- [ ] Have two different buyer accounts both open bids on the same negotiable listing — confirm the seller sees both as separate open bids and can act on each independently
+### 4.7a BG Stats short-link redirect service
 
-### 5.1b Negotiation — Accept / Deny / Counter
+**What it does:** Backs the "Log in BG Stats" button with a short `https://<domain>/s/<code>` URL instead of the full BG Stats deep link, so the button stays under Discord's 512-character link limit no matter how many players are seated. Visiting the short link serves a small landing page ("Log this play in BG Stats") with an "Open BG Stats" link, then auto-forwards to BG Stats after a 2-second pause — the pause gives the user context on what's about to happen, and the page still forwards on its own for anyone who doesn't tap the button. Requires `SHORT_LINK_BASE_URL` to be set to a public domain generated for this Railway service (Settings → Networking → Generate Domain); the bot listens on Railway's injected `$PORT`. If unset, this feature no-ops entirely — buttons fall back to the old "only if the raw link is short enough" behavior (see 4.7 above).
 
-**What it does:** Seller responds to bids with Accept, Deny, or Counter buttons sent via DM (or thread fallback if DMs are disabled).
+- [ ] With `SHORT_LINK_BASE_URL` set and the service redeployed, confirm the button's link is a short `<domain>/s/<code>` URL (not the raw `bgstatsapp.com` link) even for a large table
+- [ ] Confirm the QR code image also encodes that same short link rather than the raw `bgstatsapp.com` URL — visually it should look noticeably simpler/less dense than before this was added, and should scan quickly with a phone camera
+- [ ] Visit that short link directly in a browser — confirm it shows the "Log this play in BG Stats" landing page (not an instant silent redirect), and that it auto-forwards to the pre-filled BG Stats play screen on its own after ~2 seconds
+- [ ] On the same page, tap/click the "Open BG Stats" link right away — confirm it takes you to the pre-filled play screen immediately, without waiting for the auto-forward
+- [ ] **On an iPhone specifically**, confirm the auto-forward opens BG Stats and it *stays open* rather than flashing open and immediately closing (watch closely: Apple's universal-link activation is documented to require a genuine tap rather than a timed/automatic redirect like this one — this auto-forward was removed once already over reports of exactly this symptom, then re-added after a separate root cause, a `game.bggId` type bug, was found and fixed; if this recurs, the safest fix is to skip the meta-refresh for iOS user agents specifically rather than removing it for everyone)
+- [ ] Visit `<domain>/s/<made-up-code>` — confirm a "Link not found" landing page (404) that does **not** auto-forward anywhere, rather than a crash or an open redirect to an arbitrary URL
+- [ ] Confirm `/game bgstats` (1.3g) also produces a short-link button under the same configuration
+- [ ] With `post_bgstats_links:false` (the default), confirm no BG Stats messages are posted at all — only the existing "🔒 Lineup Locked" schedule embed
 
-**Accept:**
-- [ ] Seller clicks Accept on a bid in their DM — confirm the DM message updates to "✅ Accepted — deal done!" with buttons removed
-- [ ] Confirm listing status becomes 🔴 Sold in forum post
-- [ ] Confirm buyer gets DM: "Your bid was accepted"
-- [ ] If other open bids exist, confirm those buyers get DM: "sold to someone else"
-- [ ] Confirm a "Deal done!" conclusion post appears in the forum thread before it archives
-- [ ] Confirm forum thread is archived
+## 4.8 Private Room Expiration
 
-**Deny:**
-- [ ] Seller clicks Deny — confirm DM message updates to "❌ Declined — bid denied." with buttons removed
-- [ ] Confirm buyer is notified
-- [ ] If no other open bids, confirm listing reverts to 🟢 Active
-- [ ] If other bids still open, confirm listing stays 🟡 Pending
+**What it does:** Every private room (`/room create`, 1.8a) has an expiration date, unless it was created with `persist:true` or later switched to persistent via `/room persist enabled:true` (1.8c). On the same hourly check as archiving and the lineup scheduler (plus once on startup), the bot closes any non-persistent room whose expiration date has passed — deleting the channel and its stored record — exactly as if `/room close` had been run. Persistent rooms are skipped by this check entirely, regardless of any stored `expiresAt`.
 
-**Counter:**
-- [ ] Seller clicks Counter — confirm modal opens for counter amount and message
-- [ ] Confirm DM message updates to "💬 Counter offer sent — waiting for response." with buttons removed
-- [ ] Buyer receives DM with counter details and Accept/Decline buttons
-- [ ] Buyer accepts counter — confirm buyer's DM updates to "✅ Accepted" with buttons removed; listing becomes Sold; seller notified
-- [ ] Buyer declines counter — confirm DM updates to "↩️ Withdrawn" with buttons removed
+**Prerequisites:** a private room whose `date` has already passed — either wait for a room to actually expire, or manually edit its `expiresAt` in `data/privateRooms.json` to a past timestamp and wait for the next hourly check (or restart the bot).
 
-**Edge cases:**
-- [ ] Disable "Allow direct messages from server members" on the seller's account before a buyer bids — confirm the Accept/Deny/Counter prompt falls back to a thread instead of failing silently (per the "What it does" note above)
-- [ ] Seller tries to act on a bid a second time after already accepting/denying it (e.g. a stale DM with old buttons) — confirm the bot rejects the duplicate action rather than double-processing it
+- [ ] With a room's expiration date in the past, confirm the channel is deleted on the next hourly check (or bot startup) without anyone running `/room close`
+- [ ] Confirm the room's entry is removed from `data/privateRooms.json` once expired
+- [ ] Confirm a room whose expiration date hasn't passed yet is left untouched by the same check
+- [ ] Confirm `/room close`, run manually before the expiration date, still works exactly as before (expiration doesn't interfere with early manual closing)
+- [ ] Confirm a persistent room (created with `persist:true`, or switched via `/room persist enabled:true`) is left untouched by the hourly check even after its original/former expiration date would have passed
 
-### 5.1c Negotiation modes (public vs. private)
+## 4.9 Board Game Challenge (Scheduled Hints + Reveal)
 
-**What it does:** Controls whether bid negotiation is visible publicly in the forum thread or in a private thread.
+**What it does:** Once a server has `/admin challenge config` (3.9s) set with a channel and `enabled:true`, the bot runs a weekly cycle entirely on its own, on the same hourly check as the other scheduled features (plus once on startup), evaluated against the server's configured `timezone` (`/admin event config`, 3.9a) and its own per-guild schedule (also set via 3.9s, defaulting to Monday/Wednesday/Friday 8am + Saturday 6pm): at the configured hint 1 day/hour (within a short grace window — see below) it picks a random game from BGG's top 500 ranked games (excluding anything this server has played in roughly the last year) and posts hint 1 (with a "How to play" field explaining the rules — hints 2/3 omit it); at or after hint 2's day/hour, hint 2; at or after hint 3's day/hour, hint 3; at or after the reveal day/hour, it reveals the answer, lists everyone who guessed correctly that week, then updates the pinned "current standings" leaderboard message (see the live-updating leaderboard pin note below), then goes quiet until the next hint-1 day/hour comes around, **unless a challenge has already run this week** — checked by weekStart, not just "nothing currently active", specifically so a reveal that lands on the same weekday as hint 1 (e.g. a same-day testing schedule like Mon 8am/10am/12pm/5pm) can't immediately restart the whole cycle later that same day (see the regression note below). Hint 2/3/reveal's "at or after" checks are real-timestamp comparisons anchored to the challenge's own `weekStart` (not "is today exactly the configured weekday"), so a stage whose entire scheduled day was missed during an outage still catches up rather than being skipped forever — see the multi-day-outage note further below. **Starting a brand-new cycle is different** (see below) — it does not catch up indefinitely the way those already-in-progress stages do. See 1.12c for how guessing itself works. Each server gets its own independent random pick — two opted-in servers are never on the same game at the same time, so someone in both can't spoil it across servers.
 
-- [ ] With negotiation_mode=public: click "I'm Interested" — confirm bid notification posted in the public forum thread (visible to all); Accept/Deny/Counter buttons go to seller via DM
-- [ ] With negotiation_mode=private: click "I'm Interested" — confirm a private thread is created with buyer, seller, and bot; bid notification posted there; buttons go to seller via DM
+**Note on timing precision (improved):** the hourly check (`src/events/ready.ts`) runs on the hour, every hour — e.g. 8:00, 9:00, 10:00 — regardless of when the bot process last started, rather than a fixed 60-minute interval anchored to startup time (which used to make a hint/reveal post anywhere up to 59 minutes after its configured hour, with the offset shifting on every restart/redeploy). A hint/reveal should now post within about a minute of its configured hour. Only the hour is configurable (not the minute — see `/admin challenge config`, 3.9s), so this alignment is as precise as the schedule itself can be.
+- [ ] Restart the bot at an arbitrary offset (e.g. 8:04) — confirm the next scheduled hint/reveal still posts at essentially the top of its configured hour, not 4 minutes (or any other startup-dependent offset) after it
 
-**Edge cases:**
-- [ ] 👑 In private mode, have a third account (neither buyer nor seller) try to view or join the private negotiation thread — confirm they cannot see it (a server owner can typically still see private threads via Discord's own `Manage Threads` permission, which owners always have — this isn't a bot bug, it's Discord's platform behavior)
+**Starting a new cycle waits for the next real occurrence — it does not catch up late (regression, fixed):** hint 2/3/reveal (and the hint-1-retry described further below) all catch up no matter how overdue, because a challenge is already running and losing it to an outage is worse than posting late. Deciding whether to *start* a brand-new challenge is different: it only fires within roughly 90 minutes of hint 1's scheduled moment (comfortably longer than the hourly check's own cadence, so normal timing jitter never causes a miss) — not "any time after it, indefinitely." If that window is missed entirely (the bot was off, the channel/data got reset, an admin reconfigured mid-afternoon, etc.), the next cycle simply waits for its next real occurrence (tomorrow for daily, next week for weekly, the next "on" week for bi-weekly) rather than firing immediately whenever the bot next happens to check. Reproduced live: with `frequency:daily` and hint 1 at 8am, resetting the challenge data at, say, 9pm used to immediately post a "today" challenge 13 hours late instead of waiting for tomorrow's 8am.
+- [ ] With no active challenge and hint 1's moment several hours in the past (e.g. daily mode, well past today's hint-1 hour with no challenge yet) — confirm nothing posts, and it stays quiet until the *next* occurrence (tomorrow's hint-1 hour, or next week's for weekly/bi-weekly)
+- [ ] With no active challenge and hint 1's moment only a few minutes in the past (e.g. simulated right after the top of its hour) — confirm it still starts normally, comfortably inside the 90-minute grace window
 
-## 5.2 New Member Join — Welcome Flow
+**Clue content (vaguest → most specific):** each hint holds up to 3 facts, individually omitted when BGG has no data for that one — a fact only appears once, in its designated hint, never repeated or duplicated across hints. Categories/mechanics are BGG's *raw* category/mechanic names (e.g. "Fantasy", "Card Game", "Dice Rolling") — not filtered through the small curated vocabulary the library-tagging system uses (`BGG_TO_TAG`), which only covers a handful of real BGG names and previously left genre blank for most games (regression: fixed).
+- Hint 1: player count, duration, genre (up to 2 raw BGG categories, e.g. "Fantasy/Card Game genre") — the two broadest facts (count/duration) always have some value since BGG data defaults them, so hint 1 is never blank even with no genre on file. Genre should now show up for the large majority of games, not just the rare ones whose category happens to be one of `BGG_TO_TAG`'s handful of curated entries.
+- Hint 2: mechanics (up to 2 raw BGG mechanics, e.g. "Mechanics: Dice Rolling, Set Collection"), weight/complexity (Light/Medium/Heavy), and best player count ("Best with N players") — the best-player-count fact always has a value, so hint 2 is never blank either.
+- Hint 3: year released, designer(s), and publisher (first one only, if several are on file) — falls back to "That's all the data we've got — good luck!" only if all three are missing (a very thinly-documented catalog entry).
+- [ ] Confirm hint 1's genre reflects the game's actual BGG category page (e.g. a game categorized "Fantasy" on BGG shows "Fantasy genre" in hint 1) even when that category isn't one of the ~8 names in `BGG_TO_TAG` — this used to silently disappear
 
-**What it does:** When a new member joins the server, the bot sends a welcome DM and posts a message in the configured welcome channel.
+**Hints are cumulative (improved — used to only show the newest one):** each hint post now shows every hint so far, labeled "**Hint 1:** ...", "**Hint 2:** ...", etc., not just the one that just posted — so nobody has to scroll back through the channel to find an earlier hint. This is all in the one message per stage; no old hint gets reposted as a separate message.
+- [ ] Confirm hint 1's post shows only "**Hint 1:** ..."
+- [ ] Confirm hint 2's post shows **both** "**Hint 1:** ..." and "**Hint 2:** ..." in that order, in the same message
+- [ ] Confirm hint 3's post shows all of "**Hint 1:**", "**Hint 2:**", and "**Hint 3:**", in order, in the same message
+- [ ] Confirm the "How to play" field still only appears on hint 1's post, not repeated on hint 2/3 just because their descriptions now include hint 1's text
 
-- [ ] Have a second account join the server (a fresh account, or an existing test account you first kick and then re-invite) — confirm the welcome message is automatically sent to the welcome channel and to the new member via DM
-- [ ] Confirm the message includes a link to the rules channel and Facebook group (if configured via `/admin welcome config`)
+**Prerequisites:** `/admin challenge config` set with a valid text channel and `enabled:true`. To actually observe a transition without waiting for the real day/time, either set the hint/reveal schedule (also via 3.9s) to something a few minutes out and wait for the next hourly check, or temporarily edit `data/board_game_challenges.json`'s `weekStart`/`hintsPostedCount` for this guild's entry (or the server's `timezone` in `data/config.json`) so the next hourly check's day/hour condition is met, then wait for the hourly check or restart the bot.
 
-**Edge cases:**
-- [ ] Trigger a join with `/admin welcome config` left at defaults (no rules channel or Facebook URL set) — confirm the welcome message still sends cleanly without a broken link or placeholder text
-- [ ] Disable DMs on the joining account beforehand — confirm the channel post still happens even if the DM can't be delivered
+- [ ] With the feature freshly enabled and no challenge yet this week, reach the configured hint 1 day/hour (default Monday 8am local time; or simulate it) — confirm a new challenge is created and hint 1 posts in the configured channel, with a "Powered by BGG" attribution image, no title/thumbnail shown, a "How to play" field explaining the rules, and a description covering **only** player count/duration/genre (no weight, mechanics, year, designer, or publisher)
+- [ ] Confirm `/challenge status` reflects hint 1 immediately after it posts
+- [ ] Reach the configured hint 2 day/hour (default Wednesday 8am) — confirm hint 2 posts (and not before), with no "How to play" field this time, and a description covering **only** mechanics/weight/best-player-count (no categories, year, designer, or publisher)
+- [ ] Reach the configured hint 3 day/hour (default Friday 8am) — confirm hint 3 posts (and not before), with a description covering **only** year/designer(s)/publisher — if more than one publisher is on file, confirm only the first is shown
+- [ ] Reach the configured reveal day/hour (default Saturday 6pm) — confirm a reveal embed posts with the game's title, BGG link, thumbnail, and a list of everyone who guessed correctly this week (or "Nobody guessed it this week!" if no one did), and confirm the pinned leaderboard message (see below) reflects the final standings
+- [ ] Confirm no new challenge is created between the reveal and the next hint 1 day/hour
+- [ ] Confirm `/challenge leaderboard` totals match the sum of points awarded across the week's correct guesses, and match the pinned leaderboard message
+- [ ] Restart the bot mid-week (e.g. right after hint 1) — confirm the next hourly check resumes correctly (doesn't re-post hint 1, still posts hint 2 on schedule) rather than losing track of where the week was
+- [ ] If a reveal is somehow missed entirely for over a week (e.g. extended downtime), confirm the next check force-reveals the stale challenge rather than getting stuck and blocking all future weeks, and still updates the pinned leaderboard
+
+**Live-updating leaderboard pin (improved — used to only refresh at the reveal):** a single pinned "🏆 Board Game Challenge — Leaderboard" message in the challenge channel is now edited in place every time someone guesses correctly (not just once a cycle, at the reveal), so it never sits showing stale standings mid-cycle. The bot tracks which message to edit; if that message is ever deleted, or none has been posted yet (a fresh setup, or the first correct guess after upgrading from an older version with no tracked pin), it falls back to posting a new one and pinning it (unpinning any of the bot's own other pins first, leaving any unrelated pin in the channel alone) rather than erroring.
+- [ ] With no leaderboard pin yet in the channel, get one correct guess — confirm a new "🏆 Board Game Challenge — Leaderboard" message posts and gets pinned, showing that guess's points
+- [ ] Get a second correct guess (same cycle or the next one) — confirm the **same** pinned message updates in place (edited, not a second new message posted/pinned)
+- [ ] Manually delete the pinned leaderboard message, then get another correct guess — confirm the bot recovers gracefully: posts and pins a fresh one instead of erroring or leaving the leaderboard stuck unpinned
+- [ ] Confirm getting a correct guess never posts/pins a second leaderboard message alongside the first (no duplicate pins accumulating in the channel over multiple cycles)
+- [ ] Confirm an unrelated pin in the channel (not posted by the bot) is left alone throughout all of the above
+- [ ] On a server whose `timezone` (3.9a) is behind UTC (e.g. `America/New_York`), confirm the staleness threshold is a true full cycle in *that* timezone, not UTC — this matters most in daily mode, where regression: reading a date-only `weekStart` as UTC midnight instead of local midnight pulled the threshold hours earlier than a real day, once forcing a reveal (skipping hint 2/3 entirely) hours before the local day was actually up
+- [ ] Reconfigure the schedule mid-week (e.g. push hint 3 a day later after hint 2 has already posted) — confirm the change takes effect on the next hourly check without disturbing hints already posted
+- [ ] With two servers both configured, confirm each gets a different game in the same week (not guaranteed every single week by chance, but confirm the selection logic is independent per server, not shared)
+- [ ] Configure all 4 stages on the same weekday (e.g. hint 1 Mon 8am, hint 2 Mon 10am, hint 3 Mon 12pm, reveal Mon 5pm) and let a full cycle run through the reveal — confirm the check that runs *after* the reveal that same evening does **not** start a second challenge (no new hint posts, no second reveal); the feature should stay quiet until next Monday 8am, exactly as it would with the default multi-day spread
+
+**Daily frequency (`/admin challenge config frequency:daily`):**
+- [ ] With `frequency:daily` and hours e.g. 8am/12pm/4pm/8pm, freshly enable the feature — confirm a challenge is created and hint 1 posts at 8am *that same day*, regardless of what the `*_day` options are set to (they're ignored in daily mode)
+- [ ] Confirm hint 2, hint 3, and the reveal all post later *that same day*, at 12pm/4pm/8pm respectively
+- [ ] Confirm the very next day, a brand-new challenge starts at 8am (a new game, hint 1 again) — the cycle repeats daily rather than waiting a week
+- [ ] Confirm the check that runs right after a reveal (later the same day) does **not** immediately start a second challenge that same day — the next one waits for the next day's hint-1 hour
+- [ ] Switch an already-running weekly/bi-weekly server to `frequency:daily` mid-cycle — confirm this is a rough edge you should expect (same as reordering hint days already is): the in-flight challenge may behave oddly since its remaining stages now resolve to day-offset 0 instead of their old weekday; switching frequency is best done between cycles, not mid-cycle
+
+**Bi-weekly frequency (`/admin challenge config frequency:biweekly`):**
+- [ ] With `frequency:biweekly` freshly enabled and no `start_date` given, reach hint 1's day/hour — confirm a challenge starts this week, exactly like weekly mode would
+- [ ] The following week (the "off" week), reach what would have been hint 1's day/hour — confirm **no** new challenge starts, and nothing posts in the channel
+- [ ] Two weeks after the first challenge started (the next "on" week), reach hint 1's day/hour — confirm a new challenge starts with a fresh game
+- [ ] Set `start_date` to a date in a future week — confirm nothing starts until that week arrives, even if hint 1's day/hour passes in the weeks before it
+- [ ] Confirm hint 2/hint 3/reveal within an "on" week's challenge behave exactly like weekly mode (same weekday-based schedule) — bi-weekly only changes how often a *new* cycle starts, not how a cycle plays out once running
+- [ ] If a bi-weekly challenge is somehow still unrevealed after a full 14 days (not just 7), confirm the force-reveal safety net still eventually fires — bi-weekly's staleness window is 14 days, not the 7 days weekly uses
+
+**Recovering from a multi-day outage (not just a brief restart):** each stage's "is it time yet" check compares the real clock against that stage's exact scheduled instant (computed from the challenge's own `weekStart`), not "is today exactly the configured weekday" — so a stage whose entire scheduled day was missed (the bot was down all of Wednesday when hint 2 was due, say) still catches up once the bot is back, rather than being skipped forever. Catch-up happens one stage per hourly check, in order — it won't jump straight to the reveal and skip hints that never posted.
+- [ ] With hint 1 already posted, simulate the bot being down through all of hint 2's scheduled day (e.g. edit `data/board_game_challenges.json`'s `hintsPostedCount` to stay at 1, then let the next hourly check land on hint 3's day or later) — confirm hint 2 still posts (late), instead of being silently skipped
+- [ ] Continuing from the same scenario, confirm the *next* hourly check posts hint 3 (not the reveal) — each check advances exactly one stage, never skipping ahead
+- [ ] Let checks continue normally from there — confirm the reveal eventually posts once hint 3 has gone out, completing the week with all 3 hints intact rather than a truncated one
+- [ ] Confirm a normal, brief restart (seconds to minutes) is unaffected by this — hints still post at essentially their configured time, not measurably delayed by this change
+
+**Recovering from hint 1 never posting at all (channel unavailable at creation time):** `startNewChallenge` creates the challenge record, then tries to post hint 1 — if the configured channel is unresolvable at that exact moment (e.g. deleted right after, or a stale value), the post silently fails and, without this fix, the challenge would sit stuck at `hintsPostedCount: 0` forever (`/challenge status` shows no hint text and a broken `#unknown` channel mention), since nothing else ever retries it. The scheduler now retries hint 1 on every check until it succeeds, and if the admin has since pointed `/admin challenge config` at a different channel, retries there instead of the channel that already failed (nothing was posted yet, so there's no consistency to preserve).
+- [ ] Force this state to reproduce it: configure the channel to one you're about to delete, enable the feature, let hint 1's time pass with the channel already gone (or deny the bot's access to it) — confirm `/challenge status` shows a blank hint section and a broken channel mention, matching the bug
+- [ ] Reconfigure `/admin challenge config` with a valid channel — confirm the *next* hourly check successfully posts hint 1 in the newly configured channel (not the old broken one), and `/challenge status` now shows it correctly
+- [ ] Confirm subsequent hints/reveal proceed normally from there, using the corrected channel
+
+**Duplicate-challenge guard (defense in depth):** a challenge's id is deterministic (`<guildId>-<weekStart>`), and every lookup by id (`recordHintPosted`, `revealChallenge`, `getChallenge`) resolves to whichever matching record comes first — so two challenges ever sharing an id would silently orphan one of them with no error anywhere (this happened once in production, from a since-fixed bug). The scheduler's own "already started this period" check is the primary defense; `createWeeklyChallenge` itself now also refuses outright to create a second record with an id that already exists, throwing instead — a backstop in case that primary check is ever bypassed by some other bug or race.
+- [ ] This is normally unreachable through the bot's own UI (there's no way to force two challenges into the same period through legitimate use) — verified at the unit level instead: `createWeeklyChallenge` called twice for the same guild+weekStart rejects the second call rather than creating a duplicate or silently overwriting the first
+- [ ] If this guard is ever tripped in practice (e.g. surfaced via a future bug), confirm it shows up as a clear `[BoardGameChallenge] Schedule check failed for guild <id>` error in the logs rather than crashing the bot or silently corrupting data
+
+**Cleaning up the previous cycle's posts (`cleanup_old_posts`, off by default — see 3.9s):** when enabled, the moment a brand-new cycle starts, the bot deletes the immediately preceding cycle's hint 1/2/3 and reveal messages from the channel, so it doesn't accumulate every past cycle's posts. Off by default — some communities like keeping a scrollback of past answers. Best-effort: a message that's already gone (deleted by a mod, message too old for the bot's access, etc.) or a missing Manage Messages permission is logged and skipped per-message, never blocking the new cycle from starting.
+- [ ] With `cleanup_old_posts:false` (the default), let a full cycle complete and a new one start — confirm the previous cycle's hint/reveal messages are **not** deleted
+- [ ] Set `cleanup_old_posts:true`, let a full cycle complete (hints 1-3 + reveal all posted), then let the next cycle start — confirm the previous cycle's hint 1, hint 2, hint 3, and reveal messages are all deleted from the channel right as the new hint 1 posts
+- [ ] Confirm the pinned leaderboard message is **not** deleted by this — only the hint/reveal posts, since the leaderboard is meant to persist across cycles
+- [ ] With `cleanup_old_posts:true` on the very first cycle ever run for a server (no previous challenge exists yet) — confirm nothing errors and hint 1 posts normally
+- [ ] With `cleanup_old_posts:true`, manually delete one of the previous cycle's messages yourself before the new cycle starts — confirm the bot logs a warning for that one message and still successfully starts the new cycle (doesn't get stuck or skip hint 1)
+- [ ] Turn `cleanup_old_posts:true` on for a server with several past (un-cleaned-up) cycles already in its history — confirm only the single most recent cycle's messages are deleted when the next new cycle starts, not every past cycle at once
 
 ---
 
@@ -1760,3 +2953,139 @@ Run through this section once, regardless of which tier you're testing.
 - [ ] Suggest a game when the event's channel has been archived — confirm "no longer active" message
 - [ ] Verify bot handles BGG being unreachable — confirm graceful fallback to local catalog or manual entry
 - [ ] Confirm all ephemeral responses are only visible to the invoking user
+- [ ] Search BGG for a game with an apostrophe or ampersand in its name (e.g. "Star Trek: Captain's Chair") — confirm it displays with a real apostrophe/ampersand, not raw HTML entities (`&#039;`, `&amp;`), in the search dropdown, the game lineup list, and the "Games to Bring" list
+- [ ] Manually un-pin the game lineup or "Games to Bring" message in an event channel, then trigger any update to it (e.g. suggest/cancel a game) — confirm the bot re-pins it automatically rather than leaving it unpinned
+- [ ] Run `/event list` — confirm each event's date/time renders as a Discord timestamp (shows in your local time, updates live rather than being frozen text)
+- [ ] Start `/marketplace post sell` up to the price-selection step (a "Set Custom Price" button visible), restart/redeploy the bot, then click the button — confirm it still works instead of saying the session expired (regression: in-progress sell/trade drafts previously lived only in memory and were lost on any bot restart)
+
+---
+
+# 👥 Multi-Person Tests
+
+This is the entire group of tests that need a second, distinct Discord identity — save this section for a session when a second tester is actually around, and knock it all out in one sitting. Grouped by tier first (which permission level the flow needs), then by which pairing you need to recruit within that tier.
+
+---
+
+# Part 5 — Multi-Person Tests
+
+These test cases involve genuine back-and-forth between two distinct Discord identities, or a real join event — they can't be completed by one tester working alone, even with several test accounts on hand. Grouped by tier (5.1 is a Member-tier flow; 5.2 is a System/Automated flow), then by which pairing you need to recruit within that.
+
+**Prerequisites:**
+- A second, distinct Discord account (see the global Prerequisites section above — reusing one of your three test accounts is fine).
+- For 5.1: a marketplace channel configured (`/admin marketplace config`, 3.9m), and one account with an active sell or trade listing posted (`/marketplace post sell`/`post trade`, 1.7a/1.7b).
+- For 5.2: a welcome channel configured (`/admin welcome config`, 3.9j).
+
+## 5.1 Buyer + Seller — Marketplace Negotiation *(Member-tier flow — neither side needs an elevated role)*
+
+### 5.1a "I'm Interested" button flow
+
+**What it does:** Buyer clicks button, modal opens, an offer is submitted, seller is notified. Firm-price listings also show a "Buy It Now" button that skips the seller-review step entirely — see the dedicated subsection below.
+
+**Fixed-price sell listing:**
+- [ ] Click "I'm Interested" on a firm-price listing — confirm modal opens with a message field only (no offer amount field)
+- [ ] Submit the modal — confirm seller gets a DM notification headed "New offer on your **{item}** listing:" with **Accept/Deny only — no Counter button**, since a firm price has nothing left to negotiate
+- [ ] Confirm the DM buttons disappear and a result stamp appears after the seller acts
+
+**"Buy It Now" (firm-price listings only):**
+- [ ] Confirm a firm-price listing shows **both** a "⚡ Buy It Now" button and the "🤝 I'm Interested" button; confirm a negotiable sell listing or a trade listing shows only "I'm Interested" (no Buy It Now)
+- [ ] Click "Buy It Now" — confirm an ephemeral confirmation prompt appears naming the item and price, with Confirm Purchase / Cancel buttons, and a note that this is final
+- [ ] Click "Cancel" — confirm the prompt updates to "Purchase cancelled." and the listing is untouched (still active, no offer created)
+- [ ] Click "Confirm Purchase" — confirm: the listing is immediately marked 🔴 Sold (no seller review step); the buyer's prompt updates to "✅ Purchase confirmed! **{item}** is now marked as sold."; the seller gets a DM ("⚡ {buyer} just bought **{item}** with Buy It Now for {price}!") without ever seeing an Accept/Deny prompt; a "⚡ Sold instantly!" post appears in the forum thread before it archives
+- [ ] If the seller has the item in their `/library`, confirm their Buy-It-Now DM includes the "remove it now that it's sold?" prompt and buttons, same as the regular Accept flow
+- [ ] With an existing pending "I'm Interested" offer from a different buyer on the same firm listing, click "Buy It Now" as a third user and confirm — confirm the original offer's buyer gets a "sold to someone else via Buy It Now" DM and their Accept/Deny DM prompt is closed out (🔒 Closed), exactly like a regular Accept would do
+- [ ] Attempt "Buy It Now" on your own listing — confirm "You can't buy your own listing" error
+- [ ] Attempt "Buy It Now" on a listing that's already sold/closed — confirm "This listing is no longer available"
+- [ ] Simulate two people confirming a purchase on the same listing back-to-back (e.g. two browser tabs / two accounts clicking Confirm Purchase in quick succession) — confirm only the first succeeds and the second gets "this listing is no longer available — someone else may have just bought it" instead of a duplicate sale
+
+**Negotiable sell listing:**
+- [ ] Click "I'm Interested" on a negotiable listing — confirm modal shows asking price as reference and an offer-amount field labeled "Your offer"
+- [ ] Enter an offer amount and submit — confirm the offer is posted in the forum thread (public mode) or private thread (private mode), using the same "New offer on your ... listing" wording as the firm-price case above (there's no separate "bid" wording anywhere anymore)
+- [ ] Confirm seller gets DM with the offer amount and Accept/Deny/Counter buttons
+- [ ] Confirm listing status updates to 🟡 Pending in the forum post
+- [ ] Click "I'm Interested" again as the same user — confirm error: "You already have an open offer"
+- [ ] Click "I'm Interested" as the seller — confirm error: "You can't make an offer on your own listing"
+
+**Trade listing:**
+- [ ] Click "I'm Interested" on a trade listing — confirm modal shows "What are you offering in exchange?" field instead of a price field
+- [ ] Submit with offer text — confirm offer appears in the forum thread notification
+
+**Edge cases:**
+- [ ] As buyer, submit an offer amount of 0 or a non-numeric value on a negotiable listing — confirm graceful validation rather than a broken offer
+- [ ] Have two different buyer accounts both open offers on the same negotiable listing — confirm the seller sees both as separate open offers and can act on each independently
+
+### 5.1b Negotiation — Accept / Deny / Counter / Reply
+
+**What it does:** Seller responds to offers with Accept, Deny, Counter, or Reply buttons sent via DM (or thread fallback if DMs are disabled).
+
+**Accept:**
+- [ ] Seller clicks Accept on an offer in their DM — confirm the DM message updates to "✅ Accepted — deal done!" with buttons removed
+- [ ] Confirm listing status becomes 🔴 Sold (sell) or 🔴 Traded (trade) in the forum post — note the underlying status value is `sold` for both sell **and** trade listings (there's no separate "traded" status), but the displayed Status field and every message below use type-aware wording: "sold" for a sell listing, "traded" for a trade listing
+- [ ] Confirm the listing post's "Price" field is replaced with a "Sold For" field showing what was actually accepted (the final negotiated amount if there was a counter, otherwise the buyer's original offer, or the asking price for a Buy It Now) — **not** the original asking price if it differed
+- [ ] For a trade, confirm the "Looking For" field is replaced with a "Traded For" field showing the actual item the buyer offered
+- [ ] Confirm the seller's ephemeral reply reads "Offer accepted! **{item}** is now marked as sold" for a sell listing, or "...marked as traded" for a trade listing
+- [ ] Confirm buyer gets DM: "Your offer on **{item}** was accepted by {seller}!"
+- [ ] If other open offers exist, confirm those buyers get DM: "Sorry, **{item}** has been sold to someone else" (or "...traded to someone else" for a trade listing), **and** confirm their outstanding Accept/Deny/Counter (or Accept Counter/Decline) DM prompt is edited to show "🔒 Closed — this listing has been sold to someone else." (or "...traded to someone else." for a trade listing) with its buttons removed
+- [ ] With an outstanding counter on one of the other offers, confirm accepting a different offer also closes that counter's DM prompt (same 🔒 Closed message) rather than leaving it clickable
+- [ ] Confirm a "Deal done!" conclusion post appears in the forum thread before it archives, using the same type-aware wording — "...is now sold" for a sell listing, "...is now traded" for a trade listing
+- [ ] If the seller has the sold/traded item in their `/library`, confirm the follow-up removal prompt reads "...now that it's sold?" for a sell listing or "...now that it's traded?" for a trade listing
+- [ ] Confirm forum thread is archived
+
+**Deny:**
+- [ ] Seller clicks Deny — confirm DM message updates to "❌ Declined — offer denied." with buttons removed
+- [ ] Confirm buyer is notified
+- [ ] If no other open offers, confirm listing reverts to 🟢 Active
+- [ ] If other offers still open, confirm listing stays 🟡 Pending
+
+**Counter (negotiable sell listings and trades only — see firm-listing note below):**
+- [ ] Seller clicks Counter — confirm modal opens for counter amount and message
+- [ ] Confirm DM message updates to "💬 Counter offer sent — waiting for response." with buttons removed
+- [ ] Buyer receives DM with counter details and Accept/Decline buttons
+- [ ] Buyer accepts counter — confirm buyer's DM updates to "✅ Accepted" with buttons removed; listing becomes Sold (using the same sold/traded type-aware wording as the Accept section above); seller is notified via DM, including the same library-removal prompt if applicable; any other open offers get the same sold/traded "someone else" messaging as Accept above
+- [ ] Buyer declines counter — confirm DM updates to "↩️ Withdrawn" with buttons removed
+- [ ] Countering one offer leaves any other open offers on the same listing untouched — confirm the seller can still Accept/Deny/Counter those independently
+
+**Firm-price listings have no Counter at all:**
+- [ ] On a firm-price listing, confirm the seller's DM never shows a Counter button — only Accept/Deny/Reply
+- [ ] If a stale/old Counter button somehow gets clicked on a firm listing, confirm the bot replies "This is a firm-price listing — there's no price to counter" instead of opening a modal
+
+**Reply (free-text question, not a decision — available on every listing, including firm-price ones where Counter isn't):**
+- [ ] Before a counter has happened, seller clicks Reply on a buyer's offer and sends a message (e.g. "does it include the expansion?") — confirm the seller's DM updates to "💬 Reply sent — waiting for response." with buttons removed, and the buyer receives a DM with the message plus **Withdraw Offer** and **Reply** buttons only (no "Accept", since there's no counter for them to accept)
+- [ ] Buyer taps Reply and answers — confirm the seller receives a DM with the buyer's answer and their normal Accept/Deny/Counter/Reply row (Counter omitted on a firm-price listing)
+- [ ] Confirm sending a Reply does **not** change the offer's status, the listing's status, or strip any *other* outstanding offer's buttons — it's purely a message, not a decision
+- [ ] Attempt Reply as someone who is neither the seller nor that specific buyer — confirm "Only the seller or the other party can reply"
+- [ ] Attempt Reply on an offer that's no longer open (already accepted/denied) — confirm "This offer is no longer open" and no modal opens
+
+**Interacting via DM specifically (not a forum-thread fallback):**
+- [ ] Confirm Accept clicked from the seller's DM works (no "Listing not found" error) — this is the normal path since these buttons are always sent via DM first
+- [ ] Confirm Deny clicked from the seller's or buyer's DM works (no "Listing not found" error)
+- [ ] Confirm Counter clicked from a DM, and the resulting counter-offer modal submission, both work (no "Listing not found" error)
+- [ ] Confirm Reply clicked from a DM, and the resulting reply modal submission, both work (no "Listing not found" error)
+
+**Edge cases:**
+- [ ] Disable "Allow direct messages from server members" on the seller's account before a buyer submits an offer — confirm the Accept/Deny/Counter prompt falls back to a thread instead of failing silently (per the "What it does" note above)
+- [ ] Seller tries to act on an offer a second time after already accepting/denying it (e.g. a stale DM with old buttons) — confirm the bot replies "This offer is no longer open" and strips the stale buttons, rather than double-processing it
+
+### 5.1c Negotiation modes (public vs. private)
+
+**What it does:** `/admin marketplace config`'s `negotiation_mode` (3.9m) controls whether an offer/counter/reply's content (amount, offer text, message) is ever visible in the public marketplace channel, or DM-only end to end. Private mode does **not** create a separate private thread — it's DM-only: nothing with any offer content is ever posted to the public channel, only the listing post itself (which just shows status, e.g. 🟡 Pending, with no offer details). If the recipient's DMs are disabled in private mode, there is deliberately **no** public fallback (unlike public mode, which falls back to posting the Accept/Deny/Counter/Reply buttons in the channel when a DM fails) — the offer simply can't reach them until they re-enable DMs, since falling back publicly would leak content private mode is meant to keep off the channel entirely.
+
+- [ ] With negotiation_mode=public: click "I'm Interested" — confirm the offer's amount/message is posted as a text-only notification in the public forum/text-channel post (visible to all), with Accept/Deny/Counter/Reply buttons going to the seller via DM only
+- [ ] With negotiation_mode=private: click "I'm Interested" — confirm **no** offer content is posted to the public channel at all (the listing post only reflects the updated 🟡 Pending status); the seller receives the offer details and Accept/Deny/Counter/Reply buttons only via DM
+- [ ] With negotiation_mode=private, send a Counter or a Reply — confirm neither the counter's amount/message nor the reply's message text ever appears in the public channel, matching the initial offer's behavior
+- [ ] With negotiation_mode=public, disable DMs on the recipient's account, then send an offer/counter/reply — confirm the buttons (not the content, which already posted publicly per the bullet above) get posted to the public channel as a fallback so the recipient can still respond
+- [ ] With negotiation_mode=private, disable DMs on the recipient's account, then send an offer/counter/reply — confirm there is **no** public fallback of any kind (no content, no buttons) — this is expected, not a bug; the sender isn't told the DM failed, so consider this a known limitation to flag rather than something the recipient can work around
+
+**Edge cases:**
+- [ ] 👑 As a server owner (who can always see channels via Discord's own `Manage Threads`/`View Channel` permissions), confirm you still cannot see any offer content in private mode either — it was never posted anywhere public to begin with, so there's no thread-visibility question the way there would be if it used a private thread
+
+## 5.2 New Member Join — Welcome Flow *(System/Automated flow — triggered by a real `guildMemberAdd` join event, not a slash command permission tier)*
+
+**What it does:** When a new member joins the server, the bot sends a welcome DM and posts a message in the configured welcome channel.
+
+- [ ] Have a second account join the server (a fresh account, or an existing test account you first kick and then re-invite) — confirm the welcome message is automatically sent to the welcome channel and to the new member via DM
+- [ ] Confirm the welcome channel embed includes a link to the rules channel, Facebook group, and BGG group (if configured via `/admin welcome config`), plus a "📅 Events" field (not "Game Nights") pointing at the announcements channel, "🎮 Quick Actions" (`/hub`), "🏷️ Game Preferences" (`/myroles`), "📚 Browse the Library" (`/library list`), and "🎲 Suggest a Game" (`/game suggest`) fields — note it deliberately does **not** mention `/library add`, since a brand-new member shouldn't feel pressed to add their own games on day one
+- [ ] Confirm the DM lists `/hub`, `/myroles`, `/library list`, and `/game suggest`, and points to both `/getting-started` and `/help` — and, like the channel embed, does not mention `/library add`
+
+**Edge cases:**
+- [ ] Trigger a join with `/admin welcome config` left at defaults (no rules channel, Facebook URL, or BGG URL set) — confirm the welcome message still sends cleanly without a broken link or placeholder text
+- [ ] Disable DMs on the joining account beforehand — confirm the channel post still happens even if the DM can't be delivered

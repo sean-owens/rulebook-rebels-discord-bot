@@ -1,8 +1,11 @@
 import { ChatInputCommandInteraction, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
 import {
   handleCreate as handleEventCreate,
+  handleEdit as handleEventEdit,
   handleCancel as handleEventCancel,
   handleArchiveOld as handleEventArchive,
+  handlePrivacy as handleEventPrivacy,
+  handleSetGreeters as handleEventSetGreeters,
 } from './gamenight';
 import { handleHostGameCancel } from './game';
 import { handleUnrequest as handleLibraryUnrequest } from './library';
@@ -20,6 +23,12 @@ export const data = new SlashCommandBuilder()
         sub
           .setName('create')
           .setDescription('Schedule a new game night')
+          .addStringOption((opt) =>
+            opt
+              .setName('title')
+              .setDescription('Short event name (e.g. "Board Game Bash") — used in the channel name and posts')
+              .setRequired(true),
+          )
           .addStringOption((opt) =>
             opt
               .setName('date')
@@ -56,6 +65,50 @@ export const data = new SlashCommandBuilder()
       )
       .addSubcommand((sub) =>
         sub
+          .setName('edit')
+          .setDescription('Update an existing game night without cancelling and recreating it')
+          .addStringOption((opt) =>
+            opt
+              .setName('id')
+              .setDescription('Game night ID (shown in the event embed footer)')
+              .setRequired(true),
+          )
+          .addStringOption((opt) =>
+            opt
+              .setName('title')
+              .setDescription('New event name')
+              .setRequired(false),
+          )
+          .addStringOption((opt) =>
+            opt
+              .setName('date')
+              .setDescription('New date (e.g. "August 22" or "aug 22")')
+              .setRequired(false),
+          )
+          .addStringOption((opt) =>
+            opt
+              .setName('time')
+              .setDescription('New start time (e.g. "7pm" or "7:00 PM")')
+              .setRequired(false),
+          )
+          .addStringOption((opt) =>
+            opt
+              .setName('end_time')
+              .setDescription('New end time (e.g. "10pm")')
+              .setRequired(false),
+          )
+          .addStringOption((opt) =>
+            opt.setName('location').setDescription('New location').setRequired(false),
+          )
+          .addStringOption((opt) =>
+            opt.setName('link').setDescription('New URL (e.g. map link, event page)').setRequired(false),
+          )
+          .addStringOption((opt) =>
+            opt.setName('description').setDescription('New extra notes').setRequired(false),
+          ),
+      )
+      .addSubcommand((sub) =>
+        sub
           .setName('cancel')
           .setDescription('Cancel a game night')
           .addStringOption((opt) =>
@@ -67,6 +120,52 @@ export const data = new SlashCommandBuilder()
       )
       .addSubcommand((sub) =>
         sub.setName('archive').setDescription('Archive channels for all past events'),
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('privacy')
+          .setDescription("Change one event's channel visibility, overriding the server default for it")
+          .addStringOption((opt) =>
+            opt
+              .setName('id')
+              .setDescription('Game night ID (shown in the event embed footer)')
+              .setRequired(true),
+          )
+          .addBooleanOption((opt) =>
+            opt
+              .setName('open')
+              .setDescription('true = open to everyone, false = RSVP only')
+              .setRequired(true),
+          ),
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('greeters')
+          .setDescription("Set (or clear) this event's greeters — restricted to Light games, never seated together")
+          .addStringOption((opt) =>
+            opt
+              .setName('id')
+              .setDescription('Game night ID (shown in the event embed footer)')
+              .setRequired(true),
+          )
+          .addUserOption((opt) =>
+            opt.setName('greeter1').setDescription('First greeter').setRequired(false),
+          )
+          .addUserOption((opt) =>
+            opt.setName('greeter2').setDescription('Second greeter (optional)').setRequired(false),
+          )
+          .addBooleanOption((opt) =>
+            opt
+              .setName('clear')
+              .setDescription("Remove this event's greeters instead of setting them")
+              .setRequired(false),
+          )
+          .addUserOption((opt) =>
+            opt
+              .setName('remove')
+              .setDescription('Remove just this one greeter, leaving any other greeter in place')
+              .setRequired(false),
+          ),
       ),
   )
   // ── game group ────────────────────────────────────────────────────────────────
@@ -101,8 +200,11 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
   if (group === 'event') {
     if (sub === 'create') await handleEventCreate(interaction);
+    else if (sub === 'edit') await handleEventEdit(interaction);
     else if (sub === 'cancel') await handleEventCancel(interaction);
     else if (sub === 'archive') await handleEventArchive(interaction);
+    else if (sub === 'privacy') await handleEventPrivacy(interaction);
+    else if (sub === 'greeters') await handleEventSetGreeters(interaction);
   } else if (group === 'game') {
     if (sub === 'cancel') await handleHostGameCancel(interaction);
   } else if (group === 'library') {

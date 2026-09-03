@@ -62,7 +62,7 @@ describe('BGG_TO_TAG', () => {
 // ── searchBGG ─────────────────────────────────────────────────────────────────
 
 describe('searchBGG', () => {
-  it('returns parsed results from the BGG search API', async () => {
+  it('returns parsed results from the BGG search API, newest publish year first', async () => {
     mockFetch(`<?xml version="1.0" encoding="utf-8"?>
 <items total="2">
   <item type="boardgame" id="167791">
@@ -77,22 +77,41 @@ describe('searchBGG', () => {
 
     const results = await searchBGG('Terraforming Mars');
     expect(results).toHaveLength(2);
-    expect(results[0]).toEqual({ id: '167791', name: 'Terraforming Mars', yearPublished: 2016 });
-    expect(results[1]).toEqual({ id: '99999', name: 'Another Game', yearPublished: 2020 });
+    expect(results[0]).toEqual({ id: '99999', name: 'Another Game', yearPublished: 2020 });
+    expect(results[1]).toEqual({ id: '167791', name: 'Terraforming Mars', yearPublished: 2016 });
   });
 
-  it('returns at most 10 results', async () => {
+  it('sorts results with an unknown publish year to the end', async () => {
+    mockFetch(`<items total="2">
+  <item type="boardgame" id="1">
+    <name type="primary" value="No Year Game"/>
+  </item>
+  <item type="boardgame" id="2">
+    <name type="primary" value="Old Game"/>
+    <yearpublished value="1995"/>
+  </item>
+</items>`);
+
+    const results = await searchBGG('game');
+    expect(results.map((r) => r.id)).toEqual(['2', '1']);
+  });
+
+  it('returns at most 50 results', async () => {
     const items = Array.from(
-      { length: 15 },
+      { length: 75 },
       (_, i) => `
   <item type="boardgame" id="${i}">
     <name type="primary" value="Game ${i}"/>
+    <yearpublished value="${2000 + i}"/>
   </item>`,
     ).join('');
-    mockFetch(`<items total="15">${items}</items>`);
+    mockFetch(`<items total="75">${items}</items>`);
 
     const results = await searchBGG('game');
-    expect(results).toHaveLength(10);
+    expect(results).toHaveLength(50);
+    // Still the newest 50, not just the first 50 in document order.
+    expect(results[0].yearPublished).toBe(2074);
+    expect(results[49].yearPublished).toBe(2025);
   });
 
   it('handles a single result (non-array XML) correctly', async () => {
@@ -117,6 +136,17 @@ describe('searchBGG', () => {
     mockFetch('', 429);
     await expect(searchBGG('test')).rejects.toThrow('429');
   });
+
+  it('decodes HTML entities in game names', async () => {
+    mockFetch(`<items total="1">
+  <item type="boardgame" id="313103">
+    <name type="primary" value="Star Trek: Captain&#039;s Chair"/>
+  </item>
+</items>`);
+
+    const results = await searchBGG("Star Trek Captain's Chair");
+    expect(results[0].name).toBe("Star Trek: Captain's Chair");
+  });
 });
 
 // ── getBGGGame ────────────────────────────────────────────────────────────────
@@ -135,6 +165,9 @@ describe('getBGGGame', () => {
     <link type="boardgamecategory" id="1029" value="Economic"/>
     <link type="boardgamemechanic" id="2664" value="Engine Building"/>
     <link type="boardgamemechanic" id="2081" value="Hand Management"/>
+    <link type="boardgamedesigner" id="1" value="Elizabeth Hargrave"/>
+    <link type="boardgamepublisher" id="2" value="Stonemaier Games"/>
+    <link type="boardgamepublisher" id="3" value="Feuerland Spiele"/>
     <link type="boardgameexpansion" id="300837" value="Wingspan: European Expansion"/>
     <link type="boardgameexpansion" id="300838" value="Wingspan: Oceania Expansion"/>
     <poll name="suggested_numplayers" title="User Suggested: # of Players" totalvotes="500">
@@ -185,6 +218,50 @@ describe('getBGGGame', () => {
     expect(game.tags).toContain('Hand Management');
   });
 
+  it('also splits categories and mechanics into their own fields (used by the weekly challenge clues)', async () => {
+    mockFetch(WINGSPAN_XML);
+    const game = await getBGGGame('266192');
+    expect(game.categories).toEqual(['Economic']);
+    expect(game.mechanics).toEqual(['Engine Building', 'Hand Management']);
+  });
+
+  // Regression: categories/mechanics previously only populated for the small
+  // set of BGG names BGG_TO_TAG happens to curate for the library-tagging
+  // system — most real BGG category names (e.g. "Fantasy", "Card Game",
+  // below) have no entry there at all, so genre was blank for most games.
+  it('includes raw BGG category/mechanic names with no entry in the curated tag vocabulary', async () => {
+    mockFetch(`<?xml version="1.0" encoding="utf-8"?>
+<items>
+  <item type="boardgame" id="999">
+    <name type="primary" sortindex="1" value="Untagged Game"/>
+    <minplayers value="2"/>
+    <maxplayers value="4"/>
+    <minplaytime value="30"/>
+    <maxplaytime value="60"/>
+    <link type="boardgamecategory" id="1" value="Fantasy"/>
+    <link type="boardgamecategory" id="2" value="Card Game"/>
+    <link type="boardgamemechanic" id="3" value="Dice Rolling"/>
+  </item>
+</items>`);
+    const game = await getBGGGame('999');
+    expect(game.categories).toEqual(['Fantasy', 'Card Game']);
+    expect(game.mechanics).toEqual(['Dice Rolling']);
+    // None of these map through BGG_TO_TAG, so the curated `tags` field stays empty.
+    expect(game.tags).toEqual([]);
+  });
+
+  it('extracts designers', async () => {
+    mockFetch(WINGSPAN_XML);
+    const game = await getBGGGame('266192');
+    expect(game.designers).toEqual(['Elizabeth Hargrave']);
+  });
+
+  it('extracts publishers', async () => {
+    mockFetch(WINGSPAN_XML);
+    const game = await getBGGGame('266192');
+    expect(game.publishers).toEqual(['Stonemaier Games', 'Feuerland Spiele']);
+  });
+
   it('extracts outbound expansion links', async () => {
     mockFetch(WINGSPAN_XML);
     const game = await getBGGGame('266192');
@@ -207,6 +284,23 @@ describe('getBGGGame', () => {
   it('throws when the API returns a non-OK status', async () => {
     mockFetch('', 404);
     await expect(getBGGGame('0')).rejects.toThrow('404');
+  });
+
+  it('decodes HTML entities in the primary name and expansion names', async () => {
+    mockFetch(`<?xml version="1.0" encoding="utf-8"?>
+<items>
+  <item type="boardgame" id="313103">
+    <name type="primary" sortindex="1" value="Star Trek: Captain&#039;s Chair"/>
+    <minplayers value="2"/>
+    <maxplayers value="7"/>
+    <minplaytime value="30"/>
+    <maxplaytime value="60"/>
+    <link type="boardgameexpansion" id="1" value="Captain&#039;s Chair: Away Team &amp; Beyond"/>
+  </item>
+</items>`);
+    const game = await getBGGGame('313103');
+    expect(game.name).toBe("Star Trek: Captain's Chair");
+    expect(game.expansions[0].name).toBe("Captain's Chair: Away Team & Beyond");
   });
 });
 

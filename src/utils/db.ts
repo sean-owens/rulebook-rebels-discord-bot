@@ -30,24 +30,58 @@ function isNotFoundError(err: unknown): boolean {
   return name === 'NoSuchKey' || name === 'NotFound';
 }
 
+// In-memory cache of raw file content, keyed by a namespace (S3 bucket, or the
+// local data dir path) plus filename, so it can't collide across environments
+// or — critically for tests — across different tmpdir-backed data dirs in the
+// same process. Caches the *source of truth* (raw content, or "confirmed
+// absent"), not a caller's resolved fallback, since different call sites for
+// the same file could in principle pass different fallbacks.
+//
+// Safe only for a single running instance: Railway currently runs this service
+// at numReplicas: 1 (see project_railway_deploy memory). If that ever changes,
+// this cache would need to move to something shared (e.g. invalidation via a
+// pub/sub channel) or be removed, since one instance's writes wouldn't
+// invalidate another instance's cache.
+const NOT_FOUND = Symbol('not-found');
+const fileCache = new Map<string, string | typeof NOT_FOUND>();
+
+function cacheKey(filename: string): string {
+  return `${BUCKET ?? dataDir()}::${filename}`;
+}
+
 export async function readText(filename: string, fallback: string): Promise<string> {
+  const key = cacheKey(filename);
+  const cached = fileCache.get(key);
+  if (cached !== undefined) {
+    return cached === NOT_FOUND ? fallback : cached;
+  }
+
   if (BUCKET) {
     try {
       const response = await s3Client().send(
         new GetObjectCommand({ Bucket: BUCKET, Key: filename }),
       );
-      const body = await response.Body?.transformToString('utf-8');
-      return body ?? fallback;
+      const body = (await response.Body?.transformToString('utf-8')) ?? '';
+      fileCache.set(key, body);
+      return body || fallback;
     } catch (err) {
-      if (isNotFoundError(err)) return fallback;
+      if (isNotFoundError(err)) {
+        fileCache.set(key, NOT_FOUND);
+        return fallback;
+      }
       throw err;
     }
   }
 
   ensureDataDir();
   const file = path.join(dataDir(), filename);
-  if (!fs.existsSync(file)) return fallback;
-  return fs.readFileSync(file, 'utf-8');
+  if (!fs.existsSync(file)) {
+    fileCache.set(key, NOT_FOUND);
+    return fallback;
+  }
+  const content = fs.readFileSync(file, 'utf-8');
+  fileCache.set(key, content);
+  return content;
 }
 
 export async function writeText(
@@ -64,11 +98,18 @@ export async function writeText(
         ContentType: contentType,
       }),
     );
+    fileCache.set(cacheKey(filename), content);
     return;
   }
 
   ensureDataDir();
   fs.writeFileSync(path.join(dataDir(), filename), content);
+  fileCache.set(cacheKey(filename), content);
+}
+
+// Exposed for tests that need a clean slate between runs sharing a process.
+export function clearReadCache(): void {
+  fileCache.clear();
 }
 
 export async function readJson<T>(filename: string, fallback: T): Promise<T> {

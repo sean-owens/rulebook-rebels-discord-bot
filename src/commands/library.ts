@@ -16,6 +16,7 @@ import {
   TextInputStyle,
   MessageFlags,
 } from 'discord.js';
+import { randomUUID } from 'crypto';
 import {
   loadLibraryForGuild,
   addGame,
@@ -23,6 +24,7 @@ import {
   removeGame,
   clearUserLibrary,
   getGamesByUser,
+  getGamesByUserAndLinked,
   findGamesByName,
   findGameNamesByPartial,
   getGameInfo,
@@ -34,19 +36,34 @@ import {
   Complexity,
   addRequest,
   getRequestsForEvent,
+  getRequestById,
   removeRequests,
   removeAllRequestsForEvent,
   confirmBring,
+  declineBring,
+  buildExpansionNote,
+  resolveAttendingOwnerIds,
   GameRequest,
 } from '../utils/libraryStorage';
-import { loadGameNights } from '../utils/storage';
-import { getGameRoles } from '../utils/gameRoles';
+import {
+  addLibraryLink,
+  removeLibraryLink,
+  getEffectiveOwnerIds,
+  getLibraryLinksForGuild,
+} from '../utils/libraryLinkStorage';
+import { loadGameNights, findGameNight, GameNight } from '../utils/storage';
+import { getGameRoles, getMemberPreferences } from '../utils/gameRoles';
 import { updateRequestPin } from '../utils/requestPin';
+import { invalidateBringDm, reconcileRequestCopies } from '../utils/libraryBringDm';
+import { isLineupLocked, LOCK_MESSAGE } from '../utils/scheduler';
 import AdmZip from 'adm-zip';
 import { getBGGGame, getBGGGamesBatch, BGGGame, weightTag, fetchBggOwnedCollection } from '../utils/bgg';
+import { getLastScheduledAt } from '../utils/gameStorage';
+import { weightedSampleWithoutReplacement } from '../utils/weightedRandom';
 import { getGuildConfig } from '../utils/config';
 import {
   searchCatalog,
+  searchCatalogWithFallback,
   isCatalogLoaded,
   normalizeName,
   BGGCatalogEntry,
@@ -82,38 +99,13 @@ interface PendingRequestConfirm {
 }
 const pendingRequestConfirms = new Map<string, PendingRequestConfirm>();
 
-async function pickPreferredOwner(eventId: string, attendingOwnerIds: string[]): Promise<string> {
-  const requests = await getRequestsForEvent(eventId);
-  const bringCounts = new Map<string, number>(attendingOwnerIds.map((id) => [id, 0]));
-  for (const req of requests) {
-    if (req.confirmedBy && bringCounts.has(req.confirmedBy)) {
-      bringCounts.set(req.confirmedBy, (bringCounts.get(req.confirmedBy) ?? 0) + 1);
-    }
-  }
-  let minCount = Infinity,
-    chosen = attendingOwnerIds[0];
-  for (const [id, count] of bringCounts) {
-    if (count < minCount) {
-      minCount = count;
-      chosen = id;
-    }
-  }
-  return chosen;
+interface PendingRequestSuggest {
+  eventId: string;
+  gameName: string;
+  ownerIds: string[];
+  requesterId: string;
 }
-
-async function buildExpansionNote(guildId: string, userId: string, gameName: string): Promise<string> {
-  const info = await getGameInfo(gameName);
-  if (!info?.bggExpansions?.length) return '';
-  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
-  const userExpNames = new Set(
-    (await loadLibraryForGuild(guildId))
-      .filter((e) => e.userId === userId && e.isExpansion)
-      .map((e) => norm(e.gameName)),
-  );
-  const ownedExps = info.bggExpansions.filter((name) => userExpNames.has(norm(name)));
-  if (ownedExps.length === 0) return '';
-  return ` (with ${ownedExps.join(', ')})`;
-}
+const pendingRequestSuggests = new Map<string, PendingRequestSuggest>();
 
 function fuzzyMatchComplexity(input: string): Complexity | null {
   const s = input.toLowerCase().trim();
@@ -234,6 +226,22 @@ export const data = new SlashCommandBuilder()
   )
   .addSubcommand((sub) =>
     sub.setName('clear').setDescription('Remove all of your own games from the library'),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName('link')
+      .setDescription("Share your library with another member — they can view it, request from it, and bring your games")
+      .addUserOption((opt) =>
+        opt.setName('user').setDescription('The member to give access to your library').setRequired(true),
+      ),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName('unlink')
+      .setDescription('Remove a library link with another member (works either direction)')
+      .addUserOption((opt) =>
+        opt.setName('user').setDescription('The member to unlink').setRequired(true),
+      ),
   )
   .addSubcommand((sub) =>
     sub
@@ -359,25 +367,55 @@ async function buildBringLines(
   requests: GameRequest[],
   userId: string,
 ): Promise<string[]> {
+  const effectiveOwnerIds = await getEffectiveOwnerIds(guildId, userId);
   const filtered: GameRequest[] = [];
   for (const req of requests) {
-    if (!(await findGamesByName(guildId, req.gameName)).some((e) => e.userId === userId)) continue;
-    if (req.preferredOwnerId && req.preferredOwnerId !== userId) continue;
+    if (!(await findGamesByName(guildId, req.gameName)).some((e) => effectiveOwnerIds.includes(e.userId))) continue;
+    if (req.preferredOwnerId && !effectiveOwnerIds.includes(req.preferredOwnerId)) continue;
     filtered.push(req);
   }
 
   const lines: string[] = [];
   for (const req of filtered) {
     const copies = req.copiesNeeded ?? 1;
-    const confirmed = req.confirmedBy === userId ? ' ✅ confirmed' : '';
-    const copiesNote = copies > 1 ? ` *(${copies} copies needed)*` : '';
+    const confirmed = req.confirmations.some((c) => c.ownerId === userId) ? ' ✅ confirmed' : '';
+    const copiesNote = copies > 1 ? ` *(${req.confirmations.length}/${copies} copies confirmed)*` : '';
     const expansionNote =
-      req.preferredOwnerId === userId
+      req.preferredOwnerId && effectiveOwnerIds.includes(req.preferredOwnerId)
         ? await buildExpansionNote(guildId, userId, req.gameName)
         : '';
     lines.push(`• **${req.gameName}**${expansionNote}${copiesNote}${confirmed}`);
   }
   return lines;
+}
+
+// Shared by /library bring's view mode (no game param) and the hub's
+// "📋 My Games to Bring" button (handleHubBringButton below) — both already
+// know exactly which event's channel they're in, so neither needs the
+// no-channel-context "loop over every upcoming event" fallback that plain
+// `/library bring` (run outside any event channel) falls back to.
+async function showBringViewForChannelEvent(
+  interaction: ChatInputCommandInteraction | ButtonInteraction,
+  channelEvent: GameNight,
+): Promise<void> {
+  const lines = await buildBringLines(
+    interaction.guildId!,
+    await getRequestsForEvent(channelEvent.id),
+    interaction.user.id,
+  );
+  if (lines.length === 0) {
+    await interaction.reply({
+      content: `None of your games have been requested for this event (${channelEvent.date}).`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  const embed = new EmbedBuilder()
+    .setTitle(`Your Games to Bring — ${channelEvent.date}`)
+    .setColor(0x5865f2)
+    .setDescription(lines.join('\n'))
+    .setFooter({ text: 'Confirm with /library bring game:<name>' });
+  await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }
 
 async function handleBring(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -422,7 +460,7 @@ async function handleBring(interaction: ChatInputCommandInteraction): Promise<vo
       interaction.user.id,
     );
 
-    if (result === 'not_owner') {
+    if (result.status === 'not_owner') {
       await interaction.reply({
         content: `You can only confirm bring for games you own. **${match.gameName}** isn't in your library.`,
         flags: MessageFlags.Ephemeral,
@@ -430,7 +468,15 @@ async function handleBring(interaction: ChatInputCommandInteraction): Promise<vo
       return;
     }
 
-    // result === 'confirmed'
+    if (result.status === 'not_requested') {
+      await interaction.reply({
+        content: `**${match.gameName}** is no longer requested for the event on ${event.date}.`,
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    // result.status === 'confirmed'
     const expansionNote = await buildExpansionNote(
       interaction.guildId!,
       interaction.user.id,
@@ -446,29 +492,26 @@ async function handleBring(interaction: ChatInputCommandInteraction): Promise<vo
     } catch {
       /* channel may not be accessible */
     }
+
+    if (result.invalidatedAsk) {
+      await invalidateBringDm(interaction.client, result.invalidatedAsk, 'Confirmed via /library bring — thanks!');
+    }
+
+    // If this confirmation still leaves copies needed, only chase down more
+    // owners once the lineup's locked — same "don't ask before lock" rule as
+    // a fresh request (see resolveRequestFlow).
+    if (isLineupLocked(event)) {
+      const updatedReq = await getRequestById(match.id);
+      if (updatedReq) {
+        await reconcileRequestCopies(interaction.client, interaction.guildId!, event.rsvps, updatedReq, event.date);
+      }
+    }
     return;
   }
 
   // ── View mode: /library bring (no game param) ────────────────────────────
   if (channelEvent) {
-    const lines = await buildBringLines(
-      interaction.guildId!,
-      await getRequestsForEvent(channelEvent.id),
-      interaction.user.id,
-    );
-    if (lines.length === 0) {
-      await interaction.reply({
-        content: `None of your games have been requested for this event (${channelEvent.date}).`,
-        flags: MessageFlags.Ephemeral,
-      });
-      return;
-    }
-    const embed = new EmbedBuilder()
-      .setTitle(`Your Games to Bring — ${channelEvent.date}`)
-      .setColor(0x5865f2)
-      .setDescription(lines.join('\n'))
-      .setFooter({ text: 'Confirm with /library bring game:<name>' });
-    await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+    await showBringViewForChannelEvent(interaction, channelEvent);
     return;
   }
 
@@ -501,6 +544,109 @@ async function handleBring(interaction: ChatInputCommandInteraction): Promise<vo
 
   embed.setFooter({ text: 'Confirm with /library bring game:<name>' });
   await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+}
+
+/** Handles the "✅ Confirm bringing" button on a "please bring this" DM. */
+export async function handleLibraryConfirmBring(
+  interaction: ButtonInteraction,
+  requestId: string,
+): Promise<void> {
+  const req = await getRequestById(requestId);
+  if (!req) {
+    await interaction.update({
+      content: `${interaction.message.content}\n\n_This request no longer exists — it may have been dropped since nobody signed up to play it._`,
+      components: [],
+    });
+    return;
+  }
+
+  const gameNight = await findGameNight(req.eventId);
+  if (!gameNight) {
+    await interaction.reply({ content: 'Could not find the event this request belongs to.' });
+    return;
+  }
+
+  const result = await confirmBring(gameNight.guildId, req.eventId, req.gameName, interaction.user.id);
+
+  if (result.status === 'not_owner') {
+    await interaction.reply({
+      content: `You can only confirm bringing games you own. **${req.gameName}** isn't in your library.`,
+    });
+    return;
+  }
+
+  if (result.status === 'not_requested') {
+    await interaction.update({
+      content: `${interaction.message.content}\n\n_This request no longer exists._`,
+      components: [],
+    });
+    return;
+  }
+
+  // result.status === 'confirmed'
+  const expansionNote = await buildExpansionNote(gameNight.guildId, interaction.user.id, req.gameName);
+  await interaction.update({
+    content: `✅ Confirmed — you're bringing **${req.gameName}**${expansionNote} to the event on ${gameNight.date}!`,
+    components: [],
+  });
+
+  try {
+    await updateRequestPin(interaction.client, req.eventId);
+  } catch {
+    /* channel may not be accessible */
+  }
+
+  const updatedReq = await getRequestById(requestId);
+  if (updatedReq) {
+    await reconcileRequestCopies(interaction.client, gameNight.guildId, gameNight.rsvps, updatedReq, gameNight.date);
+  }
+}
+
+/** Handles the "❌ Can't bring it" button on a "please bring this" DM. */
+export async function handleLibraryDeclineBring(
+  interaction: ButtonInteraction,
+  requestId: string,
+): Promise<void> {
+  const req = await getRequestById(requestId);
+  if (!req) {
+    await interaction.update({
+      content: `${interaction.message.content}\n\n_This request no longer exists — it may have been dropped since nobody signed up to play it._`,
+      components: [],
+    });
+    return;
+  }
+
+  const gameNight = await findGameNight(req.eventId);
+  if (!gameNight) {
+    await interaction.reply({ content: 'Could not find the event this request belongs to.' });
+    return;
+  }
+
+  const result = await declineBring(requestId, interaction.user.id);
+
+  if (result === 'not_requested') {
+    await interaction.update({
+      content: `${interaction.message.content}\n\n_This request no longer exists._`,
+      components: [],
+    });
+    return;
+  }
+
+  if (result === 'not_asked') {
+    await interaction.reply({ content: "You weren't asked to bring this one." });
+    return;
+  }
+
+  // result === 'declined'
+  await interaction.update({
+    content: `${interaction.message.content}\n\n_No problem — thanks for letting us know._`,
+    components: [],
+  });
+
+  const updatedReq = await getRequestById(requestId);
+  if (updatedReq) {
+    await reconcileRequestCopies(interaction.client, gameNight.guildId, gameNight.rsvps, updatedReq, gameNight.date);
+  }
 }
 
 async function buildUnrequestUI(
@@ -702,6 +848,62 @@ export async function handleAdminLibraryClear(
   });
 }
 
+// ── Library account linking ──────────────────────────────────────────────────
+//
+// One-directional grant: linking gives the other member delegate access to
+// YOUR library (viewing, request/bring eligibility) — it never touches their
+// data, so no accept/confirm step is needed. For two people to fully share
+// with each other (e.g. a couple), each runs /library link once naming the
+// other. Write operations (add/remove/edit/clear) always stay scoped to
+// whoever literally owns the row, link or no link.
+
+async function handleLink(interaction: ChatInputCommandInteraction): Promise<void> {
+  const target = interaction.options.getUser('user', true);
+  const guildId = interaction.guildId!;
+  const userId = interaction.user.id;
+
+  if (target.id === userId) {
+    await interaction.reply({ content: "You can't link your own account to itself.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+  if (target.bot) {
+    await interaction.reply({ content: "You can't link a bot account.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const existingLinks = await getLibraryLinksForGuild(guildId);
+  const alreadyLinked = existingLinks.some((l) => l.ownerId === userId && l.delegateId === target.id);
+  if (alreadyLinked) {
+    await interaction.reply({
+      content: `<@${target.id}> can already view and manage bringing for your library.`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  await addLibraryLink(guildId, userId, target.id);
+  await interaction.reply({
+    content:
+      `<@${target.id}> can now see your games in their \`/library mine\`, and can request/confirm bringing them. ` +
+      `This only shares *your* library with them — if you'd like the same access to theirs, they'll need to run \`/library link user:@you\`.`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+async function handleUnlink(interaction: ChatInputCommandInteraction): Promise<void> {
+  const target = interaction.options.getUser('user', true);
+  const guildId = interaction.guildId!;
+  const userId = interaction.user.id;
+
+  const removed = await removeLibraryLink(guildId, userId, target.id);
+  await interaction.reply({
+    content: removed
+      ? `Library link with <@${target.id}> removed.`
+      : `You don't have a library link with <@${target.id}>.`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   const group = interaction.options.getSubcommandGroup(false);
   const sub = interaction.options.getSubcommand();
@@ -724,6 +926,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
   else if (sub === 'unrequest') await handleUnrequest(interaction);
   else if (sub === 'search') await handleSearch(interaction);
   else if (sub === 'random') await handleRandom(interaction);
+  else if (sub === 'link') await handleLink(interaction);
+  else if (sub === 'unlink') await handleUnlink(interaction);
 }
 
 interface ListSession {
@@ -783,7 +987,7 @@ function buildListButtons(pageIdx: number, totalPages: number): ActionRowBuilder
 // Each page holds up to this many characters — safely under Discord's 1024-char field limit.
 const LIST_PAGE_CHARS = 1000;
 
-async function handleList(interaction: ChatInputCommandInteraction): Promise<void> {
+export async function handleList(interaction: ChatInputCommandInteraction | ButtonInteraction): Promise<void> {
   const entries = (await loadLibraryForGuild(interaction.guildId!)).filter((e) => !e.isExpansion);
 
   if (entries.length === 0) {
@@ -956,12 +1160,26 @@ async function applyBGGDataToGameInfo(info: GameInfo, bggGame: BGGGame, force: b
   });
 }
 
+function isFullyEnriched(info: GameInfo): boolean {
+  return (
+    info.tags !== undefined &&
+    info.bggExpansions !== undefined &&
+    info.bestPlayers !== undefined &&
+    info.complexity !== undefined &&
+    info.howToPlayUrl !== undefined &&
+    info.thumbnail !== undefined
+  );
+}
+
 export async function handleSyncAll(interaction: ChatInputCommandInteraction): Promise<void> {
-  const allInfos = (await loadGameInfos()).filter((i) => !!i.objectid);
+  const force = interaction.options.getBoolean('force') ?? true;
+  const allInfos = (await loadGameInfos()).filter((i) => !!i.objectid && (force || !isFullyEnriched(i)));
 
   if (allInfos.length === 0) {
     await interaction.reply({
-      content: 'No library games with a BGG ID found — nothing to sync.',
+      content: force
+        ? 'No library games with a BGG ID found — nothing to sync.'
+        : 'No library games are missing BGG data — nothing to enrich.',
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -976,7 +1194,7 @@ export async function handleSyncAll(interaction: ChatInputCommandInteraction): P
   // 1 XMLAPI2 call per batch of 20 + 500ms per game for video API
   const estimatedSecs = Math.ceil(batches.length * (BATCH_DELAY_MS / 1000) + allInfos.length * (VIDEO_DELAY_MS / 1000));
   await interaction.reply({
-    content: `Syncing **${allInfos.length}** game(s) in **${batches.length}** BGG batch(es) — estimated **${estimatedSecs}s**. Do not run again until this completes.`,
+    content: `${force ? 'Syncing' : 'Enriching'} **${allInfos.length}** game(s) in **${batches.length}** BGG batch(es) — estimated **${estimatedSecs}s**. Do not run again until this completes.`,
     flags: MessageFlags.Ephemeral,
   });
 
@@ -992,7 +1210,7 @@ export async function handleSyncAll(interaction: ChatInputCommandInteraction): P
       for (const bggGame of games) {
         const info = idToInfo.get(bggGame.id);
         if (!info) continue;
-        await applyBGGDataToGameInfo(info, bggGame, true);
+        await applyBGGDataToGameInfo(info, bggGame, force);
         updated++;
       }
     } catch {
@@ -1001,7 +1219,7 @@ export async function handleSyncAll(interaction: ChatInputCommandInteraction): P
   }
 
   await interaction.followUp({
-    content: `Sync complete — **${updated}** updated, **${failed}** failed.`,
+    content: `${force ? 'Sync' : 'Enrich'} complete — **${updated}** updated, **${failed}** failed.`,
     flags: MessageFlags.Ephemeral,
   });
 }
@@ -1009,16 +1227,7 @@ export async function handleSyncAll(interaction: ChatInputCommandInteraction): P
 export async function enrichFromBGG(canonical: string, force = false): Promise<void> {
   const info = await getGameInfo(canonical);
   if (!info?.objectid) return;
-  if (
-    !force &&
-    info.tags !== undefined &&
-    info.bggExpansions !== undefined &&
-    info.bestPlayers !== undefined &&
-    info.complexity !== undefined &&
-    info.howToPlayUrl !== undefined &&
-    info.thumbnail !== undefined
-  )
-    return;
+  if (!force && isFullyEnriched(info)) return;
   try {
     const bggGame = await getBGGGame(info.objectid);
     await applyBGGDataToGameInfo(info, bggGame, force);
@@ -1126,8 +1335,11 @@ async function buildGameViewEmbed(
   }
   const resourceParts: string[] = [];
   if (info?.howToPlayUrl) resourceParts.push(`[📹 How to Play](${info.howToPlayUrl})`);
-  if (objectid)
-    resourceParts.push(`[📖 Rules & Files](https://boardgamegeek.com/boardgame/${objectid}/files)`);
+  if (objectid) {
+    // BGG's /files route 302s to the main game page unless the slug segment is present.
+    const slug = canonical.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    resourceParts.push(`[📖 Rules & Files](https://boardgamegeek.com/boardgame/${objectid}/${slug}/files)`);
+  }
   if (resourceParts.length > 0) {
     embed.addFields({ name: 'Resources', value: resourceParts.join(' • ') });
   }
@@ -1177,7 +1389,16 @@ function buildPartialMatchSelect(
 
 async function handleView(interaction: ChatInputCommandInteraction): Promise<void> {
   const gameName = interaction.options.getString('game', true).trim();
+  await resolveViewFlow(interaction, gameName);
+}
 
+// Shared by the slash command above and the general hub's "🔍 View a Game"
+// button/modal (see handleHubViewModal below) — mirrors resolveRequestFlow's
+// slash-command/hub-modal sharing pattern.
+async function resolveViewFlow(
+  interaction: ChatInputCommandInteraction | ModalSubmitInteraction,
+  gameName: string,
+): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   await enrichFromBGG(gameName, false);
 
@@ -1242,10 +1463,58 @@ export async function handleLibraryViewSelect(
   await interaction.editReply({ content: '', embeds: [embed], components: [] });
 }
 
-async function handleMine(interaction: ChatInputCommandInteraction): Promise<void> {
-  const entries = (await getGamesByUser(interaction.guildId!, interaction.user.id)).filter(
-    (e) => !e.isExpansion,
-  );
+interface MineSession {
+  pages: string[];
+  totalGames: number;
+  pageIndex: number;
+}
+const mineSessions = new Map<string, MineSession>();
+
+// Reuses /library list's LIST_PAGE_CHARS budget (safely under Discord's
+// 1024-char embed field limit) and its addFields-as-a-single-field pattern —
+// a user linked to several delegates' libraries can easily exceed the
+// 4096-char embed *description* limit that a single unpaginated field hit in
+// production, so this splits the same way list already does.
+function buildMineEmbed(pages: string[], pageIdx: number, totalGames: number): EmbedBuilder {
+  return new EmbedBuilder()
+    .setTitle('Your Games')
+    .setColor(0x5865f2)
+    .addFields({ name: '​', value: pages[pageIdx] })
+    .setFooter({
+      text:
+        pages.length > 1
+          ? `Page ${pageIdx + 1} of ${pages.length} • ${totalGames} game${totalGames !== 1 ? 's' : ''}`
+          : `${totalGames} game${totalGames !== 1 ? 's' : ''}`,
+    });
+}
+
+function buildMineButtons(pageIdx: number, totalPages: number): ActionRowBuilder<ButtonBuilder>[] {
+  if (totalPages <= 1) return [];
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId('library_mine_prev')
+        .setLabel('← Previous')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(pageIdx === 0),
+      new ButtonBuilder()
+        .setCustomId('library_mine_page')
+        .setLabel(`Page ${pageIdx + 1} of ${totalPages}`)
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true),
+      new ButtonBuilder()
+        .setCustomId('library_mine_next')
+        .setLabel('Next →')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(pageIdx === totalPages - 1),
+    ),
+  ];
+}
+
+export async function handleMine(interaction: ChatInputCommandInteraction | ButtonInteraction): Promise<void> {
+  const guildId = interaction.guildId!;
+  const userId = interaction.user.id;
+  const entries = (await getGamesByUserAndLinked(guildId, userId)).filter((e) => !e.isExpansion);
 
   if (entries.length === 0) {
     await interaction.reply({
@@ -1257,13 +1526,52 @@ async function handleMine(interaction: ChatInputCommandInteraction): Promise<voi
 
   const sorted = [...entries].sort((a, b) => a.gameName.localeCompare(b.gameName));
 
-  const embed = new EmbedBuilder()
-    .setTitle('Your Games')
-    .setColor(0x5865f2)
-    .setDescription(sorted.map((e) => `• ${e.gameName}`).join('\n'))
-    .setFooter({ text: `${sorted.length} game${sorted.length !== 1 ? 's' : ''}` });
+  const pages: string[] = [];
+  let current = '';
+  for (const e of sorted) {
+    const line = `• ${e.gameName}${e.userId !== userId ? ` *(shared from <@${e.userId}>)*` : ''}`;
+    if (current && current.length + line.length + 1 > LIST_PAGE_CHARS) {
+      pages.push(current);
+      current = '';
+    }
+    current += (current ? '\n' : '') + line;
+  }
+  if (current) pages.push(current);
 
-  await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+  mineSessions.set(userId, { pages, totalGames: sorted.length, pageIndex: 0 });
+
+  await interaction.reply({
+    embeds: [buildMineEmbed(pages, 0, sorted.length)],
+    components: buildMineButtons(0, pages.length),
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+export async function handleLibraryMineNav(
+  interaction: ButtonInteraction,
+  direction: 'prev' | 'next',
+): Promise<void> {
+  const session = mineSessions.get(interaction.user.id);
+  if (!session) {
+    await interaction.update({
+      content: 'This list has expired — run `/library mine` again.',
+      embeds: [],
+      components: [],
+    });
+    return;
+  }
+
+  const newPage = direction === 'next' ? session.pageIndex + 1 : session.pageIndex - 1;
+  if (newPage < 0 || newPage >= session.pages.length) {
+    await interaction.deferUpdate();
+    return;
+  }
+
+  session.pageIndex = newPage;
+  await interaction.update({
+    embeds: [buildMineEmbed(session.pages, newPage, session.totalGames)],
+    components: buildMineButtons(newPage, session.pages.length),
+  });
 }
 
 function buildEditModal(
@@ -1445,13 +1753,15 @@ async function handleAdd(interaction: ChatInputCommandInteraction): Promise<void
 
   const guildId = interaction.guildId!;
   const userId = interaction.user.id;
-  const userGames = await getGamesByUser(guildId, userId);
+  const userGames = await getGamesByUserAndLinked(guildId, userId);
   const library = await loadLibraryForGuild(guildId);
 
-  // 1a. Exact match in the user's own library
-  if (userGames.some((e) => e.gameName.toLowerCase() === gameName.toLowerCase())) {
+  // 1a. Exact match in the user's own (or linked) library
+  const ownMatch = userGames.find((e) => e.gameName.toLowerCase() === gameName.toLowerCase());
+  if (ownMatch) {
+    const sharedNote = ownMatch.userId !== userId ? ` (shared from <@${ownMatch.userId}>'s library)` : '';
     await interaction.reply({
-      content: `**${gameName}** is already in your library.`,
+      content: `**${gameName}** is already in your library${sharedNote}.`,
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -1513,16 +1823,18 @@ async function handleAdd(interaction: ChatInputCommandInteraction): Promise<void
     return;
   }
 
-  // 3. BGG catalog search
+  // 3. BGG catalog search (falls back to a live BGG search on a local miss)
   if (isCatalogLoaded()) {
-    const catalogResults = searchCatalog(gameName, 5);
+    const catalogResults = await searchCatalogWithFallback(gameName, 5);
     if (catalogResults.length > 0) {
       const top = catalogResults[0];
       if (normalizeName(top.name) === normalizeName(gameName)) {
         // Exact canonical match — re-check library with resolved name (catches punctuation differences like "brass birmingham" → "Brass: Birmingham")
-        if (userGames.some((e) => e.gameName.toLowerCase() === top.name.toLowerCase())) {
+        const canonicalOwnMatch = userGames.find((e) => e.gameName.toLowerCase() === top.name.toLowerCase());
+        if (canonicalOwnMatch) {
+          const sharedNote = canonicalOwnMatch.userId !== userId ? ` (shared from <@${canonicalOwnMatch.userId}>'s library)` : '';
           await interaction.reply({
-            content: `**${top.name}** is already in your library.`,
+            content: `**${top.name}** is already in your library${sharedNote}.`,
             flags: MessageFlags.Ephemeral,
           });
           return;
@@ -1580,7 +1892,7 @@ export async function handleLibraryAddPartialSelect(
 
   if (value === '__bgg__') {
     if (isCatalogLoaded()) {
-      const catalogResults = searchCatalog(originalInput, 5);
+      const catalogResults = await searchCatalogWithFallback(originalInput, 5);
       if (catalogResults.length > 0) {
         const top = catalogResults[0];
         if (normalizeName(top.name) === normalizeName(originalInput)) {
@@ -1600,10 +1912,12 @@ export async function handleLibraryAddPartialSelect(
 
   // User picked a game from the library partial list — add their copy
   const name = value.startsWith('lib|') ? value.slice(4) : value;
-  const userGames = await getGamesByUser(guildId, userId);
-  if (userGames.some((e) => e.gameName.toLowerCase() === name.toLowerCase())) {
+  const userGames = await getGamesByUserAndLinked(guildId, userId);
+  const ownMatch = userGames.find((e) => e.gameName.toLowerCase() === name.toLowerCase());
+  if (ownMatch) {
+    const sharedNote = ownMatch.userId !== userId ? ` (shared from <@${ownMatch.userId}>'s library)` : '';
     await interaction.update({
-      content: `**${name}** is already in your library.`,
+      content: `**${name}** is already in your library${sharedNote}.`,
       components: [],
     });
     return;
@@ -1704,11 +2018,13 @@ export async function handleAddBggSelect(interaction: StringSelectMenuInteractio
 
   const [id, name] = value.split('|', 2);
 
-  // Check if user already owns the selected game
-  const userGames = await getGamesByUser(interaction.guildId!, interaction.user.id);
-  if (userGames.some((e) => e.gameName.toLowerCase() === name.toLowerCase())) {
+  // Check if user already owns (or has linked access to) the selected game
+  const userGames = await getGamesByUserAndLinked(interaction.guildId!, interaction.user.id);
+  const ownMatch = userGames.find((e) => e.gameName.toLowerCase() === name.toLowerCase());
+  if (ownMatch) {
+    const sharedNote = ownMatch.userId !== interaction.user.id ? ` (shared from <@${ownMatch.userId}>'s library)` : '';
     await interaction.update({
-      content: `**${name}** is already in your library.`,
+      content: `**${name}** is already in your library${sharedNote}.`,
       components: [],
     });
     return;
@@ -1805,7 +2121,7 @@ export async function handleRemoveSelect(interaction: StringSelectMenuInteractio
 }
 
 async function showCopySelect(
-  interaction: ChatInputCommandInteraction | StringSelectMenuInteraction,
+  interaction: ChatInputCommandInteraction | StringSelectMenuInteraction | ModalSubmitInteraction,
   canonicalName: string,
   eventId: string,
   eventDate: string,
@@ -1889,7 +2205,16 @@ async function showCopySelect(
 
 async function handleRequest(interaction: ChatInputCommandInteraction): Promise<void> {
   const gameName = interaction.options.getString('game', true).trim();
+  await resolveRequestFlow(interaction, gameName);
+}
 
+// Shared by the slash command above and the hub's "🙋 Request a Game to Bring"
+// button/modal (see handleHubRequestModal below) — everything after the typed
+// game name is resolved identically regardless of how that name was collected.
+async function resolveRequestFlow(
+  interaction: ChatInputCommandInteraction | ModalSubmitInteraction,
+  gameName: string,
+): Promise<void> {
   // Check the game exists in the library (someone must own it)
   const library = await loadLibraryForGuild(interaction.guildId!);
   const matches = library.filter((e) => e.gameName.toLowerCase() === gameName.toLowerCase());
@@ -1954,9 +2279,7 @@ async function handleRequest(interaction: ChatInputCommandInteraction): Promise<
 
   const canonicalName = matches[0].gameName;
   const ownerIds = matches.map((e) => e.userId);
-  const attendingOwnerIds = ownerIds.filter(
-    (id) => event.rsvps.yes.includes(id) || event.rsvps.maybe.includes(id),
-  );
+  const attendingOwnerIds = await resolveAttendingOwnerIds(interaction.guildId!, ownerIds, event.rsvps);
 
   if (attendingOwnerIds.length === 0) {
     await interaction.reply({
@@ -1988,8 +2311,37 @@ async function handleRequest(interaction: ChatInputCommandInteraction): Promise<
   }
 
   const owners = ownerIds.map((id) => `<@${id}>`);
+  const locked = isLineupLocked(event);
+  const askNote = locked ? '' : ' An owner will be asked to bring it once the lineup locks.';
+
+  // A request only asks an owner to bring the game — it doesn't put it up to
+  // be played. Offer a one-tap follow-up to also suggest it, for the common
+  // case of wanting both at once, without forcing every request through
+  // /game suggest separately. Not offered once locked — suggesting would
+  // just be rejected at that point.
+  let suggestRow: ActionRowBuilder<ButtonBuilder>[] = [];
+  if (!locked) {
+    const key = randomUUID().slice(0, 8);
+    pendingRequestSuggests.set(key, {
+      eventId: event.id,
+      gameName: canonicalName,
+      ownerIds,
+      requesterId: interaction.user.id,
+    });
+    suggestRow = [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`library_suggest_from_request_${key}`)
+          .setLabel('Also suggest to play tonight')
+          .setEmoji('🎲')
+          .setStyle(ButtonStyle.Primary),
+      ),
+    ];
+  }
+
   await interaction.reply({
-    content: `<@${interaction.user.id}> requested **${canonicalName}** for the event on ${event.date}. Owner${owners.length > 1 ? 's' : ''}: ${owners.join(', ')}`,
+    content: `<@${interaction.user.id}> requested **${canonicalName}** for the event on ${event.date}. Owner${owners.length > 1 ? 's' : ''}: ${owners.join(', ')}${askNote}`,
+    components: suggestRow,
   });
 
   try {
@@ -1997,6 +2349,103 @@ async function handleRequest(interaction: ChatInputCommandInteraction): Promise<
   } catch {
     /* channel may not be accessible */
   }
+
+  // No "please bring this" DM goes out until the lineup locks, so the bot
+  // can pick fairly from each owner's final confirmed-brings count for the
+  // event rather than an early, mostly-arbitrary snapshot. Late requests
+  // made after lock have no future lock to wait for, so they ask right away.
+  if (locked) {
+    await reconcileRequestCopies(interaction.client, interaction.guildId!, event.rsvps, result, event.date);
+  }
+}
+
+// ── Button: "Also suggest to play tonight" (follow-up to a request) ────────
+
+export async function handleRequestSuggestConfirm(
+  interaction: ButtonInteraction,
+  key: string,
+): Promise<void> {
+  const pending = pendingRequestSuggests.get(key);
+  if (!pending) {
+    await interaction.reply({
+      content: 'This suggestion prompt has expired.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  if (pending.requesterId !== interaction.user.id) {
+    await interaction.reply({
+      content: 'Only the person who made this request can do this.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const gameNight = await findGameNight(pending.eventId);
+  if (!gameNight || gameNight.cancelled || gameNight.archived) {
+    await interaction.reply({ content: 'That event is no longer available.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  if (isLineupLocked(gameNight)) {
+    await interaction.reply({ content: LOCK_MESSAGE, flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  pendingRequestSuggests.delete(key);
+
+  const info = (await getGameInfo(pending.gameName)) ?? null;
+  const { postLibraryGame } = await import('./game');
+  await postLibraryGame(interaction, gameNight, pending.gameName, info, pending.ownerIds, []);
+}
+
+// ── Hub button: "🙋 Request a Game to Bring" ───────────────────────────────
+
+export async function handleHubRequestButton(interaction: ButtonInteraction): Promise<void> {
+  const modal = new ModalBuilder()
+    .setCustomId('hub_request_modal')
+    .setTitle('Request a Game to Bring')
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('game')
+          .setLabel('Game name')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('e.g. Catan')
+          .setRequired(true)
+          .setMaxLength(100),
+      ),
+    );
+  await interaction.showModal(modal);
+}
+
+export async function handleHubRequestModal(interaction: ModalSubmitInteraction): Promise<void> {
+  const gameName = interaction.fields.getTextInputValue('game').trim();
+  await resolveRequestFlow(interaction, gameName);
+}
+
+// ── General hub button: "🔍 View a Game" ────────────────────────────────────
+// The modal itself (hub_view_modal) is built in generalHub.ts's
+// handleHubGeneralViewButton, alongside the rest of the general hub's UI.
+
+export async function handleHubViewModal(interaction: ModalSubmitInteraction): Promise<void> {
+  const gameName = interaction.fields.getTextInputValue('game').trim();
+  await resolveViewFlow(interaction, gameName);
+}
+
+// ── Hub button: "📋 My Games to Bring" ─────────────────────────────────────
+
+export async function handleHubBringButton(interaction: ButtonInteraction): Promise<void> {
+  const gameNight = (await loadGameNights()).find(
+    (gn) => gn.eventChannelId === interaction.channelId && !gn.cancelled && !gn.archived,
+  );
+  if (!gameNight) {
+    await interaction.reply({
+      content: "Could not find this event — it may have been cancelled or archived.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  await showBringViewForChannelEvent(interaction, gameNight);
 }
 
 export async function handleLibraryRequestSelect(
@@ -2032,9 +2481,7 @@ export async function handleLibraryRequestSelect(
 
   const canonicalName = matches[0]?.gameName ?? gameName;
   const ownerIds = matches.map((e) => e.userId);
-  const attendingOwnerIds = ownerIds.filter(
-    (id) => event.rsvps.yes.includes(id) || event.rsvps.maybe.includes(id),
-  );
+  const attendingOwnerIds = await resolveAttendingOwnerIds(interaction.guildId!, ownerIds, event.rsvps);
 
   if (attendingOwnerIds.length === 0) {
     await interaction.update({
@@ -2066,9 +2513,11 @@ export async function handleLibraryRequestSelect(
   }
 
   const owners = ownerIds.map((id) => `<@${id}>`);
-  await interaction.update({ content: '✓ Request submitted!', components: [] });
+  const locked = isLineupLocked(event);
+  const askNote = locked ? '' : ' An owner will be asked to bring it once the lineup locks.';
+  await interaction.update({ content: '✅ Request submitted!', components: [] });
   await interaction.followUp({
-    content: `<@${interaction.user.id}> requested **${canonicalName}** for the event on ${event.date}. Owner${owners.length !== 1 ? 's' : ''}: ${owners.join(', ')}`,
+    content: `<@${interaction.user.id}> requested **${canonicalName}** for the event on ${event.date}. Owner${owners.length !== 1 ? 's' : ''}: ${owners.join(', ')}${askNote}`,
     ephemeral: false,
   });
 
@@ -2076,6 +2525,10 @@ export async function handleLibraryRequestSelect(
     await updateRequestPin(interaction.client, event.id);
   } catch {
     /* channel may not be accessible */
+  }
+
+  if (locked) {
+    await reconcileRequestCopies(interaction.client, interaction.guildId!, event.rsvps, result, event.date);
   }
 }
 
@@ -2093,10 +2546,11 @@ export async function handleLibraryRequestCopySelect(
   pendingRequestConfirms.delete(interaction.user.id);
 
   const selected = interaction.values[0];
-  const preferredOwnerId =
-    selected === '__bot__'
-      ? await pickPreferredOwner(pending.eventId, pending.attendingOwnerIds)
-      : selected;
+  // "Bot decides" no longer resolves to a concrete owner here — that would
+  // freeze in a fairness pick before the lineup's final RSVP/confirmed-brings
+  // picture is known. Leaving preferredOwnerId unset means "no preference";
+  // reconcileRequestCopies falls back to pickPreferredOwner at ask time.
+  const preferredOwnerId = selected === '__bot__' ? undefined : selected;
 
   const result = await addRequest(
     pending.eventId,
@@ -2113,10 +2567,17 @@ export async function handleLibraryRequestCopySelect(
     return;
   }
 
+  const event = await findGameNight(pending.eventId);
+  const locked = !!event && isLineupLocked(event);
   const owners = pending.ownerIds.map((id) => `<@${id}>`);
-  await interaction.update({ content: '✓ Request submitted!', components: [] });
+  const bringingNote = preferredOwnerId
+    ? ` — bringing: <@${preferredOwnerId}>`
+    : locked
+      ? ''
+      : ' An owner will be asked to bring it once the lineup locks.';
+  await interaction.update({ content: '✅ Request submitted!', components: [] });
   await interaction.followUp({
-    content: `<@${interaction.user.id}> requested **${pending.canonicalName}** for the event on ${pending.eventDate}. Owner${owners.length !== 1 ? 's' : ''}: ${owners.join(', ')} — bringing: <@${preferredOwnerId}>`,
+    content: `<@${interaction.user.id}> requested **${pending.canonicalName}** for the event on ${pending.eventDate}. Owner${owners.length !== 1 ? 's' : ''}: ${owners.join(', ')}${bringingNote}`,
     ephemeral: false,
   });
 
@@ -2124,6 +2585,10 @@ export async function handleLibraryRequestCopySelect(
     await updateRequestPin(interaction.client, pending.eventId);
   } catch {
     /* channel not accessible */
+  }
+
+  if (event && locked) {
+    await reconcileRequestCopies(interaction.client, interaction.guildId!, event.rsvps, result, pending.eventDate);
   }
 }
 
@@ -2149,7 +2614,9 @@ function parseCsvLine(line: string): string[] {
   return fields;
 }
 
-async function handleImportBgg(interaction: ChatInputCommandInteraction): Promise<void> {
+export async function handleImportBgg(
+  interaction: ChatInputCommandInteraction | ButtonInteraction,
+): Promise<void> {
   const guildId = interaction.guildId!;
   const userId = interaction.user.id;
 
@@ -2473,8 +2940,10 @@ export async function handleEditModal(interaction: ModalSubmitInteraction): Prom
 
   const existing = await getGameInfo(gameName);
 
-  let minPlayers: number | undefined = existing?.minPlayers;
-  let maxPlayers: number | undefined = existing?.maxPlayers;
+  // The modal always pre-fills each field with its current value, so a blank
+  // field here means the user deliberately cleared it, not "leave unchanged".
+  let minPlayers: number | undefined;
+  let maxPlayers: number | undefined;
   if (playersRaw) {
     const parts = playersRaw.split('-').map((p) => parseInt(p.trim(), 10));
     if (!isNaN(parts[0])) minPlayers = parts[0];
@@ -2482,9 +2951,7 @@ export async function handleEditModal(interaction: ModalSubmitInteraction): Prom
     else if (!isNaN(parts[0])) maxPlayers = parts[0];
   }
 
-  const playTime = playtimeRaw
-    ? parseInt(playtimeRaw, 10) || existing?.playTime
-    : existing?.playTime;
+  const playTime = playtimeRaw ? parseInt(playtimeRaw, 10) || existing?.playTime : undefined;
 
   // Fuzzy-match each tag; collect unrecognized inputs for follow-up
   const unmatchedTagInputs: string[] = [];
@@ -2500,19 +2967,19 @@ export async function handleEditModal(interaction: ModalSubmitInteraction): Prom
           } else unmatchedTagInputs.push(raw);
           return acc;
         }, [])
-    : (existing?.tags ?? []);
+    : [];
 
   const expansions = expansionsRaw
     ? expansionsRaw
         .split(',')
         .map((e) => e.trim())
         .filter(Boolean)
-    : existing?.expansions;
+    : undefined;
 
   // Fuzzy-match complexity; fall back to existing if input unrecognized
   const resolvedComplexity: Complexity | null | undefined = complexityRaw
     ? (fuzzyMatchComplexity(complexityRaw) ?? existing?.complexity)
-    : existing?.complexity;
+    : undefined;
   const complexityNeedsPrompt = !!(complexityRaw && !fuzzyMatchComplexity(complexityRaw));
 
   const info: GameInfo = {
@@ -2654,6 +3121,32 @@ async function handleRandom(interaction: ChatInputCommandInteraction): Promise<v
     interaction.options.getString('tag3'),
   ].filter((t): t is string => t !== null);
   const complexity = interaction.options.getString('complexity') as Complexity | null;
+  await resolveRandomGames(interaction, tags, complexity);
+}
+
+// Shared by the slash command above and the general hub's "🎲 Random Game"
+// button (see handleHubGeneralRandomButton in generalHub.ts), which always
+// calls this with empty filters — same as running /library random with no
+// options, including the personalization fallback to the user's /myroles
+// preferences when no tags/complexity are given.
+export async function resolveRandomGames(
+  interaction: ChatInputCommandInteraction | ButtonInteraction,
+  initialTags: string[],
+  initialComplexity: Complexity | null,
+): Promise<void> {
+  let tags = initialTags;
+  let complexity = initialComplexity;
+
+  let personalized = false;
+  if (tags.length === 0 && !complexity) {
+    const member = await interaction.guild!.members.fetch(interaction.user.id);
+    const prefs = await getMemberPreferences(interaction.guildId!, member);
+    if (prefs.tags.length > 0 || prefs.complexity) {
+      tags = prefs.tags;
+      complexity = prefs.complexity as Complexity | null;
+      personalized = true;
+    }
+  }
 
   const library = await loadLibraryForGuild(interaction.guildId!);
   const infos = await loadGameInfos();
@@ -2693,22 +3186,30 @@ async function handleRandom(interaction: ChatInputCommandInteraction): Promise<v
     return;
   }
 
-  // Fisher-Yates shuffle and take up to 3
-  const shuffled = [...pool];
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    const tmp = shuffled[i];
-    shuffled[i] = shuffled[j];
-    shuffled[j] = tmp;
-  }
-  const picks = shuffled.slice(0, 3);
+  // Weighted pick, biased toward games that haven't been scheduled in a
+  // while (or ever) — there's no reliable "was this actually played" signal
+  // (BG Stats gives no callback), so "last scheduled onto a lineup" is the
+  // closest available proxy. Games are never excluded outright, just less
+  // likely to come up again right away.
+  const lastScheduled = await getLastScheduledAt(interaction.guildId!);
+  const RECENCY_CAP_DAYS = 365;
+  const picks = weightedSampleWithoutReplacement(
+    pool,
+    (game) => {
+      const lastAt = lastScheduled.get(game.displayName.toLowerCase());
+      const daysSince = lastAt ? (Date.now() - Date.parse(lastAt)) / (24 * 60 * 60 * 1000) : RECENCY_CAP_DAYS;
+      return Math.min(daysSince, RECENCY_CAP_DAYS) + 1;
+    },
+    3,
+  );
 
   const filterLabels = [tags.length > 0 ? tags.join(' or ') : '', complexity ?? '']
     .filter(Boolean)
     .join(', ');
+  const sourceNote = personalized ? ' (from your /myroles)' : '';
   const title = fallback
-    ? `No **${filterLabels}** games found — here are 3 random picks instead`
-    : `3 Random Game${picks.length !== 3 ? '' : 's'}${filterLabels ? ` — ${filterLabels}` : ''}`;
+    ? `No **${filterLabels}**${sourceNote} games found — here are 3 random picks instead`
+    : `3 Random Game${picks.length !== 3 ? '' : 's'}${filterLabels ? ` — ${filterLabels}${sourceNote}` : ''}`;
 
   const embed = new EmbedBuilder().setTitle(title).setColor(0x5865f2);
 
@@ -2726,8 +3227,11 @@ async function handleRandom(interaction: ChatInputCommandInteraction): Promise<v
     embed.addFields({ name: pick.displayName, value });
   }
 
+  const footerTip = tags.length === 0 && !complexity
+    ? ' • Set your preferences with /myroles to get picks tailored to you'
+    : '';
   embed.setFooter({
-    text: 'Use /library view <game> for full details • Run again for different picks',
+    text: `Use /library view <game> for full details • Run again for different picks${footerTip}`,
   });
 
   await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
@@ -2742,7 +3246,7 @@ function parseInts(raw: string): number[] {
 
 async function handleSearch(interaction: ChatInputCommandInteraction): Promise<void> {
   const playersRaw = interaction.options.getString('players') ?? undefined;
-  const tags = [
+  let tags = [
     interaction.options.getString('tag'),
     interaction.options.getString('tag2'),
     interaction.options.getString('tag3'),
@@ -2750,10 +3254,21 @@ async function handleSearch(interaction: ChatInputCommandInteraction): Promise<v
   const durationRaw = interaction.options.getString('duration') ?? undefined;
   const minDuration = interaction.options.getInteger('min_duration') ?? undefined;
   const maxDuration = interaction.options.getInteger('max_duration') ?? undefined;
-  const complexity = interaction.options.getString('complexity') as Complexity | null;
+  let complexity = interaction.options.getString('complexity') as Complexity | null;
 
   const playerCounts = playersRaw ? parseInts(playersRaw) : [];
   const durations = durationRaw ? parseInts(durationRaw) : [];
+
+  let personalized = false;
+  if (tags.length === 0 && !complexity) {
+    const member = await interaction.guild!.members.fetch(interaction.user.id);
+    const prefs = await getMemberPreferences(interaction.guildId!, member);
+    if (prefs.tags.length > 0 || prefs.complexity) {
+      tags = prefs.tags;
+      complexity = prefs.complexity as Complexity | null;
+      personalized = true;
+    }
+  }
 
   if (
     playerCounts.length === 0 &&
@@ -2764,7 +3279,8 @@ async function handleSearch(interaction: ChatInputCommandInteraction): Promise<v
     !complexity
   ) {
     await interaction.reply({
-      content: 'Provide at least one valid filter: `players`, `tag`, or `duration`.',
+      content:
+        'Provide at least one valid filter: `players`, `tag`, or `duration` — or set your preferences with `/myroles` to search based on those.',
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -2834,10 +3350,10 @@ async function handleSearch(interaction: ChatInputCommandInteraction): Promise<v
       : '';
   const filterParts = [
     playerCounts.length > 0 ? `**${playerCounts.join(' or ')} players**` : '',
-    tags.length > 0 ? `tag **${tags.join(' or ')}**` : '',
+    tags.length > 0 ? `tag **${tags.join(' or ')}**${personalized ? ' (from your /myroles)' : ''}` : '',
     durations.length > 0 ? `**${durations.join(' or ')} min** (±15 min)` : '',
     durationRangePart,
-    complexity ? `**${complexity}**` : '',
+    complexity ? `**${complexity}**${personalized && tags.length === 0 ? ' (from your /myroles)' : ''}` : '',
   ]
     .filter(Boolean)
     .join(', ');

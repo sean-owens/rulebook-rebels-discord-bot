@@ -1,11 +1,18 @@
 import { ButtonInteraction, Interaction, StringSelectMenuInteraction, TextChannel, MessageFlags, ModalSubmitInteraction } from 'discord.js';
 import { execute as executeHelp } from '../commands/help';
+import { execute as executeGettingStarted } from '../commands/gettingStarted';
 import { execute as executeGameNight } from '../commands/gamenight';
 import {
   execute as executeAdmin,
   handleAutocomplete as handleAdminAutocomplete,
 } from '../commands/admin';
 import { execute as executeHost } from '../commands/host';
+import {
+  handleHubGeneralViewButton,
+  handleHubGeneralBrowseButton,
+  handleHubGeneralMineButton,
+  handleHubGeneralRandomButton,
+} from '../utils/generalHub';
 import {
   execute as executeMyRoles,
   handleMyRolesTag,
@@ -35,18 +42,32 @@ import {
   handleUnrequestSelect,
   handleUnrequestAll,
   handleLibraryListNav,
+  handleLibraryMineNav,
+  handleLibraryConfirmBring,
+  handleLibraryDeclineBring,
+  handleHubRequestButton,
+  handleHubRequestModal,
+  handleHubViewModal,
+  handleHubBringButton,
+  handleRequestSuggestConfirm,
 } from '../commands/library';
 import { Complexity } from '../utils/libraryStorage';
-import { execute as executeBgg } from '../commands/bgg';
+import { execute as executeBgg, handleBggLinkImportButton } from '../commands/bgg';
 import {
   execute as executeMarketplace,
   handleAutocomplete as handleMarketplaceAutocomplete,
   handleInterestButton,
+  handleBuyNowButton,
+  handleBuyNowConfirm,
+  handleBuyNowCancel,
   handleBidModal,
   handleAcceptBid,
   handleDenyBid,
   handleCounterButton,
   handleCounterModal,
+  handleReplyButton,
+  handleReplyModal,
+  handleMarketplaceEditModal,
   handleBuyerAcceptCounter,
   handlePriceUseSuggested,
   handlePriceNone,
@@ -59,6 +80,22 @@ import {
   handleRefModal,
   handleExpansionSelect as handleMarketplaceExpansionSelect,
   handleSkipExpansions,
+  handleIncludeBaseGameYes,
+  handleIncludeBaseGameNo,
+  handleHubMarketplaceSellButton,
+  handleHubMarketplaceSellModal,
+  handleHubMarketplaceTradeButton,
+  handleHubMarketplaceTradeModal,
+  handleHubMarketplaceTradeLookingForModal,
+  handleHubMarketplaceConditionSelect,
+  handleHubMarketplaceOffersYes,
+  handleHubMarketplaceOffersNo,
+  handleHubMarketplaceBrowseButton,
+  handleHubMarketplaceMyButton,
+  handleMatchConfirmYes,
+  handleMatchConfirmNotBgg,
+  handleMatchConfirmSearchAgain,
+  handleMatchResearchModal,
 } from '../commands/marketplace';
 import {
   execute as executeGame,
@@ -72,15 +109,44 @@ import {
   handleGameLeave,
   handleBringConfirm,
   handleBringCancel,
+  handleBGGSearchPage,
   handleLibrarySuggestSelect,
   handleWaitlistJoin,
   handleWaitlistLeave,
   handleEventSelect,
   handleGameTagSelect,
   handleGameTagSkip,
+  EVENT_SELECT_PREFIX,
+  handleHubSuggestButton,
+  handleHubSuggestModal,
 } from '../commands/game';
 import { findGameNight, upsertGameNight } from '../utils/storage';
 import { buildGameNightEmbed, buildGameNightButtons } from '../utils/embeds';
+import {
+  execute as executeRoom,
+  handleHubRoomInviteButton,
+  handleHubRoomInviteSelect,
+  handleHubRoomKickButton,
+  handleHubRoomKickSelect,
+  handleHubRoomPersistButton,
+  handleHubRoomPersistModal,
+} from '../commands/room';
+import { execute as executeHub } from '../commands/hub';
+import {
+  execute as executeSnacks,
+  handleSnacksRemoveSelect,
+  handleHubSnacksButton,
+  handleHubSnacksAddButton,
+  handleHubSnacksAddModal,
+  handleHubSnacksRemoveButton,
+  handleHubSnacksRemoveSelect,
+} from '../commands/snacks';
+import {
+  execute as executeChallenge,
+  handleHubChallengeStatusButton,
+  handleHubChallengeLeaderboardButton,
+} from '../commands/boardgamechallenge';
+import { extractCommandUsage, recordCommandUsage } from '../utils/commandUsageStorage';
 
 export async function handleInteraction(interaction: Interaction): Promise<void> {
   const label = interaction.isChatInputCommand()
@@ -95,7 +161,16 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
       if (interaction.commandName === 'admin') await handleAdminAutocomplete(interaction);
       else if (interaction.commandName === 'marketplace') await handleMarketplaceAutocomplete(interaction);
     } else if (interaction.isChatInputCommand()) {
+      if (interaction.guildId) {
+        try {
+          const { commandPath, paramNames } = extractCommandUsage(interaction);
+          await recordCommandUsage(interaction.guildId, commandPath, paramNames);
+        } catch (err) {
+          console.error('[CommandUsage] Failed to record usage:', err);
+        }
+      }
       if (interaction.commandName === 'help') await executeHelp(interaction);
+      else if (interaction.commandName === 'getting-started') await executeGettingStarted(interaction);
       else if (interaction.commandName === 'event') await executeGameNight(interaction);
       else if (interaction.commandName === 'game') await executeGame(interaction);
       else if (interaction.commandName === 'admin') await executeAdmin(interaction);
@@ -104,9 +179,13 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
       else if (interaction.commandName === 'library') await executeLibrary(interaction);
       else if (interaction.commandName === 'bgg') await executeBgg(interaction);
       else if (interaction.commandName === 'marketplace') await executeMarketplace(interaction);
+      else if (interaction.commandName === 'room') await executeRoom(interaction);
+      else if (interaction.commandName === 'hub') await executeHub(interaction);
+      else if (interaction.commandName === 'snacks') await executeSnacks(interaction);
+      else if (interaction.commandName === 'challenge') await executeChallenge(interaction);
     } else if (interaction.isStringSelectMenu()) {
       const id = interaction.customId;
-      if (id === 'game_event_select') await handleEventSelect(interaction);
+      if (id.startsWith(EVENT_SELECT_PREFIX)) await handleEventSelect(interaction);
       else if (id === 'library_suggest_select') await handleLibrarySuggestSelect(interaction);
       else if (id === 'library_add_bgg_select') await handleAddBggSelect(interaction);
       else if (id === 'library_add_partial_select')
@@ -131,9 +210,24 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handleExpansionSelect(interaction, id.slice('game_exp_'.length));
       else if (id.startsWith('game_tags_'))
         await handleGameTagSelect(interaction, id.slice('game_tags_'.length));
+      else if (id === 'hub_mp_condition_select') await handleHubMarketplaceConditionSelect(interaction);
+      else if (id === 'snacks_remove_select') await handleSnacksRemoveSelect(interaction);
+      else if (id === 'hub_snacks_remove_select') await handleHubSnacksRemoveSelect(interaction);
+    } else if (interaction.isUserSelectMenu()) {
+      const id = interaction.customId;
+      if (id === 'hub_room_invite_select') await handleHubRoomInviteSelect(interaction);
+      else if (id === 'hub_room_kick_select') await handleHubRoomKickSelect(interaction);
     } else if (interaction.isModalSubmit()) {
       if (interaction.customId === 'game_manual') await handleManualGameSubmit(interaction);
       else if (interaction.customId === 'library_edit_modal') await handleEditModal(interaction);
+      else if (interaction.customId === 'hub_suggest_modal') await handleHubSuggestModal(interaction);
+      else if (interaction.customId === 'hub_request_modal') await handleHubRequestModal(interaction);
+      else if (interaction.customId === 'hub_view_modal') await handleHubViewModal(interaction);
+      else if (interaction.customId === 'hub_room_persist_modal') await handleHubRoomPersistModal(interaction);
+      else if (interaction.customId === 'hub_mp_sell_modal') await handleHubMarketplaceSellModal(interaction);
+      else if (interaction.customId === 'hub_mp_trade_modal') await handleHubMarketplaceTradeModal(interaction);
+      else if (interaction.customId === 'hub_mp_trade_looking_for_modal') await handleHubMarketplaceTradeLookingForModal(interaction);
+      else if (interaction.customId === 'hub_snacks_add_modal') await handleHubSnacksAddModal(interaction);
       else if (interaction.customId.startsWith('mp_bid_')) {
         await handleBidModal(interaction as unknown as ModalSubmitInteraction, interaction.customId.slice('mp_bid_'.length));
       } else if (interaction.customId.startsWith('mp_price_modal_')) {
@@ -142,8 +236,16 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         const rest = interaction.customId.slice('mp_counter_modal_'.length);
         const sep = rest.indexOf('_');
         await handleCounterModal(interaction as unknown as ModalSubmitInteraction, rest.slice(0, sep), rest.slice(sep + 1));
+      } else if (interaction.customId.startsWith('mp_reply_modal_')) {
+        const rest = interaction.customId.slice('mp_reply_modal_'.length);
+        const sep = rest.indexOf('_');
+        await handleReplyModal(interaction as unknown as ModalSubmitInteraction, rest.slice(0, sep), rest.slice(sep + 1));
+      } else if (interaction.customId.startsWith('mp_edit_modal_')) {
+        await handleMarketplaceEditModal(interaction as unknown as ModalSubmitInteraction, interaction.customId.slice('mp_edit_modal_'.length));
       } else if (interaction.customId.startsWith('mp_ref_modal_')) {
         await handleRefModal(interaction as unknown as ModalSubmitInteraction, interaction.customId.slice('mp_ref_modal_'.length));
+      } else if (interaction.customId.startsWith('mp_match_research_modal_')) {
+        await handleMatchResearchModal(interaction as unknown as ModalSubmitInteraction, interaction.customId.slice('mp_match_research_modal_'.length));
       }
     } else if (interaction.isButton()) {
       const id = interaction.customId;
@@ -171,6 +273,10 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handleLibraryListNav(interaction, 'prev');
       } else if (id === 'library_list_next') {
         await handleLibraryListNav(interaction, 'next');
+      } else if (id === 'library_mine_prev') {
+        await handleLibraryMineNav(interaction, 'prev');
+      } else if (id === 'library_mine_next') {
+        await handleLibraryMineNav(interaction, 'next');
       } else if (id === 'library_add_confirm') {
         await handleAddConfirm(interaction);
       } else if (id === 'library_add_cancel') {
@@ -189,12 +295,66 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handleTagsSkip(interaction);
       } else if (id.startsWith('library_unrequest_all_')) {
         await handleUnrequestAll(interaction, id.slice('library_unrequest_all_'.length));
+      } else if (id.startsWith('library_suggest_from_request_')) {
+        await handleRequestSuggestConfirm(interaction, id.slice('library_suggest_from_request_'.length));
+      } else if (id.startsWith('library_confirmbring_')) {
+        await handleLibraryConfirmBring(interaction, id.slice('library_confirmbring_'.length));
+      } else if (id.startsWith('library_declinebring_')) {
+        await handleLibraryDeclineBring(interaction, id.slice('library_declinebring_'.length));
+      } else if (id === 'hub_suggest') {
+        await handleHubSuggestButton(interaction);
+      } else if (id === 'hub_request') {
+        await handleHubRequestButton(interaction);
+      } else if (id === 'hub_bring') {
+        await handleHubBringButton(interaction);
+      } else if (id === 'hub_general_view') {
+        await handleHubGeneralViewButton(interaction);
+      } else if (id === 'hub_general_browse') {
+        await handleHubGeneralBrowseButton(interaction);
+      } else if (id === 'hub_general_mine') {
+        await handleHubGeneralMineButton(interaction);
+      } else if (id === 'hub_general_random') {
+        await handleHubGeneralRandomButton(interaction);
+      } else if (id === 'hub_room_invite') {
+        await handleHubRoomInviteButton(interaction);
+      } else if (id === 'hub_room_kick') {
+        await handleHubRoomKickButton(interaction);
+      } else if (id === 'hub_room_persist') {
+        await handleHubRoomPersistButton(interaction);
+      } else if (id === 'hub_mp_sell') {
+        await handleHubMarketplaceSellButton(interaction);
+      } else if (id === 'hub_mp_trade') {
+        await handleHubMarketplaceTradeButton(interaction);
+      } else if (id === 'hub_mp_offers_yes') {
+        await handleHubMarketplaceOffersYes(interaction);
+      } else if (id === 'hub_mp_offers_no') {
+        await handleHubMarketplaceOffersNo(interaction);
+      } else if (id === 'hub_mp_browse') {
+        await handleHubMarketplaceBrowseButton(interaction);
+      } else if (id === 'hub_mp_my') {
+        await handleHubMarketplaceMyButton(interaction);
+      } else if (id === 'hub_challenge_status') {
+        await handleHubChallengeStatusButton(interaction);
+      } else if (id === 'hub_challenge_leaderboard') {
+        await handleHubChallengeLeaderboardButton(interaction);
+      } else if (id === 'hub_snacks') {
+        await handleHubSnacksButton(interaction);
+      } else if (id === 'hub_snacks_add') {
+        await handleHubSnacksAddButton(interaction);
+      } else if (id === 'hub_snacks_remove') {
+        await handleHubSnacksRemoveButton(interaction);
+      } else if (id === 'bgg_link_import') {
+        await handleBggLinkImportButton(interaction);
       } else if (id.startsWith('game_tags_skip_')) {
         await handleGameTagSkip(interaction, id.slice('game_tags_skip_'.length));
       } else if (id === 'game_bring_confirm') {
         await handleBringConfirm(interaction);
       } else if (id === 'game_bring_cancel') {
         await handleBringCancel(interaction);
+      } else if (id === 'game_bgg_prev') {
+        await handleBGGSearchPage(interaction, 'prev');
+      } else if (id === 'game_bgg_next') {
+        await handleBGGSearchPage(interaction, 'next');
       } else if (id.startsWith('game_manual_')) {
         await handleManualBtn(interaction);
       } else if (id.startsWith('rsvp_')) {
@@ -222,6 +382,12 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handlePriceCustomButton(interaction, id.slice('mp_price_custom_'.length));
       } else if (id.startsWith('mp_interest_')) {
         await handleInterestButton(interaction, id.slice('mp_interest_'.length));
+      } else if (id.startsWith('mp_buynowyes_')) {
+        await handleBuyNowConfirm(interaction, id.slice('mp_buynowyes_'.length));
+      } else if (id.startsWith('mp_buynowno_')) {
+        await handleBuyNowCancel(interaction);
+      } else if (id.startsWith('mp_buynow_')) {
+        await handleBuyNowButton(interaction, id.slice('mp_buynow_'.length));
       } else if (id.startsWith('mp_accept_')) {
         const rest = id.slice('mp_accept_'.length);
         const sep = rest.indexOf('_');
@@ -234,6 +400,10 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         const rest = id.slice('mp_counter_'.length);
         const sep = rest.indexOf('_');
         await handleCounterButton(interaction, rest.slice(0, sep), rest.slice(sep + 1));
+      } else if (id.startsWith('mp_reply_') && !id.startsWith('mp_reply_modal_')) {
+        const rest = id.slice('mp_reply_'.length);
+        const sep = rest.indexOf('_');
+        await handleReplyButton(interaction, rest.slice(0, sep), rest.slice(sep + 1));
       } else if (id.startsWith('mp_buyer_accept_')) {
         const rest = id.slice('mp_buyer_accept_'.length);
         const sep = rest.indexOf('_');
@@ -252,8 +422,18 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handleAddRefButton(interaction, id.slice('mp_ref_add_'.length));
       } else if (id.startsWith('mp_ref_skip_')) {
         await handleSkipRefButton(interaction, id.slice('mp_ref_skip_'.length));
+      } else if (id.startsWith('mp_match_yes_')) {
+        await handleMatchConfirmYes(interaction, id.slice('mp_match_yes_'.length));
+      } else if (id.startsWith('mp_match_search_')) {
+        await handleMatchConfirmSearchAgain(interaction, id.slice('mp_match_search_'.length));
+      } else if (id.startsWith('mp_match_notbgg_')) {
+        await handleMatchConfirmNotBgg(interaction, id.slice('mp_match_notbgg_'.length));
       } else if (id.startsWith('mp_exp_skip_')) {
         await handleSkipExpansions(interaction, id.slice('mp_exp_skip_'.length));
+      } else if (id.startsWith('mp_base_yes_')) {
+        await handleIncludeBaseGameYes(interaction, id.slice('mp_base_yes_'.length));
+      } else if (id.startsWith('mp_base_no_')) {
+        await handleIncludeBaseGameNo(interaction, id.slice('mp_base_no_'.length));
       }
     }
   } catch (err) {
