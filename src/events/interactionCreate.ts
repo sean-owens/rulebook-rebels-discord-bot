@@ -147,6 +147,8 @@ import {
   handleHubChallengeLeaderboardButton,
 } from '../commands/boardgamechallenge';
 import { extractCommandUsage, recordCommandUsage } from '../utils/commandUsageStorage';
+import { handleWelcomeWaveButton } from './guildMemberAdd';
+import { WAVE_BUTTON_PREFIX, waveButtonTargetUserId } from '../utils/welcomeAnnouncement';
 
 export async function handleInteraction(interaction: Interaction): Promise<void> {
   const label = interaction.isChatInputCommand()
@@ -434,6 +436,8 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handleIncludeBaseGameYes(interaction, id.slice('mp_base_yes_'.length));
       } else if (id.startsWith('mp_base_no_')) {
         await handleIncludeBaseGameNo(interaction, id.slice('mp_base_no_'.length));
+      } else if (id.startsWith(WAVE_BUTTON_PREFIX)) {
+        await handleWelcomeWaveButton(interaction, waveButtonTargetUserId(id));
       }
     }
   } catch (err) {

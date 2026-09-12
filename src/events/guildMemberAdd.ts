@@ -1,5 +1,15 @@
-import { EmbedBuilder, GuildMember, TextChannel } from 'discord.js';
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonInteraction,
+  ButtonStyle,
+  EmbedBuilder,
+  GuildMember,
+  MessageFlags,
+  TextChannel,
+} from 'discord.js';
 import { getGuildConfig } from '../utils/config';
+import { pickJoinAnnouncementText, waveButtonCustomId } from '../utils/welcomeAnnouncement';
 
 export async function handleGuildMemberAdd(member: GuildMember): Promise<void> {
   const config = await getGuildConfig(member.guild.id);
@@ -83,6 +93,33 @@ export async function handleGuildMemberAdd(member: GuildMember): Promise<void> {
     }
   }
 
+  // ── Public "everyone say hi" announcement ────────────────────────────────
+  if (config.memberAnnouncementChannelId) {
+    try {
+      const announceChannel = (await member.client.channels.fetch(
+        config.memberAnnouncementChannelId,
+      )) as TextChannel;
+
+      const announcement = new EmbedBuilder()
+        .setColor(0x57f287)
+        .setDescription(pickJoinAnnouncementText(member.toString(), member.guild.name))
+        .setThumbnail(member.user.displayAvatarURL())
+        .setFooter({ text: `Member #${member.guild.memberCount}` });
+
+      const waveRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(waveButtonCustomId(member.id))
+          .setLabel('Wave to say hi!')
+          .setEmoji('👋')
+          .setStyle(ButtonStyle.Secondary),
+      );
+
+      await announceChannel.send({ embeds: [announcement], components: [waveRow] });
+    } catch (err) {
+      console.warn('Could not post member announcement:', err);
+    }
+  }
+
   // ── DM to new member ─────────────────────────────────────────────────────
   try {
     await member.send(
@@ -107,4 +144,23 @@ export async function handleGuildMemberAdd(member: GuildMember): Promise<void> {
   } catch {
     // User may have DMs disabled — that's fine
   }
+}
+
+// Handles a click on the "👋 Wave to say hi!" button attached to the public
+// join announcement (see above). Public reply so other members see who's
+// said hi, mirroring how people naturally reply to Discord's own native
+// join-message wave button.
+export async function handleWelcomeWaveButton(
+  interaction: ButtonInteraction,
+  targetUserId: string,
+): Promise<void> {
+  if (interaction.user.id === targetUserId) {
+    await interaction.reply({
+      content: "You can't wave to yourself — but thanks for saying hi anyway! 👋",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  await interaction.reply(`👋 ${interaction.user} waved to <@${targetUserId}>!`);
 }

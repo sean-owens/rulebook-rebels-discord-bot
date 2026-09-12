@@ -328,6 +328,12 @@ export const data = new SlashCommandBuilder()
           )
           .addChannelOption((opt) =>
             opt
+              .setName('announcement_channel')
+              .setDescription('Public channel where everyone is notified a new member joined')
+              .setRequired(false),
+          )
+          .addChannelOption((opt) =>
+            opt
               .setName('rules_channel')
               .setDescription('Channel containing server rules')
               .setRequired(false),

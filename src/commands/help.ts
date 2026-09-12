@@ -148,7 +148,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
             {
               name: '🔧  /admin — Welcome, marketplace & rooms',
               value: [
-                '`/admin welcome config` — Configure the welcome message and channel',
+                '`/admin welcome config` — Configure the welcome message/channel and the public new-member announcement channel',
                 '`/admin welcome test` — Preview the welcome message',
                 '`/admin welcome greet` — Manually send the welcome message to a member',
                 '`/admin marketplace config` — Set the marketplace channel (Forum or Text) and negotiation mode',
