@@ -2407,9 +2407,9 @@ See 2.8f for the full checklist — this Admin-tier pass just confirms Admins re
 
 ### 3.9j `/admin welcome config`
 
-**What it does:** Sets the welcome channel, the public new-member announcement channel, rules channel, Facebook group URL, and BGG group URL for the automatic welcome flow. The welcome channel gets the private walkthrough/introductions embed aimed at the new member; the announcement channel (if set) gets a separate, short public post — "🎉 Everyone welcome @NewMember to **\<server\>**!" with the member's avatar, a member-count footer, and a 👋 reaction pre-added so others have an easy way to say hi — visible to the whole server rather than just the new member. Both are independently optional.
+**What it does:** Sets the welcome channel, the public new-member announcement channel, rules channel, Facebook group URL, and BGG group URL for the automatic welcome flow. The welcome channel gets the private walkthrough/introductions embed aimed at the new member; the announcement channel (if set) gets a separate, short public post — randomized flavor text in the style of Discord's own native join messages (e.g. "🌊 @NewMember just slid into **\<server\>**!") with the member's avatar, a member-count footer, and a "👋 Wave to say hi!" button — visible to the whole server rather than just the new member. Clicking the button publicly replies "👋 @Clicker waved to @NewMember!" (or an ephemeral "can't wave to yourself" if the new member clicks their own button). Both channels are independently optional. The command's reply also tips admins toward pairing this with Discord's own native System Messages welcome message (Server Settings → Overview) for its "just slid into the server" join messages, which is a separate, per-server Discord setting the bot doesn't control.
 
-- [ ] Run with no options — confirm current config is displayed, including "Announcement channel"
+- [ ] Run with no options — confirm current config is displayed, including "Announcement channel" and the 💡 tip about Discord's native System Messages welcome message
 - [ ] Set channel: `/admin welcome config channel:#welcome`
 - [ ] Set announcement channel: `/admin welcome config announcement_channel:#general`
 - [ ] Set rules channel: `/admin welcome config rules_channel:#rules`
@@ -2422,7 +2422,9 @@ See 2.8f for the full checklist — this Admin-tier pass just confirms Admins re
 
 **What it does:** Sends the welcome message to yourself as a preview.
 
-- [ ] Run `/admin welcome test` — confirm the welcome message appears in the welcome channel, the public announcement appears in the announcement channel (with a 👋 reaction already on it), and a DM is sent
+- [ ] Run `/admin welcome test` — confirm the welcome message appears in the welcome channel, the public announcement (with its "👋 Wave to say hi!" button) appears in the announcement channel, and a DM is sent
+- [ ] Click "👋 Wave to say hi!" on the announcement as a different member — confirm a public reply "👋 @Clicker waved to @You!" appears
+- [ ] Click "👋 Wave to say hi!" as the previewed member themselves — confirm an ephemeral "You can't wave to yourself" reply instead
 - [ ] With a BGG group URL configured (3.9j), confirm the welcome embed includes a "🎲 BoardGameGeek" field linking to it
 - [ ] With no BGG group URL configured, confirm the welcome embed omits the BoardGameGeek field entirely
 - [ ] With no announcement channel configured, confirm no public announcement is posted and the command still succeeds
@@ -2431,7 +2433,7 @@ See 2.8f for the full checklist — this Admin-tier pass just confirms Admins re
 
 **What it does:** Manually sends the welcome message to a specific server member.
 
-- [ ] `/admin welcome greet member:@SomeUser` — confirm welcome message is sent to that user's DMs, posted in the welcome channel, and the public announcement is posted in the announcement channel
+- [ ] `/admin welcome greet member:@SomeUser` — confirm welcome message is sent to that user's DMs, posted in the welcome channel, and the public announcement (with its wave button) is posted in the announcement channel
 
 ### 3.9m `/admin marketplace config`
 
@@ -3083,15 +3085,18 @@ These test cases involve genuine back-and-forth between two distinct Discord ide
 
 ## 5.2 New Member Join — Welcome Flow *(System/Automated flow — triggered by a real `guildMemberAdd` join event, not a slash command permission tier)*
 
-**What it does:** When a new member joins the server, the bot sends a welcome DM, posts a message in the configured welcome channel, and (if an announcement channel is configured) posts a separate public "everyone say hi" announcement with a 👋 reaction pre-added.
+**What it does:** When a new member joins the server, the bot sends a welcome DM, posts a message in the configured welcome channel, and (if an announcement channel is configured) posts a separate public announcement with randomized "just slid into the server"-style flavor text and a "👋 Wave to say hi!" button other members can click.
 
 - [ ] Have a second account join the server (a fresh account, or an existing test account you first kick and then re-invite) — confirm the welcome message is automatically sent to the welcome channel and to the new member via DM
 - [ ] Confirm the welcome channel embed includes a link to the rules channel, Facebook group, and BGG group (if configured via `/admin welcome config`), plus a "📅 Events" field (not "Game Nights") pointing at the announcements channel, "🎮 Quick Actions" (`/hub`), "🏷️ Game Preferences" (`/myroles`), "📚 Browse the Library" (`/library list`), and "🎲 Suggest a Game" (`/game suggest`) fields — note it deliberately does **not** mention `/library add`, since a brand-new member shouldn't feel pressed to add their own games on day one
 - [ ] Confirm the DM lists `/hub`, `/myroles`, `/library list`, and `/game suggest`, and points to both `/getting-started` and `/help` — and, like the channel embed, does not mention `/library add`
-- [ ] With an announcement channel configured (`/admin welcome config announcement_channel:#general`), confirm the join also posts a short public embed there — "🎉 Everyone welcome @NewMember to \<server\>!" with the new member's avatar and a member-count footer — and that the bot has already added a 👋 reaction to it
+- [ ] With an announcement channel configured (`/admin welcome config announcement_channel:#general`), confirm the join also posts a short public embed there — flavor text like "🌊 @NewMember just slid into **\<server\>**!" with the new member's avatar, a member-count footer, and a "👋 Wave to say hi!" button
+- [ ] Have a third account (not the new member) click "👋 Wave to say hi!" — confirm a public reply "👋 @Clicker waved to @NewMember!" appears in the announcement channel
+- [ ] Have the new member click "👋 Wave to say hi!" on their own announcement — confirm an ephemeral "You can't wave to yourself" reply instead of a public post
 
 **Edge cases:**
 - [ ] Trigger a join with `/admin welcome config` left at defaults (no rules channel, Facebook URL, or BGG URL set) — confirm the welcome message still sends cleanly without a broken link or placeholder text
 - [ ] Disable DMs on the joining account beforehand — confirm the channel post still happens even if the DM can't be delivered
 - [ ] With no announcement channel configured, confirm no public announcement is posted and the rest of the join flow (welcome channel + DM) is unaffected
+- [ ] For servers that also want Discord's exact native "just slid into the server" join message with its own built-in wave button, enable it separately via Server Settings → Overview → "Send a random welcome message when someone joins this server" (requires a System Messages Channel) — this is independent of the bot and not something `/admin welcome config` controls
 - [ ] With an announcement channel configured but deleted/inaccessible, confirm the join still completes (welcome channel post + DM still happen) and the bot logs a warning rather than crashing

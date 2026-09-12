@@ -28,6 +28,8 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
         `> Rules channel: ${ch(c.rulesChannelId)}`,
         `> Facebook group: ${c.facebookGroupUrl || '*not set*'}`,
         `> BGG group: ${c.bggGroupUrl || '*not set*'}`,
+        '',
+        '💡 Tip: pair this with Discord\'s own System Messages welcome message (Server Settings → Overview) for its native "just slid into the server" join messages too.',
       ].join('\n'),
       flags: MessageFlags.Ephemeral,
     });

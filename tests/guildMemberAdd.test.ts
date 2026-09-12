@@ -5,15 +5,15 @@ vi.mock('../src/utils/config', () => ({
   getGuildConfig: (...args: unknown[]) => mockGetGuildConfig(...args),
 }));
 
-import { handleGuildMemberAdd } from '../src/events/guildMemberAdd';
+import { handleGuildMemberAdd, handleWelcomeWaveButton } from '../src/events/guildMemberAdd';
 
 function makeMember(overrides: Record<string, unknown> = {}) {
   const send = vi.fn(async () => {});
-  const react = vi.fn(async () => {});
-  const channelSend = vi.fn(async () => ({ react }));
+  const channelSend = vi.fn(async () => ({}));
   const fetch = vi.fn(async () => ({ send: channelSend }));
 
   const member = {
+    id: 'user-1',
     guild: { id: 'guild-1', name: 'Rulebook Rebels', memberCount: 42 },
     client: { channels: { fetch } },
     user: { displayAvatarURL: () => 'https://example.com/avatar.png' },
@@ -23,7 +23,7 @@ function makeMember(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 
-  return { member, send, channelSend, fetch, react };
+  return { member, send, channelSend, fetch };
 }
 
 describe('handleGuildMemberAdd', () => {
@@ -72,17 +72,25 @@ describe('handleGuildMemberAdd', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('posts a public announcement with a wave reaction when an announcement channel is configured', async () => {
+  it('posts a public announcement with a "Wave to say hi!" button when an announcement channel is configured', async () => {
     mockGetGuildConfig.mockResolvedValue({ memberAnnouncementChannelId: 'chan-2' });
-    const { member, channelSend, fetch, react } = makeMember();
+    const { member, channelSend, fetch } = makeMember();
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
 
     await handleGuildMemberAdd(member as any);
 
     expect(fetch).toHaveBeenCalledWith('chan-2');
     expect(channelSend).toHaveBeenCalled();
-    const embed = channelSend.mock.calls[0][0].embeds[0].toJSON();
-    expect(embed.description).toContain('Everyone welcome');
-    expect(react).toHaveBeenCalledWith('👋');
+    const payload = channelSend.mock.calls[0][0];
+    const embed = payload.embeds[0].toJSON();
+    expect(embed.description).toContain('<@user-1>');
+    expect(embed.footer.text).toBe('Member #42');
+
+    const button = payload.components[0].components[0].toJSON();
+    expect(button.custom_id).toBe('welcome_wave_user-1');
+    expect(button.label).toBe('Wave to say hi!');
+
+    randomSpy.mockRestore();
   });
 
   it('skips the public announcement when no announcement channel is configured', async () => {
@@ -132,5 +140,32 @@ describe('handleGuildMemberAdd', () => {
     });
 
     await expect(handleGuildMemberAdd(member as any)).resolves.not.toThrow();
+  });
+});
+
+function makeButtonInteraction(userId: string) {
+  return {
+    user: { id: userId, toString: () => `<@${userId}>` },
+    reply: vi.fn(async () => {}),
+  };
+}
+
+describe('handleWelcomeWaveButton', () => {
+  it('publicly replies that the clicker waved to the new member', async () => {
+    const interaction = makeButtonInteraction('waver-1');
+
+    await handleWelcomeWaveButton(interaction as any, 'newmember-1');
+
+    expect(interaction.reply).toHaveBeenCalledWith('👋 <@waver-1> waved to <@newmember-1>!');
+  });
+
+  it('replies ephemerally instead when the new member clicks their own wave button', async () => {
+    const interaction = makeButtonInteraction('newmember-1');
+
+    await handleWelcomeWaveButton(interaction as any, 'newmember-1');
+
+    const reply = interaction.reply.mock.calls[0][0];
+    expect(reply.content).toContain("can't wave to yourself");
+    expect(reply.flags).toBeDefined();
   });
 });
