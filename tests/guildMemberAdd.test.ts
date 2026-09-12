@@ -9,7 +9,8 @@ import { handleGuildMemberAdd } from '../src/events/guildMemberAdd';
 
 function makeMember(overrides: Record<string, unknown> = {}) {
   const send = vi.fn(async () => {});
-  const channelSend = vi.fn(async () => {});
+  const react = vi.fn(async () => {});
+  const channelSend = vi.fn(async () => ({ react }));
   const fetch = vi.fn(async () => ({ send: channelSend }));
 
   const member = {
@@ -22,7 +23,7 @@ function makeMember(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 
-  return { member, send, channelSend, fetch };
+  return { member, send, channelSend, fetch, react };
 }
 
 describe('handleGuildMemberAdd', () => {
@@ -69,6 +70,57 @@ describe('handleGuildMemberAdd', () => {
     await handleGuildMemberAdd(member as any);
 
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('posts a public announcement with a wave reaction when an announcement channel is configured', async () => {
+    mockGetGuildConfig.mockResolvedValue({ memberAnnouncementChannelId: 'chan-2' });
+    const { member, channelSend, fetch, react } = makeMember();
+
+    await handleGuildMemberAdd(member as any);
+
+    expect(fetch).toHaveBeenCalledWith('chan-2');
+    expect(channelSend).toHaveBeenCalled();
+    const embed = channelSend.mock.calls[0][0].embeds[0].toJSON();
+    expect(embed.description).toContain('Everyone welcome');
+    expect(react).toHaveBeenCalledWith('👋');
+  });
+
+  it('skips the public announcement when no announcement channel is configured', async () => {
+    mockGetGuildConfig.mockResolvedValue({});
+    const { member, fetch } = makeMember();
+
+    await handleGuildMemberAdd(member as any);
+
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('posts both the introductions embed and the public announcement when both channels are configured', async () => {
+    mockGetGuildConfig.mockResolvedValue({
+      welcomeChannelId: 'chan-1',
+      memberAnnouncementChannelId: 'chan-2',
+    });
+    const { member, fetch, channelSend } = makeMember();
+
+    await handleGuildMemberAdd(member as any);
+
+    expect(fetch).toHaveBeenCalledWith('chan-1');
+    expect(fetch).toHaveBeenCalledWith('chan-2');
+    expect(channelSend).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not throw when posting the announcement fails (e.g. missing permissions)', async () => {
+    mockGetGuildConfig.mockResolvedValue({ memberAnnouncementChannelId: 'chan-2' });
+    const { member } = makeMember({
+      client: {
+        channels: {
+          fetch: vi.fn(async () => {
+            throw new Error('Missing Access');
+          }),
+        },
+      },
+    });
+
+    await expect(handleGuildMemberAdd(member as any)).resolves.not.toThrow();
   });
 
   it('does not throw when the member has DMs disabled', async () => {

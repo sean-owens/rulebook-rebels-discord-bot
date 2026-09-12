@@ -83,6 +83,26 @@ export async function handleGuildMemberAdd(member: GuildMember): Promise<void> {
     }
   }
 
+  // ── Public "everyone say hi" announcement ────────────────────────────────
+  if (config.memberAnnouncementChannelId) {
+    try {
+      const announceChannel = (await member.client.channels.fetch(
+        config.memberAnnouncementChannelId,
+      )) as TextChannel;
+
+      const announcement = new EmbedBuilder()
+        .setColor(0x57f287)
+        .setDescription(`🎉 Everyone welcome ${member} to **${member.guild.name}**!`)
+        .setThumbnail(member.user.displayAvatarURL())
+        .setFooter({ text: `Member #${member.guild.memberCount}` });
+
+      const announcementMessage = await announceChannel.send({ embeds: [announcement] });
+      await announcementMessage.react('👋');
+    } catch (err) {
+      console.warn('Could not post member announcement:', err);
+    }
+  }
+
   // ── DM to new member ─────────────────────────────────────────────────────
   try {
     await member.send(

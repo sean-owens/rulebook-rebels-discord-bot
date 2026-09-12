@@ -9,6 +9,12 @@ export interface GuildConfig {
   defaultDescription: string;
   announcementsChannelId: string;
   welcomeChannelId: string;
+  // Public "everyone say hi" post when a new member joins — distinct from
+  // welcomeChannelId, which is the private walkthrough/introductions embed
+  // aimed at the new member themselves. Optional: unset means no public
+  // join announcement is posted (see handleGuildMemberAdd in
+  // src/events/guildMemberAdd.ts). Set via /admin welcome config.
+  memberAnnouncementChannelId: string;
   rulesChannelId: string;
   // "Quick Actions" button hub for general chat (see updateGeneralHubPin in
   // src/utils/generalHub.ts) — RSVP/Browse/My Games/Random/Request buttons,
@@ -147,6 +153,7 @@ const DEFAULT_CONFIG: GuildConfig = {
   defaultDescription: '',
   announcementsChannelId: '',
   welcomeChannelId: '',
+  memberAnnouncementChannelId: '',
   rulesChannelId: '',
   facebookGroupUrl: '',
   bggGroupUrl: '',
