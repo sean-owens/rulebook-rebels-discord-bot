@@ -2407,22 +2407,24 @@ See 2.8f for the full checklist — this Admin-tier pass just confirms Admins re
 
 ### 3.9j `/admin welcome config`
 
-**What it does:** Sets the welcome channel, the public new-member announcement channel, rules channel, Facebook group URL, and BGG group URL for the automatic welcome flow. The welcome channel gets the private walkthrough/introductions embed aimed at the new member; the announcement channel (if set) gets a separate, short public post — randomized flavor text in the style of Discord's own native join messages (e.g. "🌊 @NewMember just slid into **\<server\>**!") with the member's avatar, a member-count footer, and a "👋 Wave to say hi!" button — visible to the whole server rather than just the new member. Clicking the button publicly replies "👋 @Clicker waved to @NewMember!" (or an ephemeral "can't wave to yourself" if the new member clicks their own button). Both channels are independently optional. The command's reply also tips admins toward pairing this with Discord's own native System Messages welcome message (Server Settings → Overview) for its "just slid into the server" join messages, which is a separate, per-server Discord setting the bot doesn't control.
+**What it does:** Sets the welcome channel, the public new-member announcement channel, an optional announcement image/GIF URL, rules channel, Facebook group URL, and BGG group URL for the automatic welcome flow. The welcome channel gets the private walkthrough/introductions embed aimed at the new member; the announcement channel (if set) gets a separate, short public post — randomized flavor text in the style of Discord's own native join messages (e.g. "🌊 @NewMember just slid into **\<server\>**!") with the member's avatar, a member-count footer, a "👋 Wave to say hi!" button, and (if configured, or if a bundled default GIF asset has been shipped — see `WELCOME_ANNOUNCEMENT_DEFAULT_GIF_PATH` in `src/utils/welcomeAnnouncement.ts`) a big hello character/GIF image — visible to the whole server rather than just the new member. Clicking the wave button publicly replies "👋 @Clicker waved to @NewMember!" (or an ephemeral "can't wave to yourself" if the new member clicks their own button). All three announcement-related settings are independently optional. The command's reply also tips admins toward pairing this with Discord's own native System Messages welcome message (Server Settings → Overview) for its "just slid into the server" join messages, which is a separate, per-server Discord setting the bot doesn't control.
 
-- [ ] Run with no options — confirm current config is displayed, including "Announcement channel" and the 💡 tip about Discord's native System Messages welcome message
+- [ ] Run with no options — confirm current config is displayed, including "Announcement channel", "Announcement image/GIF", and the 💡 tip about Discord's native System Messages welcome message
 - [ ] Set channel: `/admin welcome config channel:#welcome`
 - [ ] Set announcement channel: `/admin welcome config announcement_channel:#general`
+- [ ] Set announcement image URL: `/admin welcome config announcement_image_url:https://example.com/wave.gif`
 - [ ] Set rules channel: `/admin welcome config rules_channel:#rules`
 - [ ] Set Facebook URL: `/admin welcome config facebook_url:https://facebook.com/groups/...`
 - [ ] Set BGG URL: `/admin welcome config bgg_url:https://boardgamegeek.com/guild/...`
-- [ ] Confirm all five values persist after setting them
+- [ ] Confirm all six values persist after setting them
 - [ ] With no announcement channel configured, confirm a new member join produces no public announcement post (welcome channel/DM behavior unaffected)
+- [ ] With an announcement image URL configured, confirm the public announcement's big image is that URL; with it unset, confirm no image appears (unless a bundled default GIF asset has been shipped)
 
 ### 3.9k `/admin welcome test`
 
 **What it does:** Sends the welcome message to yourself as a preview.
 
-- [ ] Run `/admin welcome test` — confirm the welcome message appears in the welcome channel, the public announcement (with its "👋 Wave to say hi!" button) appears in the announcement channel, and a DM is sent
+- [ ] Run `/admin welcome test` — confirm the welcome message appears in the welcome channel, the public announcement (with its "👋 Wave to say hi!" button and, if configured, its image/GIF) appears in the announcement channel, and a DM is sent
 - [ ] Click "👋 Wave to say hi!" on the announcement as a different member — confirm a public reply "👋 @Clicker waved to @You!" appears
 - [ ] Click "👋 Wave to say hi!" as the previewed member themselves — confirm an ephemeral "You can't wave to yourself" reply instead
 - [ ] With a BGG group URL configured (3.9j), confirm the welcome embed includes a "🎲 BoardGameGeek" field linking to it
@@ -2433,7 +2435,7 @@ See 2.8f for the full checklist — this Admin-tier pass just confirms Admins re
 
 **What it does:** Manually sends the welcome message to a specific server member.
 
-- [ ] `/admin welcome greet member:@SomeUser` — confirm welcome message is sent to that user's DMs, posted in the welcome channel, and the public announcement (with its wave button) is posted in the announcement channel
+- [ ] `/admin welcome greet member:@SomeUser` — confirm welcome message is sent to that user's DMs, posted in the welcome channel, and the public announcement (with its wave button and, if configured, its image/GIF) is posted in the announcement channel
 
 ### 3.9m `/admin marketplace config`
 
@@ -3093,6 +3095,7 @@ These test cases involve genuine back-and-forth between two distinct Discord ide
 - [ ] With an announcement channel configured (`/admin welcome config announcement_channel:#general`), confirm the join also posts a short public embed there — flavor text like "🌊 @NewMember just slid into **\<server\>**!" with the new member's avatar, a member-count footer, and a "👋 Wave to say hi!" button
 - [ ] Have a third account (not the new member) click "👋 Wave to say hi!" — confirm a public reply "👋 @Clicker waved to @NewMember!" appears in the announcement channel
 - [ ] Have the new member click "👋 Wave to say hi!" on their own announcement — confirm an ephemeral "You can't wave to yourself" reply instead of a public post
+- [ ] With `announcement_image_url` also configured, confirm the public announcement shows that image/GIF as its big embed image
 
 **Edge cases:**
 - [ ] Trigger a join with `/admin welcome config` left at defaults (no rules channel, Facebook URL, or BGG URL set) — confirm the welcome message still sends cleanly without a broken link or placeholder text

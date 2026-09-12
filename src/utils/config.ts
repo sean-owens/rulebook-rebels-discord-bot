@@ -15,6 +15,12 @@ export interface GuildConfig {
   // join announcement is posted (see handleGuildMemberAdd in
   // src/events/guildMemberAdd.ts). Set via /admin welcome config.
   memberAnnouncementChannelId: string;
+  // Optional GIF/image URL shown as the big image on the public join
+  // announcement (see handleGuildMemberAdd) — lets each server pick its own
+  // "hello" character/GIF, similar to how other welcome bots show one.
+  // Falls back to WELCOME_ANNOUNCEMENT_DEFAULT_GIF_PATH in
+  // src/utils/welcomeAnnouncement.ts when unset, if that asset exists.
+  memberAnnouncementImageUrl: string;
   rulesChannelId: string;
   // "Quick Actions" button hub for general chat (see updateGeneralHubPin in
   // src/utils/generalHub.ts) — RSVP/Browse/My Games/Random/Request buttons,
@@ -154,6 +160,7 @@ const DEFAULT_CONFIG: GuildConfig = {
   announcementsChannelId: '',
   welcomeChannelId: '',
   memberAnnouncementChannelId: '',
+  memberAnnouncementImageUrl: '',
   rulesChannelId: '',
   facebookGroupUrl: '',
   bggGroupUrl: '',

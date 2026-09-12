@@ -1,5 +1,6 @@
 import {
   ActionRowBuilder,
+  AttachmentBuilder,
   ButtonBuilder,
   ButtonInteraction,
   ButtonStyle,
@@ -9,7 +10,11 @@ import {
   TextChannel,
 } from 'discord.js';
 import { getGuildConfig } from '../utils/config';
-import { pickJoinAnnouncementText, waveButtonCustomId } from '../utils/welcomeAnnouncement';
+import {
+  pickJoinAnnouncementText,
+  resolveAnnouncementImage,
+  waveButtonCustomId,
+} from '../utils/welcomeAnnouncement';
 
 export async function handleGuildMemberAdd(member: GuildMember): Promise<void> {
   const config = await getGuildConfig(member.guild.id);
@@ -106,6 +111,15 @@ export async function handleGuildMemberAdd(member: GuildMember): Promise<void> {
         .setThumbnail(member.user.displayAvatarURL())
         .setFooter({ text: `Member #${member.guild.memberCount}` });
 
+      const files: AttachmentBuilder[] = [];
+      const image = resolveAnnouncementImage(config.memberAnnouncementImageUrl);
+      if (image?.type === 'url') {
+        announcement.setImage(image.value);
+      } else if (image?.type === 'attachment') {
+        announcement.setImage(`attachment://${image.filename}`);
+        files.push(new AttachmentBuilder(image.fullPath));
+      }
+
       const waveRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
           .setCustomId(waveButtonCustomId(member.id))
@@ -114,7 +128,7 @@ export async function handleGuildMemberAdd(member: GuildMember): Promise<void> {
           .setStyle(ButtonStyle.Secondary),
       );
 
-      await announceChannel.send({ embeds: [announcement], components: [waveRow] });
+      await announceChannel.send({ embeds: [announcement], components: [waveRow], files });
     } catch (err) {
       console.warn('Could not post member announcement:', err);
     }

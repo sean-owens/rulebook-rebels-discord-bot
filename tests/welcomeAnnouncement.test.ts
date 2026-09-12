@@ -1,10 +1,13 @@
+import path from 'path';
 import { describe, it, expect } from 'vitest';
 import {
   JOIN_ANNOUNCEMENT_TEMPLATES,
   pickJoinAnnouncementText,
+  resolveAnnouncementImage,
   waveButtonCustomId,
   waveButtonTargetUserId,
   WAVE_BUTTON_PREFIX,
+  WELCOME_ANNOUNCEMENT_DEFAULT_GIF_PATH,
 } from '../src/utils/welcomeAnnouncement';
 
 describe('pickJoinAnnouncementText', () => {
@@ -33,5 +36,31 @@ describe('wave button customId helpers', () => {
     const customId = waveButtonCustomId('12345');
     expect(customId).toBe(`${WAVE_BUTTON_PREFIX}12345`);
     expect(waveButtonTargetUserId(customId)).toBe('12345');
+  });
+});
+
+describe('resolveAnnouncementImage', () => {
+  it('prefers a configured URL over the bundled default', () => {
+    const image = resolveAnnouncementImage('https://example.com/wave.gif', () => true);
+    expect(image).toEqual({ type: 'url', value: 'https://example.com/wave.gif' });
+  });
+
+  it('falls back to the bundled default asset when no URL is configured and it exists', () => {
+    const image = resolveAnnouncementImage(undefined, () => true);
+    expect(image).toEqual({
+      type: 'attachment',
+      filename: path.basename(WELCOME_ANNOUNCEMENT_DEFAULT_GIF_PATH),
+      fullPath: path.join(process.cwd(), WELCOME_ANNOUNCEMENT_DEFAULT_GIF_PATH),
+    });
+  });
+
+  it('returns undefined when no URL is configured and the bundled default is missing', () => {
+    const image = resolveAnnouncementImage(undefined, () => false);
+    expect(image).toBeUndefined();
+  });
+
+  it('returns undefined when configuredUrl is an empty string and no default asset exists', () => {
+    const image = resolveAnnouncementImage('', () => false);
+    expect(image).toBeUndefined();
   });
 });
