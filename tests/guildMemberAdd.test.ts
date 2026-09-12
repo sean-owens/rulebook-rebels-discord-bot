@@ -1,3 +1,4 @@
+import fs from 'fs';
 import { describe, it, expect, vi } from 'vitest';
 
 const mockGetGuildConfig = vi.fn();
@@ -91,6 +92,51 @@ describe('handleGuildMemberAdd', () => {
     expect(button.label).toBe('Wave to say hi!');
 
     randomSpy.mockRestore();
+  });
+
+  it('sets the announcement embed image to the configured URL, with no attachment', async () => {
+    mockGetGuildConfig.mockResolvedValue({
+      memberAnnouncementChannelId: 'chan-2',
+      memberAnnouncementImageUrl: 'https://example.com/wave.gif',
+    });
+    const { member, channelSend } = makeMember();
+
+    await handleGuildMemberAdd(member as any);
+
+    const payload = channelSend.mock.calls[0][0];
+    const embed = payload.embeds[0].toJSON();
+    expect(embed.image.url).toBe('https://example.com/wave.gif');
+    expect(payload.files).toEqual([]);
+  });
+
+  it('falls back to a bundled default GIF attachment when no image URL is configured but the asset exists', async () => {
+    mockGetGuildConfig.mockResolvedValue({ memberAnnouncementChannelId: 'chan-2' });
+    const { member, channelSend } = makeMember();
+    const existsSpy = vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+
+    await handleGuildMemberAdd(member as any);
+
+    const payload = channelSend.mock.calls[0][0];
+    const embed = payload.embeds[0].toJSON();
+    expect(embed.image.url).toBe('attachment://welcome-wave.gif');
+    expect(payload.files).toHaveLength(1);
+
+    existsSpy.mockRestore();
+  });
+
+  it('omits the announcement image entirely when no URL is configured and no bundled default exists', async () => {
+    mockGetGuildConfig.mockResolvedValue({ memberAnnouncementChannelId: 'chan-2' });
+    const { member, channelSend } = makeMember();
+    const existsSpy = vi.spyOn(fs, 'existsSync').mockReturnValue(false);
+
+    await handleGuildMemberAdd(member as any);
+
+    const payload = channelSend.mock.calls[0][0];
+    const embed = payload.embeds[0].toJSON();
+    expect(embed.image).toBeUndefined();
+    expect(payload.files).toEqual([]);
+
+    existsSpy.mockRestore();
   });
 
   it('skips the public announcement when no announcement channel is configured', async () => {

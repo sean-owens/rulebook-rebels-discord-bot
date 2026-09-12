@@ -40,6 +40,7 @@ describe('/admin welcome config', () => {
     mockGetGuildConfig.mockResolvedValue({
       welcomeChannelId: 'chan-1',
       memberAnnouncementChannelId: '',
+      memberAnnouncementImageUrl: '',
       rulesChannelId: '',
       facebookGroupUrl: '',
       bggGroupUrl: '',
@@ -52,6 +53,9 @@ describe('/admin welcome config', () => {
     const reply = interaction.reply.mock.calls[0][0];
     expect(reply.content).toContain('Welcome channel: <#chan-1>');
     expect(reply.content).toContain('Announcement channel: *not set*');
+    // No bundled default GIF asset is shipped yet, so this falls all the way to "*not set*"
+    // rather than "*not set (using bundled default)*" — see resolveAnnouncementImage.
+    expect(reply.content).toContain('Announcement image/GIF: *not set*');
     expect(reply.flags).toBe(MessageFlags.Ephemeral);
   });
 
@@ -59,6 +63,7 @@ describe('/admin welcome config', () => {
     mockUpdateGuildConfig.mockResolvedValue({
       welcomeChannelId: '',
       memberAnnouncementChannelId: 'chan-2',
+      memberAnnouncementImageUrl: '',
       rulesChannelId: '',
       facebookGroupUrl: '',
       bggGroupUrl: '',
@@ -72,6 +77,26 @@ describe('/admin welcome config', () => {
     });
     const reply = interaction.reply.mock.calls[0][0];
     expect(reply.content).toContain('Announcement channel: <#chan-2>');
+  });
+
+  it('sets the announcement image URL and echoes it back verbatim', async () => {
+    mockUpdateGuildConfig.mockResolvedValue({
+      welcomeChannelId: '',
+      memberAnnouncementChannelId: '',
+      memberAnnouncementImageUrl: 'https://example.com/wave.gif',
+      rulesChannelId: '',
+      facebookGroupUrl: '',
+      bggGroupUrl: '',
+    });
+    const interaction = makeInteraction({ announcement_image_url: 'https://example.com/wave.gif' });
+
+    await handleConfig(interaction);
+
+    expect(mockUpdateGuildConfig).toHaveBeenCalledWith('guild-1', {
+      memberAnnouncementImageUrl: 'https://example.com/wave.gif',
+    });
+    const reply = interaction.reply.mock.calls[0][0];
+    expect(reply.content).toContain('Announcement image/GIF: https://example.com/wave.gif');
   });
 });
 
