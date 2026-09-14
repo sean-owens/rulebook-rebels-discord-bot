@@ -96,8 +96,48 @@ function bggHeaders(): Record<string, string> {
   return headers;
 }
 
+// BGG occasionally 403s (or 5xx's) a request that succeeds moments later —
+// observed in production taking down an entire weekly challenge cycle,
+// since nothing in this file retried a transient failure. 429 is a
+// deliberate rate-limit signal (not a blip) and 404 is a real "not found",
+// so neither is retried here.
+const RETRYABLE_STATUSES = new Set([403, 500, 502, 503, 504]);
+const MAX_FETCH_RETRIES = 2;
+// The collection endpoint responds 202 while it builds a fresh export for
+// an unsynced user, rather than any of the statuses above — same idea
+// (try again shortly) but a separate BGG-specific contract, so it's opted
+// into per call via `pollFor202` rather than folded into RETRYABLE_STATUSES.
+const MAX_202_POLLS = 1;
+
+// Shared GET wrapper for every BGG XMLAPI2 call in this file. Retries a
+// transient-looking failure a couple of times with backoff, and — when
+// `pollFor202` is set — also polls through the collection endpoint's 202.
+// Returns the raw Response either way; callers still decide what a
+// particular status (404, or a 202 that outlasted the poll budget) means
+// for them, since that varies by endpoint (throw vs. null vs. []).
+async function fetchBGGResponse(
+  url: string,
+  options: { headers?: Record<string, string>; pollFor202?: boolean } = {},
+): Promise<Response> {
+  const headers = { ...bggHeaders(), ...options.headers };
+  for (let transientAttempt = 0, pollAttempt = 0; ; ) {
+    const res = await fetch(url, { headers });
+    if (options.pollFor202 && res.status === 202 && pollAttempt < MAX_202_POLLS) {
+      pollAttempt++;
+      await new Promise((r) => setTimeout(r, 3000));
+      continue;
+    }
+    if (!res.ok && RETRYABLE_STATUSES.has(res.status) && transientAttempt < MAX_FETCH_RETRIES) {
+      await new Promise((r) => setTimeout(r, 1000 * 2 ** transientAttempt));
+      transientAttempt++;
+      continue;
+    }
+    return res;
+  }
+}
+
 async function fetchXML(url: string): Promise<string> {
-  const res = await fetch(url, { headers: bggHeaders() });
+  const res = await fetchBGGResponse(url);
   if (!res.ok) throw new Error(`BGG returned ${res.status} for ${url}`);
   return res.text();
 }
@@ -110,7 +150,7 @@ interface BGGVideoEntry {
 
 async function fetchBGGVideos(bggId: string): Promise<BGGVideoEntry[]> {
   const url = `https://api.geekdo.com/api/videos?objectid=${bggId}&objecttype=thing&sort=hot&showcount=25&start=0&gallery=instructional`;
-  const res = await fetch(url, { headers: { ...bggHeaders(), Accept: 'application/json' } });
+  const res = await fetchBGGResponse(url, { headers: { Accept: 'application/json' } });
   if (!res.ok) return [];
   const json = await res.json() as { videos?: any[] };
   const videos: any[] = json.videos ?? [];
@@ -196,68 +236,64 @@ async function fetchCollectionPage(
   username: string,
   subtype: 'boardgame' | 'boardgameexpansion',
 ): Promise<BGGCollectionGame[] | null> {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const url =
-      subtype === 'boardgame'
-        ? `https://boardgamegeek.com/xmlapi2/collection?username=${encodeURIComponent(username)}&own=1&subtype=boardgame&excludesubtype=boardgameexpansion&stats=1`
-        : `https://boardgamegeek.com/xmlapi2/collection?username=${encodeURIComponent(username)}&own=1&subtype=boardgameexpansion&stats=1`;
-    const res = await fetch(url, { headers: bggHeaders() });
-    if (res.status === 202) {
-      console.log(`[BGG collection] 202 queued (attempt ${attempt + 1}), retrying…`);
-      if (attempt === 0) await new Promise((r) => setTimeout(r, 3000));
-      continue;
-    }
-    if (!res.ok) {
-      console.error(`[BGG collection] HTTP ${res.status} for ${url}`);
-      return null;
-    }
-    const xml = await res.text();
-    const parsed = parser.parse(xml);
-    const raw = parsed?.items?.item ?? [];
-    const items: any[] = Array.isArray(raw) ? raw : [raw];
-
-    return items
-      .filter((item) => item['@_subtype'] === subtype)
-      .map((item) => {
-        const status = item.status ?? {};
-        const stats = item.stats ?? {};
-        const ratingVal = parseFloat(item.stats?.rating?.['@_value']);
-        const avgVal = parseFloat(item.stats?.rating?.average?.['@_value']);
-        const ranks: any[] = Array.isArray(stats.rating?.ranks?.rank)
-          ? stats.rating.ranks.rank
-          : stats.rating?.ranks?.rank
-            ? [stats.rating.ranks.rank]
-            : [];
-        const overallRank = ranks.find((r) => r['@_name'] === 'boardgame');
-        const rankVal = parseInt(overallRank?.['@_value'], 10);
-        const rawName =
-          typeof item.name === 'string'
-            ? item.name
-            : String(item.name?.['#text'] ?? item.name ?? '');
-
-        return {
-          bggGameId: String(item['@_objectid']),
-          gameName: decodeEntities(rawName),
-          yearPublished: parseInt(item.yearpublished, 10) || null,
-          thumbnail: item.thumbnail ? `https:${item.thumbnail}` : null,
-          minPlayers: parseInt(stats['@_minplayers'], 10) || null,
-          maxPlayers: parseInt(stats['@_maxplayers'], 10) || null,
-          minPlaytime: parseInt(stats['@_minplaytime'], 10) || null,
-          maxPlaytime: parseInt(stats['@_maxplaytime'], 10) || null,
-          playingTime: parseInt(stats['@_playingtime'], 10) || null,
-          avgRating: isNaN(avgVal) ? null : Math.round(avgVal * 10) / 10,
-          bggRank: isNaN(rankVal) ? null : rankVal,
-          own: status['@_own'] === 1 || status['@_own'] === '1',
-          forTrade: status['@_fortrade'] === 1 || status['@_fortrade'] === '1',
-          wantToPlay: status['@_wanttoplay'] === 1 || status['@_wanttoplay'] === '1',
-          wishlisted: status['@_wishlistitem'] === 1 || status['@_wishlistitem'] === '1',
-          userRating: isNaN(ratingVal) ? null : ratingVal,
-          numPlays: parseInt(item.numplays, 10) || 0,
-          isExpansion: subtype === 'boardgameexpansion',
-        };
-      });
+  const url =
+    subtype === 'boardgame'
+      ? `https://boardgamegeek.com/xmlapi2/collection?username=${encodeURIComponent(username)}&own=1&subtype=boardgame&excludesubtype=boardgameexpansion&stats=1`
+      : `https://boardgamegeek.com/xmlapi2/collection?username=${encodeURIComponent(username)}&own=1&subtype=boardgameexpansion&stats=1`;
+  const res = await fetchBGGResponse(url, { pollFor202: true });
+  if (res.status === 202) {
+    console.log(`[BGG collection] still queued after retrying for ${url}`);
+    return null;
   }
-  return null;
+  if (!res.ok) {
+    console.error(`[BGG collection] HTTP ${res.status} for ${url}`);
+    return null;
+  }
+  const xml = await res.text();
+  const parsed = parser.parse(xml);
+  const raw = parsed?.items?.item ?? [];
+  const items: any[] = Array.isArray(raw) ? raw : [raw];
+
+  return items
+    .filter((item) => item['@_subtype'] === subtype)
+    .map((item) => {
+      const status = item.status ?? {};
+      const stats = item.stats ?? {};
+      const ratingVal = parseFloat(item.stats?.rating?.['@_value']);
+      const avgVal = parseFloat(item.stats?.rating?.average?.['@_value']);
+      const ranks: any[] = Array.isArray(stats.rating?.ranks?.rank)
+        ? stats.rating.ranks.rank
+        : stats.rating?.ranks?.rank
+          ? [stats.rating.ranks.rank]
+          : [];
+      const overallRank = ranks.find((r) => r['@_name'] === 'boardgame');
+      const rankVal = parseInt(overallRank?.['@_value'], 10);
+      const rawName =
+        typeof item.name === 'string'
+          ? item.name
+          : String(item.name?.['#text'] ?? item.name ?? '');
+
+      return {
+        bggGameId: String(item['@_objectid']),
+        gameName: decodeEntities(rawName),
+        yearPublished: parseInt(item.yearpublished, 10) || null,
+        thumbnail: item.thumbnail ? `https:${item.thumbnail}` : null,
+        minPlayers: parseInt(stats['@_minplayers'], 10) || null,
+        maxPlayers: parseInt(stats['@_maxplayers'], 10) || null,
+        minPlaytime: parseInt(stats['@_minplaytime'], 10) || null,
+        maxPlaytime: parseInt(stats['@_maxplaytime'], 10) || null,
+        playingTime: parseInt(stats['@_playingtime'], 10) || null,
+        avgRating: isNaN(avgVal) ? null : Math.round(avgVal * 10) / 10,
+        bggRank: isNaN(rankVal) ? null : rankVal,
+        own: status['@_own'] === 1 || status['@_own'] === '1',
+        forTrade: status['@_fortrade'] === 1 || status['@_fortrade'] === '1',
+        wantToPlay: status['@_wanttoplay'] === 1 || status['@_wanttoplay'] === '1',
+        wishlisted: status['@_wishlistitem'] === 1 || status['@_wishlistitem'] === '1',
+        userRating: isNaN(ratingVal) ? null : ratingVal,
+        numPlays: parseInt(item.numplays, 10) || 0,
+        isExpansion: subtype === 'boardgameexpansion',
+      };
+    });
 }
 
 export async function fetchBggOwnedCollection(
@@ -286,29 +322,22 @@ async function fetchCollectionCount(
   username: string,
   subtype: 'boardgame' | 'boardgameexpansion',
 ): Promise<number | null> {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const url =
-      subtype === 'boardgame'
-        ? `https://boardgamegeek.com/xmlapi2/collection?username=${encodeURIComponent(username)}&own=1&subtype=boardgame&excludesubtype=boardgameexpansion`
-        : `https://boardgamegeek.com/xmlapi2/collection?username=${encodeURIComponent(username)}&own=1&subtype=boardgameexpansion`;
-    const res = await fetch(url, { headers: bggHeaders() });
-    if (res.status === 202) {
-      if (attempt === 0) await new Promise((r) => setTimeout(r, 3000));
-      continue;
-    }
-    if (!res.ok) return null;
-    const xml = await res.text();
-    const parsed = parser.parse(xml);
-    return parseInt(parsed?.items?.['@_totalitems'] ?? '0', 10) || 0;
-  }
-  return null;
+  const url =
+    subtype === 'boardgame'
+      ? `https://boardgamegeek.com/xmlapi2/collection?username=${encodeURIComponent(username)}&own=1&subtype=boardgame&excludesubtype=boardgameexpansion`
+      : `https://boardgamegeek.com/xmlapi2/collection?username=${encodeURIComponent(username)}&own=1&subtype=boardgameexpansion`;
+  const res = await fetchBGGResponse(url, { pollFor202: true });
+  if (res.status === 202 || !res.ok) return null; // 202 here means it outlasted the poll budget
+  const xml = await res.text();
+  const parsed = parser.parse(xml);
+  return parseInt(parsed?.items?.['@_totalitems'] ?? '0', 10) || 0;
 }
 
 export async function getBggUserProfile(username: string): Promise<BGGUserProfile | null> {
   const userUrl = `https://boardgamegeek.com/xmlapi2/user?name=${encodeURIComponent(username)}&top=1`;
 
   const [userRes, baseGames, expansions] = await Promise.all([
-    fetch(userUrl, { headers: bggHeaders() }),
+    fetchBGGResponse(userUrl),
     fetchCollectionCount(username, 'boardgame'),
     fetchCollectionCount(username, 'boardgameexpansion'),
   ]);
@@ -352,7 +381,7 @@ export async function validateBggUser(username: string): Promise<BGGUser | null>
   const promise = (async () => {
     try {
       const url = `https://boardgamegeek.com/xmlapi2/user?name=${encodeURIComponent(username)}`;
-      const res = await fetch(url, { headers: bggHeaders() });
+      const res = await fetchBGGResponse(url);
       if (res.status === 404) return null;
       if (!res.ok) throw new Error(`BGG returned ${res.status} for ${url}`);
       const xml = await res.text();
@@ -588,44 +617,37 @@ export async function fetchBGGMarketplaceCollection(
   username: string,
 ): Promise<BGGMarketplaceCollectionGame[] | null> {
   const fetchPage = async (flag: 'forsale' | 'fortrade'): Promise<BGGMarketplaceCollectionGame[]> => {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const url = `https://boardgamegeek.com/xmlapi2/collection?username=${encodeURIComponent(username)}&${flag}=1&subtype=boardgame`;
-      const res = await fetch(url, { headers: bggHeaders() });
-      if (res.status === 202) {
-        if (attempt === 0) await new Promise((r) => setTimeout(r, 3000));
-        continue;
-      }
-      if (!res.ok) return [];
-      const xml = await res.text();
-      const parsed = parser.parse(xml);
-      const raw = parsed?.items?.item ?? [];
-      const items: any[] = Array.isArray(raw) ? raw : [raw];
-      return items.map((item) => {
-        const rawName =
-          typeof item.name === 'string'
-            ? item.name
-            : String(item.name?.['#text'] ?? item.name ?? '');
-        const status = item.status ?? {};
-        const forsaleAttr = status['@_forsale'];
-        const fortradeAttr = status['@_fortrade'];
-        // Use per-item status attributes when present; fall back to trusting the filter parameter
-        const forSale = forsaleAttr !== undefined
-          ? (forsaleAttr === 1 || forsaleAttr === '1')
-          : flag === 'forsale';
-        const forTrade = fortradeAttr !== undefined
-          ? (fortradeAttr === 1 || fortradeAttr === '1')
-          : flag === 'fortrade';
-        return {
-          bggGameId: String(item['@_objectid']),
-          gameName: decodeEntities(rawName),
-          thumbnail: item.thumbnail ? `https:${item.thumbnail}` : null,
-          yearPublished: parseInt(item.yearpublished, 10) || null,
-          forSale,
-          forTrade,
-        };
-      }).filter((item) => item.forSale || item.forTrade);
-    }
-    return [];
+    const url = `https://boardgamegeek.com/xmlapi2/collection?username=${encodeURIComponent(username)}&${flag}=1&subtype=boardgame`;
+    const res = await fetchBGGResponse(url, { pollFor202: true });
+    if (res.status === 202 || !res.ok) return [];
+    const xml = await res.text();
+    const parsed = parser.parse(xml);
+    const raw = parsed?.items?.item ?? [];
+    const items: any[] = Array.isArray(raw) ? raw : [raw];
+    return items.map((item) => {
+      const rawName =
+        typeof item.name === 'string'
+          ? item.name
+          : String(item.name?.['#text'] ?? item.name ?? '');
+      const status = item.status ?? {};
+      const forsaleAttr = status['@_forsale'];
+      const fortradeAttr = status['@_fortrade'];
+      // Use per-item status attributes when present; fall back to trusting the filter parameter
+      const forSale = forsaleAttr !== undefined
+        ? (forsaleAttr === 1 || forsaleAttr === '1')
+        : flag === 'forsale';
+      const forTrade = fortradeAttr !== undefined
+        ? (fortradeAttr === 1 || fortradeAttr === '1')
+        : flag === 'fortrade';
+      return {
+        bggGameId: String(item['@_objectid']),
+        gameName: decodeEntities(rawName),
+        thumbnail: item.thumbnail ? `https:${item.thumbnail}` : null,
+        yearPublished: parseInt(item.yearpublished, 10) || null,
+        forSale,
+        forTrade,
+      };
+    }).filter((item) => item.forSale || item.forTrade);
   };
 
   try {
