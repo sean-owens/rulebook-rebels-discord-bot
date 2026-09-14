@@ -328,6 +328,20 @@ export const data = new SlashCommandBuilder()
           )
           .addChannelOption((opt) =>
             opt
+              .setName('announcement_channel')
+              .setDescription('Public channel where everyone is notified a new member joined')
+              .setRequired(false),
+          )
+          .addStringOption((opt) =>
+            opt
+              .setName('announcement_image_url')
+              .setDescription(
+                'GIF/image URL shown on the public join announcement (e.g. a wave GIF)',
+              )
+              .setRequired(false),
+          )
+          .addChannelOption((opt) =>
+            opt
               .setName('rules_channel')
               .setDescription('Channel containing server rules')
               .setRequired(false),

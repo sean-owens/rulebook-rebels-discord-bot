@@ -1,15 +1,25 @@
 import { ChatInputCommandInteraction, MessageFlags } from 'discord.js';
 import { getGuildConfig, updateGuildConfig } from '../utils/config';
 import { handleGuildMemberAdd } from '../events/guildMemberAdd';
+import { resolveAnnouncementImage } from '../utils/welcomeAnnouncement';
+
+function describeAnnouncementImage(configuredUrl: string): string {
+  if (configuredUrl) return configuredUrl;
+  return resolveAnnouncementImage(undefined) ? '*not set (using bundled default)*' : '*not set*';
+}
 
 export async function handleConfig(interaction: ChatInputCommandInteraction): Promise<void> {
   const patch: Record<string, string> = {};
   const channel = interaction.options.getChannel('channel');
+  const announcementChannel = interaction.options.getChannel('announcement_channel');
+  const announcementImageUrl = interaction.options.getString('announcement_image_url');
   const rulesChannel = interaction.options.getChannel('rules_channel');
   const facebookUrl = interaction.options.getString('facebook_url');
   const bggUrl = interaction.options.getString('bgg_url');
 
   if (channel !== null) patch.welcomeChannelId = channel.id;
+  if (announcementChannel !== null) patch.memberAnnouncementChannelId = announcementChannel.id;
+  if (announcementImageUrl !== null) patch.memberAnnouncementImageUrl = announcementImageUrl;
   if (rulesChannel !== null) patch.rulesChannelId = rulesChannel.id;
   if (facebookUrl !== null) patch.facebookGroupUrl = facebookUrl;
   if (bggUrl !== null) patch.bggGroupUrl = bggUrl;
@@ -22,9 +32,13 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
       content: [
         '**Welcome config:**',
         `> Welcome channel: ${ch(c.welcomeChannelId)}`,
+        `> Announcement channel: ${ch(c.memberAnnouncementChannelId)}`,
+        `> Announcement image/GIF: ${describeAnnouncementImage(c.memberAnnouncementImageUrl)}`,
         `> Rules channel: ${ch(c.rulesChannelId)}`,
         `> Facebook group: ${c.facebookGroupUrl || '*not set*'}`,
         `> BGG group: ${c.bggGroupUrl || '*not set*'}`,
+        '',
+        '💡 Tip: pair this with Discord\'s own System Messages welcome message (Server Settings → Overview) for its native "just slid into the server" join messages too.',
       ].join('\n'),
       flags: MessageFlags.Ephemeral,
     });
@@ -36,6 +50,8 @@ export async function handleConfig(interaction: ChatInputCommandInteraction): Pr
     content: [
       '**Welcome config updated:**',
       `> Welcome channel: ${ch(updated.welcomeChannelId)}`,
+      `> Announcement channel: ${ch(updated.memberAnnouncementChannelId)}`,
+      `> Announcement image/GIF: ${describeAnnouncementImage(updated.memberAnnouncementImageUrl)}`,
       `> Rules channel: ${ch(updated.rulesChannelId)}`,
       `> Facebook group: ${updated.facebookGroupUrl || '*not set*'}`,
       `> BGG group: ${updated.bggGroupUrl || '*not set*'}`,
@@ -48,7 +64,9 @@ export async function handleTest(interaction: ChatInputCommandInteraction): Prom
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const member = await interaction.guild!.members.fetch(interaction.user.id);
   await handleGuildMemberAdd(member);
-  await interaction.editReply('Welcome message sent! Check the welcome channel and your DMs.');
+  await interaction.editReply(
+    'Welcome message sent! Check the welcome channel, announcement channel, and your DMs.',
+  );
 }
 
 export async function handleGreet(interaction: ChatInputCommandInteraction): Promise<void> {
