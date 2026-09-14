@@ -132,7 +132,7 @@ describe('searchBGG', () => {
     expect(results).toHaveLength(0);
   });
 
-  it('throws when the API returns a non-OK status', async () => {
+  it('throws immediately on 429 without retrying (rate-limit signal, not a blip)', async () => {
     mockFetch('', 429);
     await expect(searchBGG('test')).rejects.toThrow('429');
   });
@@ -281,9 +281,40 @@ describe('getBGGGame', () => {
     expect(game.bggLink).toBe('https://boardgamegeek.com/boardgame/266192');
   });
 
-  it('throws when the API returns a non-OK status', async () => {
+  it('throws immediately on 404 without retrying (real not-found, not a blip)', async () => {
     mockFetch('', 404);
     await expect(getBGGGame('0')).rejects.toThrow('404');
+  });
+
+  it('retries a transient 403 and succeeds on the second attempt', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 403, text: () => Promise.resolve('') })
+      .mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve(WINGSPAN_XML) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const promise = getBGGGame('266192');
+    await vi.runAllTimersAsync();
+    const game = await promise;
+    expect(game.name).toBe('Wingspan');
+    const thingCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes('xmlapi2/thing'));
+    expect(thingCalls).toHaveLength(2);
+    vi.useRealTimers();
+  });
+
+  it('gives up after repeated 403s and throws', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: false, status: 403, text: () => Promise.resolve('') }),
+    );
+
+    const promise = getBGGGame('266192');
+    const expectation = expect(promise).rejects.toThrow('403');
+    await vi.runAllTimersAsync();
+    await expectation;
+    vi.useRealTimers();
   });
 
   it('decodes HTML entities in the primary name and expansion names', async () => {
@@ -370,7 +401,8 @@ describe('validateBggUser', () => {
     expect(result).toBeNull();
   });
 
-  it('throws when the API returns a non-OK status other than 404', async () => {
+  it('gives up and throws after repeated 503s', async () => {
+    vi.useFakeTimers();
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
@@ -379,7 +411,26 @@ describe('validateBggUser', () => {
         text: () => Promise.resolve(''),
       }),
     );
-    await expect(validateBggUser('anyone')).rejects.toThrow('503');
+    const promise = validateBggUser('anyone');
+    const expectation = expect(promise).rejects.toThrow('503');
+    await vi.runAllTimersAsync();
+    await expectation;
+    vi.useRealTimers();
+  });
+
+  it('retries a transient 503 and succeeds on the second attempt', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 503, text: () => Promise.resolve('') })
+      .mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve(VALID_USER_XML) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const promise = validateBggUser('boardgamefan');
+    await vi.runAllTimersAsync();
+    const result = await promise;
+    expect(result?.username).toBe('boardgamefan');
+    vi.useRealTimers();
   });
 });
 
@@ -631,11 +682,30 @@ describe('fetchBggOwnedCollection', () => {
     vi.useRealTimers();
   });
 
-  it('returns null on non-OK response', async () => {
+  it('gives up and returns null after repeated 503s', async () => {
+    vi.useFakeTimers();
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({ ok: false, status: 503, text: () => Promise.resolve('') }),
     );
-    expect(await fetchBggOwnedCollection('boardgamefan')).toBeNull();
+    const promise = fetchBggOwnedCollection('boardgamefan');
+    await vi.runAllTimersAsync();
+    expect(await promise).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it('retries a transient 403 and succeeds on the second attempt', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 403, text: () => Promise.resolve('') })
+      .mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve(COLLECTION_XML) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const promise = fetchBggOwnedCollection('boardgamefan');
+    await vi.runAllTimersAsync();
+    const games = await promise;
+    expect(games).toHaveLength(2);
+    vi.useRealTimers();
   });
 });
