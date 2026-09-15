@@ -12,7 +12,12 @@ import { findGamesByEvent } from '../utils/gameStorage';
 import { getShortLinkStatsForGame } from '../utils/shortLinkStorage';
 import { handleConfig as handleEventConfig } from './gamenight';
 import { previewSchedule as handleEventPreview, makeGroupGameId } from '../utils/scheduler';
-import { handleAdminLibraryClear, handleSync as handleLibrarySync, handleSyncAll as handleLibrarySyncAll } from './library';
+import {
+  handleAdminLibraryClear,
+  handleSync as handleLibrarySync,
+  handleSyncAll as handleLibrarySyncAll,
+  handleBackfillTopRanked as handleLibraryBackfillTopRanked,
+} from './library';
 import { findGameNamesByPartial, loadLibraryForGuild } from '../utils/libraryStorage';
 import {
   handleAdd as handleTagAdd,
@@ -252,6 +257,27 @@ export const data = new SlashCommandBuilder()
             opt
               .setName('force')
               .setDescription('Overwrite existing data (default: true). False only fills in missing fields')
+              .setRequired(false),
+          ),
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('backfilltop')
+          .setDescription(
+            "Cache BGG's top-ranked games' full data, so the weekly challenge has a fallback if BGG is down",
+          )
+          .addIntegerOption((opt) =>
+            opt
+              .setName('count')
+              .setDescription('How many top-ranked games to cover (default: 500)')
+              .setRequired(false)
+              .setMinValue(1)
+              .setMaxValue(500),
+          )
+          .addBooleanOption((opt) =>
+            opt
+              .setName('force')
+              .setDescription('Overwrite existing data (default: false — only fills in missing/uncached games)')
               .setRequired(false),
           ),
       ),
@@ -551,6 +577,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     if (sub === 'clear') await handleAdminLibraryClear(interaction);
     else if (sub === 'sync') await handleLibrarySync(interaction);
     else if (sub === 'syncall') await handleLibrarySyncAll(interaction);
+    else if (sub === 'backfilltop') await handleLibraryBackfillTopRanked(interaction);
   } else if (group === 'tags') {
     if (sub === 'add') await handleTagAdd(interaction);
     else if (sub === 'remove') await handleTagRemove(interaction);

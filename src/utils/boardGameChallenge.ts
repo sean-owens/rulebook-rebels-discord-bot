@@ -5,6 +5,7 @@ import { buildBggAttachment } from './gameEmbeds';
 import { getGuildConfig, getGuildIdsWithConfig, updateGuildConfig, GuildConfig } from './config';
 import { pinWithRetry } from './discordPin';
 import { mondayOfWeekInTimeZone, todayInTimeZone, zonedTimeToUtc } from './timezone';
+import { GameInfo, loadGameInfos, applyBGGDataToGameInfo } from './libraryStorage';
 import {
   WeeklyChallenge,
   LeaderboardEntry,
@@ -18,10 +19,78 @@ import {
   updateChallengeChannel,
 } from './boardGameChallengeStorage';
 
+// Degraded stand-in for a live BGG lookup, built from whatever a past
+// successful lookup (this function's own writeback below, /library add,
+// /game, or an admin backfill) already cached for this game. Older cache
+// entries from before categories/mechanics/designers/publishers were
+// tracked will still be missing them — generateClues already treats each
+// fact as optional, so those hints are just quietly skipped rather than
+// mislabeled.
+function buildBGGGameFromCache(info: GameInfo): BGGGame {
+  return {
+    id: info.objectid!,
+    name: info.gameName,
+    bggLink: `https://boardgamegeek.com/boardgame/${info.objectid}`,
+    minPlayers: info.minPlayers ?? 1,
+    maxPlayers: info.maxPlayers ?? info.minPlayers ?? 1,
+    suggestedPlayers: info.bestPlayers ?? info.minPlayers ?? 2,
+    minPlaytime: info.playTime ?? 0,
+    maxPlaytime: info.playTime ?? 0,
+    weight: info.weight ?? null,
+    thumbnail: info.thumbnail ?? null,
+    expansions: (info.bggExpansions ?? []).map((name) => ({ id: '', name })),
+    tags: info.tags ?? [],
+    categories: info.categories ?? [],
+    mechanics: info.mechanics ?? [],
+    howToPlayUrl: info.howToPlayUrl ?? null,
+    yearPublished: info.yearPublished ?? null,
+    designers: info.designers ?? [],
+    publishers: info.publishers ?? [],
+  };
+}
+
+// Picks a random previously-cached game when BGG itself is unreachable —
+// deliberately scans *every* cached game (from /library add and /game
+// lookups across all guilds, and this module's own writeback below), not
+// just the top-500 pool a live pick draws from: the top-500 pool only
+// overlaps that cache by chance (observed as low as ~1% before the
+// writeback existed), so restricting the fallback to it would almost always
+// come up empty. A cached game from someone's real library is a perfectly
+// fine substitute during an outage — better than no challenge at all — even
+// though it isn't necessarily one of BGG's top-ranked titles.
+async function pickFromCache(excludeIds: Set<string>): Promise<BGGGame | undefined> {
+  const candidates = (await loadGameInfos()).filter((i) => !!i.objectid && !excludeIds.has(i.objectid!));
+  if (candidates.length === 0) return undefined;
+  const pick = candidates[Math.floor(Math.random() * candidates.length)];
+  return buildBGGGameFromCache(pick);
+}
+
+// Persists a successful live pick into the same cache pickFromCache reads
+// from, so the top-500 pool's fallback coverage grows on its own from
+// normal weekly operation — no separate backfill needed, though
+// /admin library backfilltop can still jump-start it. Best-effort: a
+// caching failure here should never block the challenge that just
+// succeeded.
+async function cacheGameForFallback(game: BGGGame): Promise<void> {
+  try {
+    const existing = (await loadGameInfos()).find((i) => i.objectid === game.id);
+    await applyBGGDataToGameInfo(
+      existing ?? { gameName: game.name, objectid: game.id, updatedAt: new Date().toISOString() },
+      game,
+      true,
+    );
+  } catch (err) {
+    console.warn(`[BoardGameChallenge] Failed to cache ${game.id} for future fallback use:`, err);
+  }
+}
+
 // Picks a random game from BGG's top-ranked pool that this guild hasn't
 // played recently — each guild gets its own independent pick (not synced
 // across servers) so a member active in multiple opted-in servers can't
-// spoil the answer for one server by discussing it in another.
+// spoil the answer for one server by discussing it in another. If BGG
+// itself is unreachable (see the retry handling in bgg.ts — this only fires
+// once that's already been exhausted), falls back to some other
+// previously-cached game rather than failing the whole cycle outright.
 export async function selectWeeklyGame(guildId: string): Promise<BGGGame | undefined> {
   const pool = getTopRankedGames(500);
   if (pool.length === 0) return undefined;
@@ -31,7 +100,14 @@ export async function selectWeeklyGame(guildId: string): Promise<BGGGame | undef
   const candidates = eligible.length > 0 ? eligible : pool; // pool exhausted — allow repeats rather than stall forever
 
   const pick = candidates[Math.floor(Math.random() * candidates.length)];
-  return getBGGGame(pick.id);
+  try {
+    const game = await getBGGGame(pick.id);
+    await cacheGameForFallback(game);
+    return game;
+  } catch (err) {
+    console.warn(`[BoardGameChallenge] Live BGG lookup failed for ${pick.id}, falling back to cached game info:`, err);
+    return pickFromCache(recentIds);
+  }
 }
 
 function playerRangeText(game: BGGGame): string {

@@ -14,6 +14,7 @@ vi.mock('../src/utils/bggCatalog', async (importOriginal) => {
     ...actual,
     searchCatalog: vi.fn(() => []),
     isCatalogLoaded: vi.fn(() => true),
+    getTopRankedGames: vi.fn(() => []),
   };
 });
 
@@ -46,22 +47,29 @@ vi.mock('../src/utils/pins', () => ({
   upsertLibraryPin: vi.fn(),
 }));
 
+// applyBGGDataToGameInfo's own merge semantics (force vs. fill-gaps-only,
+// including the categories/mechanics/designers/publishers fields) are
+// covered directly in libraryStorage.test.ts — mocked here as a spy so
+// these tests verify orchestration only (which games get batched, and what
+// each is handed off with), not the merge logic itself.
 vi.mock('../src/utils/libraryStorage', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/utils/libraryStorage')>();
   return {
     ...actual,
     loadGameInfos: vi.fn(),
-    upsertGameInfo: vi.fn(async () => {}),
+    applyBGGDataToGameInfo: vi.fn(async () => {}),
   };
 });
 
-import { handleSyncAll } from '../src/commands/library';
-import { loadGameInfos, upsertGameInfo, GameInfo } from '../src/utils/libraryStorage';
+import { handleSyncAll, handleBackfillTopRanked } from '../src/commands/library';
+import { loadGameInfos, applyBGGDataToGameInfo, GameInfo } from '../src/utils/libraryStorage';
 import { getBGGGamesBatch, BGGGame } from '../src/utils/bgg';
+import { getTopRankedGames, BGGCatalogEntry } from '../src/utils/bggCatalog';
 
 const mockLoadGameInfos = vi.mocked(loadGameInfos);
-const mockUpsertGameInfo = vi.mocked(upsertGameInfo);
+const mockApplyBGGDataToGameInfo = vi.mocked(applyBGGDataToGameInfo);
 const mockGetBGGGamesBatch = vi.mocked(getBGGGamesBatch);
+const mockGetTopRankedGames = vi.mocked(getTopRankedGames);
 
 function makeInfo(overrides: Partial<GameInfo>): GameInfo {
   return {
@@ -110,6 +118,21 @@ function makeInteraction(force: boolean | null) {
   } as any;
 }
 
+function makeCatalogEntry(overrides: Partial<BGGCatalogEntry> = {}): BGGCatalogEntry {
+  return { id: '1', name: 'Catalog Game', year: 2020, isExpansion: false, rank: 1, ...overrides };
+}
+
+function makeBackfillInteraction(force: boolean | null, count: number | null = null) {
+  return {
+    options: {
+      getBoolean: (name: string) => (name === 'force' ? force : null),
+      getInteger: (name: string) => (name === 'count' ? count : null),
+    },
+    reply: vi.fn(async () => {}),
+    followUp: vi.fn(async () => {}),
+  } as any;
+}
+
 describe('/admin library syncall — force option', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -125,10 +148,11 @@ describe('/admin library syncall — force option', () => {
     await handleSyncAll(interaction);
 
     expect(mockGetBGGGamesBatch).toHaveBeenCalledWith(['1', '2'], 500);
-    expect(mockUpsertGameInfo).toHaveBeenCalledTimes(2);
-    // force=true overwrites the already-enriched game's tags with BGG's data
-    const enrichedCall = mockUpsertGameInfo.mock.calls.find((c) => c[0].objectid === '1')![0];
-    expect(enrichedCall.tags).toEqual(['Strategy']);
+    expect(mockApplyBGGDataToGameInfo).toHaveBeenCalledTimes(2);
+    // force=true is passed through so the already-enriched game gets overwritten
+    const enrichedCall = mockApplyBGGDataToGameInfo.mock.calls.find((c) => c[0].objectid === '1')!;
+    expect(enrichedCall[2]).toBe(true);
+    expect(enrichedCall[1].tags).toEqual(['Strategy']);
     expect(interaction.followUp).toHaveBeenCalledWith(
       expect.objectContaining({ content: expect.stringContaining('Sync complete') }),
     );
@@ -145,10 +169,10 @@ describe('/admin library syncall — force option', () => {
 
     // only the unenriched game's id should ever be sent to BGG
     expect(mockGetBGGGamesBatch).toHaveBeenCalledWith(['2'], 500);
-    expect(mockUpsertGameInfo).toHaveBeenCalledTimes(1);
-    const call = mockUpsertGameInfo.mock.calls[0][0];
-    expect(call.objectid).toBe('2');
-    expect(call.tags).toEqual(['Strategy']);
+    expect(mockApplyBGGDataToGameInfo).toHaveBeenCalledTimes(1);
+    const call = mockApplyBGGDataToGameInfo.mock.calls[0];
+    expect(call[0].objectid).toBe('2');
+    expect(call[2]).toBe(false);
     expect(interaction.followUp).toHaveBeenCalledWith(
       expect.objectContaining({ content: expect.stringContaining('Enrich complete') }),
     );
@@ -162,7 +186,7 @@ describe('/admin library syncall — force option', () => {
     await handleSyncAll(interaction);
 
     expect(mockGetBGGGamesBatch).not.toHaveBeenCalled();
-    expect(mockUpsertGameInfo).not.toHaveBeenCalled();
+    expect(mockApplyBGGDataToGameInfo).not.toHaveBeenCalled();
     expect(interaction.reply).toHaveBeenCalledWith(
       expect.objectContaining({ content: expect.stringContaining('nothing to enrich') }),
     );
@@ -177,6 +201,97 @@ describe('/admin library syncall — force option', () => {
     expect(mockGetBGGGamesBatch).not.toHaveBeenCalled();
     expect(interaction.reply).toHaveBeenCalledWith(
       expect.objectContaining({ content: expect.stringContaining('nothing to sync') }),
+    );
+  });
+});
+
+describe('/admin library backfilltop', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('creates fresh GameInfo entries for top-ranked games with no cache entry at all', async () => {
+    mockGetTopRankedGames.mockReturnValue([
+      makeCatalogEntry({ id: '1', name: 'Uncached Game', rank: 1 }),
+    ]);
+    mockLoadGameInfos.mockResolvedValue([]);
+    mockGetBGGGamesBatch.mockResolvedValue([makeBGGGame('1')]);
+
+    const interaction = makeBackfillInteraction(null);
+    await handleBackfillTopRanked(interaction);
+
+    expect(mockGetBGGGamesBatch).toHaveBeenCalledWith(['1'], 500);
+    expect(mockApplyBGGDataToGameInfo).toHaveBeenCalledTimes(1);
+    const call = mockApplyBGGDataToGameInfo.mock.calls[0];
+    // no existing GameInfo for this id, so a fresh skeleton is built from the catalog entry
+    expect(call[0]).toEqual(expect.objectContaining({ objectid: '1', gameName: 'Uncached Game' }));
+    expect(call[1].tags).toEqual(['Strategy']);
+    expect(interaction.followUp).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('Backfill complete') }),
+    );
+  });
+
+  it('with no force option (default false), skips top-ranked games already fully cached', async () => {
+    mockGetTopRankedGames.mockReturnValue([
+      makeCatalogEntry({ id: '1', name: 'Cached Game', rank: 1 }),
+      makeCatalogEntry({ id: '2', name: 'Uncached Game', rank: 2 }),
+    ]);
+    mockLoadGameInfos.mockResolvedValue([
+      makeInfo({ objectid: '1', gameName: 'Cached Game', ...FULLY_ENRICHED }),
+    ]);
+    mockGetBGGGamesBatch.mockResolvedValue([makeBGGGame('2')]);
+
+    const interaction = makeBackfillInteraction(null);
+    await handleBackfillTopRanked(interaction);
+
+    expect(mockGetBGGGamesBatch).toHaveBeenCalledWith(['2'], 500);
+    expect(mockApplyBGGDataToGameInfo).toHaveBeenCalledTimes(1);
+    expect(mockApplyBGGDataToGameInfo.mock.calls[0][0].objectid).toBe('2');
+  });
+
+  it('with force:true, re-fetches every top-ranked game even ones already fully cached', async () => {
+    mockGetTopRankedGames.mockReturnValue([
+      makeCatalogEntry({ id: '1', name: 'Cached Game', rank: 1 }),
+    ]);
+    mockLoadGameInfos.mockResolvedValue([
+      makeInfo({ objectid: '1', gameName: 'Cached Game', ...FULLY_ENRICHED }),
+    ]);
+    mockGetBGGGamesBatch.mockResolvedValue([makeBGGGame('1')]);
+
+    const interaction = makeBackfillInteraction(true);
+    await handleBackfillTopRanked(interaction);
+
+    expect(mockGetBGGGamesBatch).toHaveBeenCalledWith(['1'], 500);
+    expect(mockApplyBGGDataToGameInfo).toHaveBeenCalledTimes(1);
+    expect(mockApplyBGGDataToGameInfo.mock.calls[0][2]).toBe(true);
+  });
+
+  it('respects a smaller count option instead of defaulting to the full top 500', async () => {
+    mockGetTopRankedGames.mockReturnValue([makeCatalogEntry({ id: '1', rank: 1 })]);
+    mockLoadGameInfos.mockResolvedValue([]);
+    mockGetBGGGamesBatch.mockResolvedValue([makeBGGGame('1')]);
+
+    const interaction = makeBackfillInteraction(null, 10);
+    await handleBackfillTopRanked(interaction);
+
+    expect(mockGetTopRankedGames).toHaveBeenCalledWith(10);
+  });
+
+  it('when everything in the pool is already fully cached, replies without calling BGG at all', async () => {
+    mockGetTopRankedGames.mockReturnValue([
+      makeCatalogEntry({ id: '1', name: 'Cached Game', rank: 1 }),
+    ]);
+    mockLoadGameInfos.mockResolvedValue([
+      makeInfo({ objectid: '1', gameName: 'Cached Game', ...FULLY_ENRICHED }),
+    ]);
+
+    const interaction = makeBackfillInteraction(null);
+    await handleBackfillTopRanked(interaction);
+
+    expect(mockGetBGGGamesBatch).not.toHaveBeenCalled();
+    expect(mockApplyBGGDataToGameInfo).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('nothing to backfill') }),
     );
   });
 });
