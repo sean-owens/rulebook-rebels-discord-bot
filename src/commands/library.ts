@@ -31,6 +31,7 @@ import {
   loadGameInfos,
   upsertGameInfo,
   upsertGameInfosBulk,
+  applyBGGDataToGameInfo,
   GameInfo,
   GAME_TAGS,
   Complexity,
@@ -66,6 +67,7 @@ import {
   searchCatalogWithFallback,
   isCatalogLoaded,
   normalizeName,
+  getTopRankedGames,
   BGGCatalogEntry,
 } from '../utils/bggCatalog';
 import { getBggAccount } from '../utils/bggAccountStorage';
@@ -1131,35 +1133,6 @@ export async function handleSync(interaction: ChatInputCommandInteraction): Prom
   }
 }
 
-async function applyBGGDataToGameInfo(info: GameInfo, bggGame: BGGGame, force: boolean): Promise<void> {
-  await upsertGameInfo({
-    ...info,
-    minPlayers: info.minPlayers ?? bggGame.minPlayers,
-    maxPlayers: info.maxPlayers ?? bggGame.maxPlayers,
-    playTime: info.playTime ?? bggGame.maxPlaytime,
-    complexity: info.complexity ?? (bggGame.weight ? weightTag(bggGame.weight) : null),
-    tags: bggGame.tags.length > 0 ? bggGame.tags : (info.tags ?? []),
-    bestPlayers: force
-      ? bggGame.suggestedPlayers || undefined
-      : (info.bestPlayers ?? (bggGame.suggestedPlayers || undefined)),
-    weight: force ? (bggGame.weight ?? undefined) : (info.weight ?? bggGame.weight ?? undefined),
-    bggExpansions: force
-      ? bggGame.expansions.map((e) => e.name)
-      : (info.bggExpansions ?? bggGame.expansions.map((e) => e.name)),
-    howToPlayUrl: force
-      ? bggGame.howToPlayUrl
-      : info.howToPlayUrl !== undefined
-        ? info.howToPlayUrl
-        : bggGame.howToPlayUrl,
-    thumbnail: force
-      ? bggGame.thumbnail
-      : info.thumbnail !== undefined
-        ? info.thumbnail
-        : bggGame.thumbnail,
-    updatedAt: new Date().toISOString(),
-  });
-}
-
 function isFullyEnriched(info: GameInfo): boolean {
   return (
     info.tags !== undefined &&
@@ -1170,6 +1143,14 @@ function isFullyEnriched(info: GameInfo): boolean {
     info.thumbnail !== undefined
   );
 }
+
+// Shared rate-limit pacing for both bulk-enrichment flows below (syncall and
+// backfilltop) — one XMLAPI2 batch call per BATCH_SIZE games, spaced
+// BATCH_DELAY_MS apart, plus VIDEO_DELAY_MS between each game's separate
+// "how to play" video lookup within a batch.
+const BGG_BATCH_SIZE = 20;
+const BGG_VIDEO_DELAY_MS = 500;
+const BGG_BATCH_DELAY_MS = 1000;
 
 export async function handleSyncAll(interaction: ChatInputCommandInteraction): Promise<void> {
   const force = interaction.options.getBoolean('force') ?? true;
@@ -1185,9 +1166,9 @@ export async function handleSyncAll(interaction: ChatInputCommandInteraction): P
     return;
   }
 
-  const BATCH_SIZE = 20;
-  const VIDEO_DELAY_MS = 500;
-  const BATCH_DELAY_MS = 1000;
+  const BATCH_SIZE = BGG_BATCH_SIZE;
+  const VIDEO_DELAY_MS = BGG_VIDEO_DELAY_MS;
+  const BATCH_DELAY_MS = BGG_BATCH_DELAY_MS;
   const batches: GameInfo[][] = [];
   for (let i = 0; i < allInfos.length; i += BATCH_SIZE) batches.push(allInfos.slice(i, i + BATCH_SIZE));
 
@@ -1220,6 +1201,77 @@ export async function handleSyncAll(interaction: ChatInputCommandInteraction): P
 
   await interaction.followUp({
     content: `${force ? 'Sync' : 'Enrich'} complete — **${updated}** updated, **${failed}** failed.`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+// Pre-warms game_info.json with full BGG details for BGG's top-ranked pool —
+// the same pool selectWeeklyGame (boardGameChallenge.ts) draws from — so its
+// cache-fallback path (when a live BGG lookup fails, e.g. during an outage)
+// has real candidates to fall back to. Library syncall's cache only covers
+// what members happen to have personally added, which overlaps the
+// top-ranked pool by chance (observed as low as ~1% in production) — this
+// targets the pool the challenge actually needs directly instead.
+export async function handleBackfillTopRanked(interaction: ChatInputCommandInteraction): Promise<void> {
+  const count = interaction.options.getInteger('count') ?? 500;
+  const force = interaction.options.getBoolean('force') ?? false;
+
+  const topRanked = getTopRankedGames(count);
+  const existingByObjectId = new Map(
+    (await loadGameInfos()).filter((i) => !!i.objectid).map((i) => [i.objectid!, i]),
+  );
+
+  const targets = topRanked.filter((entry) => {
+    const existing = existingByObjectId.get(entry.id);
+    return !existing || force || !isFullyEnriched(existing);
+  });
+
+  if (targets.length === 0) {
+    await interaction.reply({
+      content: `All ${topRanked.length} top-ranked games already have full BGG data cached — nothing to backfill.`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const batches: BGGCatalogEntry[][] = [];
+  for (let i = 0; i < targets.length; i += BGG_BATCH_SIZE) batches.push(targets.slice(i, i + BGG_BATCH_SIZE));
+
+  const estimatedSecs = Math.ceil(
+    batches.length * (BGG_BATCH_DELAY_MS / 1000) + targets.length * (BGG_VIDEO_DELAY_MS / 1000),
+  );
+  await interaction.reply({
+    content: `Backfilling **${targets.length}** of the top **${topRanked.length}** ranked game(s) in **${batches.length}** BGG batch(es) — estimated **${estimatedSecs}s**. Do not run again until this completes.`,
+    flags: MessageFlags.Ephemeral,
+  });
+
+  const targetById = new Map(targets.map((t) => [t.id, t]));
+  let updated = 0;
+  let failed = 0;
+
+  for (let i = 0; i < batches.length; i++) {
+    if (i > 0) await new Promise((r) => setTimeout(r, BGG_BATCH_DELAY_MS));
+    const ids = batches[i].map((entry) => entry.id);
+    try {
+      const games = await getBGGGamesBatch(ids, BGG_VIDEO_DELAY_MS);
+      for (const bggGame of games) {
+        const catalogEntry = targetById.get(bggGame.id);
+        if (!catalogEntry) continue;
+        const existing = existingByObjectId.get(bggGame.id) ?? {
+          gameName: catalogEntry.name,
+          objectid: catalogEntry.id,
+          updatedAt: new Date().toISOString(),
+        };
+        await applyBGGDataToGameInfo(existing, bggGame, force);
+        updated++;
+      }
+    } catch {
+      failed += batches[i].length;
+    }
+  }
+
+  await interaction.followUp({
+    content: `Backfill complete — **${updated}** updated, **${failed}** failed.`,
     flags: MessageFlags.Ephemeral,
   });
 }
