@@ -1,6 +1,6 @@
 {
   "name": "rulebook-rebels-discord-bot",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Discord bot for the Rulebook Rebels board game group",
   "main": "dist/index.js",
   "scripts": {
