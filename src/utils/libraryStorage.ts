@@ -3,6 +3,7 @@ import { readJson, writeJson } from './db';
 import { GENRE_TAG_DEFINITIONS } from './tagDefinitions';
 import { matchesFuzzy } from './bggCatalog';
 import { getEffectiveOwnerIds, getLibraryLinksForGuild } from './libraryLinkStorage';
+import { BGGGame, weightTag } from './bgg';
 
 const LIBRARY_FILE = 'library.json';
 const REQUESTS_FILE = 'library_requests.json';
@@ -433,6 +434,16 @@ export interface GameInfo {
   weight?: number; // BGG average weight (1–5 complexity scale)
   complexity?: Complexity | null; // null = checked BGG, no weight data found
   tags?: string[];
+  // Raw BGG category/mechanic/designer/publisher names, kept separate from
+  // the curated `tags` vocabulary above — populated straight from BGGGame
+  // wherever a live lookup already succeeded (library sync, /game, or the
+  // weekly challenge's own picks) so a later BGG-outage fallback has enough
+  // to generate real hints instead of always falling back to a placeholder.
+  categories?: string[];
+  mechanics?: string[];
+  yearPublished?: number | null;
+  designers?: string[];
+  publishers?: string[];
   expansions?: string[]; // owner-noted expansions they personally own
   bggExpansions?: string[]; // full expansion list from BGG
   howToPlayUrl?: string | null; // null = checked BGG, no instructional video found
@@ -480,6 +491,54 @@ export async function upsertGameInfo(info: GameInfo): Promise<void> {
   if (idx >= 0) infos[idx] = info;
   else infos.push(info);
   await saveGameInfos(infos);
+}
+
+// Merges a live BGGGame lookup into a GameInfo record and persists it —
+// shared by /admin library sync(all), /admin library backfilltop, and the
+// weekly challenge's own successful picks (selectWeeklyGame in
+// boardGameChallenge.ts), so every successful live lookup from any of those
+// paths grows the same fallback cache for when BGG itself is unreachable.
+// `force:true` overwrites existing fields with BGG's current data; `force:
+// false` only fills in fields this record doesn't already have.
+export async function applyBGGDataToGameInfo(
+  info: GameInfo,
+  bggGame: BGGGame,
+  force: boolean,
+): Promise<void> {
+  await upsertGameInfo({
+    ...info,
+    minPlayers: info.minPlayers ?? bggGame.minPlayers,
+    maxPlayers: info.maxPlayers ?? bggGame.maxPlayers,
+    playTime: info.playTime ?? bggGame.maxPlaytime,
+    complexity: info.complexity ?? (bggGame.weight ? weightTag(bggGame.weight) : null),
+    tags: bggGame.tags.length > 0 ? bggGame.tags : (info.tags ?? []),
+    bestPlayers: force
+      ? bggGame.suggestedPlayers || undefined
+      : (info.bestPlayers ?? (bggGame.suggestedPlayers || undefined)),
+    weight: force ? (bggGame.weight ?? undefined) : (info.weight ?? bggGame.weight ?? undefined),
+    // Raw category/mechanic/designer/publisher names — kept for the
+    // BGG-outage fallback to generate real hints from, separate from the
+    // curated `tags` vocabulary above.
+    categories: force ? bggGame.categories : (info.categories ?? bggGame.categories),
+    mechanics: force ? bggGame.mechanics : (info.mechanics ?? bggGame.mechanics),
+    yearPublished: force ? bggGame.yearPublished : (info.yearPublished ?? bggGame.yearPublished),
+    designers: force ? bggGame.designers : (info.designers ?? bggGame.designers),
+    publishers: force ? bggGame.publishers : (info.publishers ?? bggGame.publishers),
+    bggExpansions: force
+      ? bggGame.expansions.map((e) => e.name)
+      : (info.bggExpansions ?? bggGame.expansions.map((e) => e.name)),
+    howToPlayUrl: force
+      ? bggGame.howToPlayUrl
+      : info.howToPlayUrl !== undefined
+        ? info.howToPlayUrl
+        : bggGame.howToPlayUrl,
+    thumbnail: force
+      ? bggGame.thumbnail
+      : info.thumbnail !== undefined
+        ? info.thumbnail
+        : bggGame.thumbnail,
+    updatedAt: new Date().toISOString(),
+  });
 }
 
 // Bulk variant of upsertGameInfo — does a single read + single write for the

@@ -40,6 +40,13 @@ vi.mock('../src/utils/bggCatalog', async (importOriginal) => {
   return { ...actual, getTopRankedGames: (...args: unknown[]) => mockGetTopRankedGames(...args) };
 });
 
+const mockLoadGameInfos = vi.fn();
+const mockApplyBGGDataToGameInfo = vi.fn();
+vi.mock('../src/utils/libraryStorage', () => ({
+  loadGameInfos: (...args: unknown[]) => mockLoadGameInfos(...args),
+  applyBGGDataToGameInfo: (...args: unknown[]) => mockApplyBGGDataToGameInfo(...args),
+}));
+
 vi.mock('../src/utils/timezone', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/utils/timezone')>();
   return {
@@ -124,6 +131,8 @@ function makeClient() {
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetLeaderboard.mockResolvedValue([]);
+  mockLoadGameInfos.mockResolvedValue([]);
+  mockApplyBGGDataToGameInfo.mockResolvedValue(undefined);
 });
 
 describe('generateClues', () => {
@@ -258,6 +267,101 @@ describe('selectWeeklyGame', () => {
 
     expect(await selectWeeklyGame('guild-1')).toBeUndefined();
     expect(mockGetBGGGame).not.toHaveBeenCalled();
+  });
+
+  it('falls back to a previously-cached game when the live BGG lookup fails, even one outside the top-500 pool', async () => {
+    mockGetTopRankedGames.mockReturnValue([
+      { id: '1', name: 'Uncached Top Game', year: 2020, isExpansion: false, rank: 1 },
+    ]);
+    mockGetRecentGameIds.mockResolvedValue(new Set());
+    mockGetBGGGame.mockRejectedValue(new Error('BGG returned 403'));
+    // Not in the top-500 pool at all — proves the fallback isn't restricted
+    // to pool-intersected candidates, since that intersection is often ~empty.
+    mockLoadGameInfos.mockResolvedValue([
+      {
+        gameName: "Someone's Library Game",
+        objectid: '999',
+        minPlayers: 2,
+        maxPlayers: 4,
+        bestPlayers: 3,
+        playTime: 60,
+        weight: 3.2,
+        complexity: 'Medium',
+        tags: ['Worker Placement'],
+        categories: ['Strategy'],
+        mechanics: ['Worker Placement'],
+        yearPublished: 2018,
+        designers: ['Some Designer'],
+        publishers: ['Some Publisher'],
+        thumbnail: 'https://example.com/cached-thumb.jpg',
+        updatedAt: '2026-09-01T00:00:00.000Z',
+      },
+    ]);
+
+    const game = await selectWeeklyGame('guild-1');
+    expect(game?.id).toBe('999');
+    expect(game?.minPlayers).toBe(2);
+    expect(game?.maxPlayers).toBe(4);
+    expect(game?.suggestedPlayers).toBe(3);
+    expect(game?.thumbnail).toBe('https://example.com/cached-thumb.jpg');
+    expect(game?.categories).toEqual(['Strategy']);
+    expect(game?.mechanics).toEqual(['Worker Placement']);
+    expect(game?.designers).toEqual(['Some Designer']);
+  });
+
+  it('never picks a recently-played game out of the fallback cache either', async () => {
+    mockGetTopRankedGames.mockReturnValue([
+      { id: '1', name: 'Uncached Game', year: 2020, isExpansion: false, rank: 1 },
+    ]);
+    mockGetRecentGameIds.mockResolvedValue(new Set(['2']));
+    mockGetBGGGame.mockRejectedValue(new Error('BGG returned 403'));
+    mockLoadGameInfos.mockResolvedValue([
+      { gameName: 'Recently Played', objectid: '2', updatedAt: '2026-09-01T00:00:00.000Z' },
+    ]);
+
+    expect(await selectWeeklyGame('guild-1')).toBeUndefined();
+  });
+
+  it('returns undefined when the live lookup fails and nothing is cached either', async () => {
+    mockGetTopRankedGames.mockReturnValue([
+      { id: '1', name: 'Uncached Game', year: 2020, isExpansion: false, rank: 1 },
+    ]);
+    mockGetRecentGameIds.mockResolvedValue(new Set());
+    mockGetBGGGame.mockRejectedValue(new Error('BGG returned 403'));
+    mockLoadGameInfos.mockResolvedValue([]);
+
+    expect(await selectWeeklyGame('guild-1')).toBeUndefined();
+  });
+
+  it('persists a successful live pick into the fallback cache for future outages', async () => {
+    mockGetTopRankedGames.mockReturnValue([
+      { id: '1', name: 'Fresh Game', year: 2020, isExpansion: false, rank: 1 },
+    ]);
+    mockGetRecentGameIds.mockResolvedValue(new Set());
+    const game = makeGame({ id: '1', name: 'Fresh Game' });
+    mockGetBGGGame.mockResolvedValue(game);
+
+    const result = await selectWeeklyGame('guild-1');
+
+    expect(result).toBe(game);
+    expect(mockApplyBGGDataToGameInfo).toHaveBeenCalledTimes(1);
+    const [info, bggGame, force] = mockApplyBGGDataToGameInfo.mock.calls[0];
+    expect(info.objectid).toBe('1');
+    expect(bggGame).toBe(game);
+    expect(force).toBe(true);
+  });
+
+  it('does not let a caching failure block the challenge from starting', async () => {
+    mockGetTopRankedGames.mockReturnValue([
+      { id: '1', name: 'Fresh Game', year: 2020, isExpansion: false, rank: 1 },
+    ]);
+    mockGetRecentGameIds.mockResolvedValue(new Set());
+    const game = makeGame({ id: '1', name: 'Fresh Game' });
+    mockGetBGGGame.mockResolvedValue(game);
+    mockApplyBGGDataToGameInfo.mockRejectedValue(new Error('S3 write failed'));
+
+    const result = await selectWeeklyGame('guild-1');
+    expect(result).toBe(game);
   });
 });
 

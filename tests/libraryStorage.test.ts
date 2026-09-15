@@ -30,8 +30,11 @@ import {
   upsertGameInfo,
   upsertGameInfosBulk,
   loadGameInfos,
+  applyBGGDataToGameInfo,
   GameRequest,
+  GameInfo,
 } from '../src/utils/libraryStorage';
+import { BGGGame } from '../src/utils/bgg';
 
 describe('libraryStorage', () => {
   let tmpDir: string;
@@ -648,6 +651,83 @@ describe('libraryStorage', () => {
     it('is case-insensitive for lookup', async () => {
       await upsertGameInfo({ gameName: 'Wingspan', updatedAt: new Date().toISOString() });
       expect(await getGameInfo('wingspan')).toBeDefined();
+    });
+  });
+
+  // ── applyBGGDataToGameInfo ─────────────────────────────────────────────────
+
+  function makeBGGGame(overrides: Partial<BGGGame> = {}): BGGGame {
+    return {
+      id: '266192',
+      name: 'Wingspan',
+      bggLink: 'https://boardgamegeek.com/boardgame/266192',
+      minPlayers: 1,
+      maxPlayers: 5,
+      suggestedPlayers: 3,
+      minPlaytime: 40,
+      maxPlaytime: 70,
+      weight: 2.4,
+      thumbnail: 'https://example.com/thumb.jpg',
+      expansions: [{ id: '300837', name: 'Wingspan: European Expansion' }],
+      tags: ['Engine Building'],
+      categories: ['Economic'],
+      mechanics: ['Engine Building', 'Hand Management'],
+      howToPlayUrl: 'https://example.com/video',
+      yearPublished: 2019,
+      designers: ['Elizabeth Hargrave'],
+      publishers: ['Stonemaier Games'],
+      ...overrides,
+    };
+  }
+
+  function makeInfo(overrides: Partial<GameInfo> = {}): GameInfo {
+    return { gameName: 'Wingspan', updatedAt: '2026-01-01T00:00:00.000Z', ...overrides };
+  }
+
+  describe('applyBGGDataToGameInfo', () => {
+    it('fills every BGG-sourced field, including the raw category/mechanic/designer/publisher lists, on a fresh entry', async () => {
+      await applyBGGDataToGameInfo(makeInfo({ objectid: '266192' }), makeBGGGame(), false);
+      const info = await getGameInfo('Wingspan');
+      expect(info?.minPlayers).toBe(1);
+      expect(info?.maxPlayers).toBe(5);
+      expect(info?.bestPlayers).toBe(3);
+      expect(info?.playTime).toBe(70);
+      expect(info?.weight).toBe(2.4);
+      expect(info?.complexity).toBe('Medium');
+      expect(info?.categories).toEqual(['Economic']);
+      expect(info?.mechanics).toEqual(['Engine Building', 'Hand Management']);
+      expect(info?.yearPublished).toBe(2019);
+      expect(info?.designers).toEqual(['Elizabeth Hargrave']);
+      expect(info?.publishers).toEqual(['Stonemaier Games']);
+      expect(info?.bggExpansions).toEqual(['Wingspan: European Expansion']);
+      expect(info?.thumbnail).toBe('https://example.com/thumb.jpg');
+    });
+
+    it('with force:false, leaves existing fields untouched and only fills gaps', async () => {
+      const existing = makeInfo({
+        objectid: '266192',
+        categories: ['Manually Set Category'],
+        designers: ['Manually Set Designer'],
+      });
+      await applyBGGDataToGameInfo(existing, makeBGGGame(), false);
+      const info = await getGameInfo('Wingspan');
+      expect(info?.categories).toEqual(['Manually Set Category']);
+      expect(info?.designers).toEqual(['Manually Set Designer']);
+      // fields that were missing still get filled in
+      expect(info?.mechanics).toEqual(['Engine Building', 'Hand Management']);
+      expect(info?.publishers).toEqual(['Stonemaier Games']);
+    });
+
+    it('with force:true, overwrites existing fields with BGG data', async () => {
+      const existing = makeInfo({
+        objectid: '266192',
+        categories: ['Manually Set Category'],
+        designers: ['Manually Set Designer'],
+      });
+      await applyBGGDataToGameInfo(existing, makeBGGGame(), true);
+      const info = await getGameInfo('Wingspan');
+      expect(info?.categories).toEqual(['Economic']);
+      expect(info?.designers).toEqual(['Elizabeth Hargrave']);
     });
   });
 
