@@ -82,6 +82,17 @@ describe('gameStorage', () => {
       await upsertGame(makeGame({ id: 'game-2', title: 'Catan' }));
       expect(await loadGames()).toHaveLength(2);
     });
+
+    it('round-trips the guests field', async () => {
+      const guests = [{ id: 'guest:abc', ownerId: 'user-1', name: 'Mom' }];
+      await upsertGame(makeGame({ id: 'game-1', guests }));
+      expect((await findGame('game-1'))?.guests).toEqual(guests);
+    });
+
+    it('leaves guests undefined on a game that never set it (older record)', async () => {
+      await upsertGame(makeGame({ id: 'game-1' }));
+      expect((await findGame('game-1'))?.guests).toBeUndefined();
+    });
   });
 
   // ── findGame ──────────────────────────────────────────────────────────────

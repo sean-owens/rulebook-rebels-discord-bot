@@ -7,6 +7,7 @@ import {
 } from 'discord.js';
 import { GameSuggestion } from './gameStorage';
 import { getGameRoles } from './gameRoles';
+import { isGuestSeatId, guestDisplayName } from './guestSeats';
 
 const COMPLEXITY_ICON: Record<string, string> = { Light: '🟢', Medium: '🟡', Heavy: '🔴' };
 
@@ -18,7 +19,9 @@ export async function buildGameEmbed(
   game: GameSuggestion,
   nameMap: Record<string, string>,
 ): Promise<EmbedBuilder> {
-  const getName = (id: string) => nameMap[id] ?? `<@${id}>`;
+  const guests = game.guests ?? [];
+  const getName = (id: string) =>
+    isGuestSeatId(id) ? guestDisplayName(id, guests, nameMap) : (nameMap[id] ?? `<@${id}>`);
   const waitlist = game.waitlist ?? [];
 
   const seatCount = game.seats.length;
@@ -146,8 +149,8 @@ export async function buildGameEmbed(
   return embed;
 }
 
-export function buildGameButtons(gameId: string, isFull: boolean): ActionRowBuilder<ButtonBuilder> {
-  const buttons: ButtonBuilder[] = [
+export function buildGameButtons(gameId: string, isFull: boolean): ActionRowBuilder<ButtonBuilder>[] {
+  const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId(`game_join_${gameId}`)
       .setLabel('Join')
@@ -159,22 +162,30 @@ export function buildGameButtons(gameId: string, isFull: boolean): ActionRowBuil
       .setLabel('Leave')
       .setEmoji('🚪')
       .setStyle(ButtonStyle.Secondary),
-  ];
+    new ButtonBuilder()
+      .setCustomId(`game_guestbtn_${gameId}`)
+      .setLabel('Bring a Guest')
+      .setEmoji('➕')
+      .setStyle(ButtonStyle.Secondary),
+  );
 
+  const rows = [row1];
   if (isFull) {
-    buttons.push(
-      new ButtonBuilder()
-        .setCustomId(`game_waitlist_join_${gameId}`)
-        .setLabel('Join Waitlist')
-        .setEmoji('⏳')
-        .setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId(`game_waitlist_leave_${gameId}`)
-        .setLabel('Leave Waitlist')
-        .setEmoji('❌')
-        .setStyle(ButtonStyle.Secondary),
+    rows.push(
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`game_waitlist_join_${gameId}`)
+          .setLabel('Join Waitlist')
+          .setEmoji('⏳')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId(`game_waitlist_leave_${gameId}`)
+          .setLabel('Leave Waitlist')
+          .setEmoji('❌')
+          .setStyle(ButtonStyle.Secondary),
+      ),
     );
   }
 
-  return new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons);
+  return rows;
 }

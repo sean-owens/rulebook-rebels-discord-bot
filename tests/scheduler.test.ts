@@ -119,6 +119,21 @@ describe('scheduleGames', () => {
     ]);
   });
 
+  it('counts a guest pseudo-id toward the minimum-players threshold like any other seat', () => {
+    // A guest is just another string in seatedPlayers as far as this
+    // capacity/grouping math is concerned — 3 real + 1 guest meets a
+    // 4-minimum the same as 4 real players would.
+    const result = scheduleGames(
+      [makeGame({ id: 'g1', minPlayers: 4, seatedPlayers: ['p1', 'p2', 'p3', 'guest:abc'] })],
+      2,
+      120,
+      NO_REFINEMENTS,
+    );
+    expect(result.assignments).toHaveLength(1);
+    expect(result.assignments[0].attendingPlayerIds).toContain('guest:abc');
+    expect(result.unscheduled).toEqual([]);
+  });
+
   it('excludes a 0-seated game, with a distinct reason from the minimum-players case', () => {
     const result = scheduleGames(
       [makeGame({ id: 'g1', minPlayers: 2, seatedPlayers: [] })],
@@ -1423,6 +1438,26 @@ describe('buildScheduleEmbed', () => {
     const embed = buildScheduleEmbed(gn, [], result);
     expect(embed.toJSON().footer?.text).toContain('fits within the event window');
   });
+
+  it('renders a guest\'s display name instead of a broken mention when a guests array is given', () => {
+    const guests = [{ id: 'guest:abc', ownerId: 'p1', name: 'Mom' }];
+    const result = baseResult({
+      assignments: [{ gameId: 'g1', table: 1, startMinutes: 0, endMinutes: 60, playCount: 1, mayNotFinish: false, attendingPlayerIds: ['p1', 'guest:abc'] }],
+    });
+    const embed = buildScheduleEmbed(gn, games, result, guests);
+    const value = embed.toJSON().fields![0].value;
+    expect(value).toContain("<@p1>'s Guest (Mom)");
+    expect(value).not.toContain('<@guest:abc>');
+  });
+
+  it('behaves exactly as before when no guests array is given (existing callers unaffected)', () => {
+    const result = baseResult({
+      assignments: [{ gameId: 'g1', table: 1, startMinutes: 0, endMinutes: 60, playCount: 1, mayNotFinish: false, attendingPlayerIds: ['p1', 'p2'] }],
+    });
+    const withDefault = buildScheduleEmbed(gn, games, result).toJSON();
+    const withEmptyArray = buildScheduleEmbed(gn, games, result, []).toJSON();
+    expect(withDefault).toEqual(withEmptyArray);
+  });
 });
 
 describe('lockAndScheduleEvent', () => {
@@ -1662,6 +1697,32 @@ describe('lockAndScheduleEvent', () => {
     // A QR code (encoding the same short link as the button, for easier scanning) is attached alongside it.
     expect(bgStatsCall.files).toHaveLength(1);
     expect(bgStatsCall.files[0].toJSON().name).toBe('bgstats-game1.png');
+  });
+
+  it('excludes a guest pseudo-id from the BG Stats roster', async () => {
+    vi.stubEnv('SHORT_LINK_BASE_URL', 'https://bot.example.com');
+    const { upsertGameNight } = await import('../src/utils/storage');
+    const { upsertGame } = await import('../src/utils/gameStorage');
+    const { findShortLink } = await import('../src/utils/shortLinkStorage');
+    const gn = makeGameNight({ location: 'The Rec Room' });
+    await upsertGameNight(gn as any);
+    await upsertGame({
+      id: 'game1', eventId: 'gn1', channelId: 'event-channel-1', messageId: 'm1', guildId: 'guild-1',
+      bggId: '266192', title: 'Wingspan', bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
+      minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [],
+      seats: ['p1', 'guest:abc'], waitlist: [],
+      guests: [{ id: 'guest:abc', ownerId: 'p1', name: 'Mom' }],
+      createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Light',
+    } as any);
+    const client = makeClient();
+
+    await lockAndScheduleEvent(client as any, gn as any, { ...BUFFER_CONFIG, postBgStatsLinks: true });
+
+    const bgStatsCall = (client._channel.send as any).mock.calls[1][0];
+    const button = bgStatsCall.components[0].toJSON().components[0];
+    const stored = await findShortLink(button.url.split('/s/')[1]);
+    const data = JSON.parse(decodeURIComponent(stored!.url.split('?data=')[1]));
+    expect(data.players).toEqual([{ name: 'Display-p1', sourcePlayerId: 'p1', winner: false, startPlayer: false }]);
   });
 
   // Regression: BG Stats' link grows with player count and Discord caps button

@@ -686,7 +686,7 @@ async function refreshGameCard(client: Client, game: GameSuggestion): Promise<vo
     await msg.edit({
       embeds: [await buildGameEmbed(game, nameMap)],
       files: [buildBggAttachment()],
-      components: [buildGameButtons(game.id, game.seats.length >= game.maxPlayers)],
+      components: buildGameButtons(game.id, game.seats.length >= game.maxPlayers),
     });
   } catch {
     /* card may have been deleted */
