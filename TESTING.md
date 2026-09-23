@@ -195,6 +195,26 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] With a full game and at least one person on the waitlist, have a seated player click **Leave** — confirm the first waitlisted person is moved into the freed seat, removed from the waitlist list, and (if their DMs are open) receives a DM saying a seat opened up
 - [ ] Do the same when promoting the waitlist below the minimum player count drops it back below 2 groups — confirm the request pin reverts to 1 copy needed
 
+### 1.3e2 Game Card Buttons — Bring a Guest
+
+**What it does:** Lets a player reserve a seat for someone without Discord (e.g. a family member) alongside their own. Tap **➕ Bring a Guest** — a modal asks for an optional guest name. If you're not seated yet, you're seated first (if there's room) and the guest is placed independently of that (seated if room remains, else waitlisted on its own — never an all-or-nothing pair). If you're already seated, only the guest is placed. There's no limit on how many guests one player can bring — a second (or third) guest is labeled "Player's Guest 2", "Guest 3", etc. Submitting a guest name that matches one you've already added to this game doesn't silently create a duplicate — you're asked to confirm it's really a different person first. Leaving the game (or the waitlist) removes every guest you reserved on it too, whichever list each is in.
+
+- [ ] Tap **Bring a Guest** while not yet seated, with room for both — confirm you're seated, the guest is seated too, and the guest's name appears on the card as "Player's Guest (Name)"
+- [ ] Do the same with only one seat open — confirm you're seated but your guest lands on the waitlist instead
+- [ ] Do the same with the game already full — confirm both you and your guest land on the waitlist as separate entries
+- [ ] Tap **Bring a Guest** while already seated — confirm only the guest is placed (your own seat is untouched)
+- [ ] Bring a second, differently-named guest — confirm both appear, numbered ("Player's Guest 1" / "Player's Guest 2")
+- [ ] Submit a guest name matching one you already added to this game — confirm a confirmation prompt appears instead of a second guest being silently created
+- [ ] Confirm that prompt — confirm the second same-named guest is now added
+- [ ] Cancel that prompt — confirm nothing was added
+- [ ] Leave a blank guest name — confirm it renders as "Player's Guest" with no parenthetical
+- [ ] Leave the game while you have a seated guest — confirm both you and your guest are removed, and any freed seats get backfilled from the waitlist (more than one person/guest can be promoted in a single Leave if more than one seat frees up at once)
+- [ ] Leave the waitlist while your guest is also waitlisted — confirm your guest is removed from the waitlist too
+- [ ] Have someone else leave in a way that promotes your waitlisted guest into a seat — confirm the DM about the freed seat goes to you (the owner), not an attempt to message the guest
+- [ ] Try this on a locked event — confirm the same lock message as Join/Leave
+- [ ] As a greeter on a non-Light game, try to bring a guest — confirm the whole flow is blocked the same way Join is, with no guest added either
+- [ ] Run `/game bgstats` (1.3g) on a game with a guest — confirm the guest does not appear in the BG Stats roster or the "Players" field (a guest has no BGG/BG Stats account)
+
 ### 1.3f Bring Confirm / Cancel
 
 **What it does:** After adding a game via BGG or manual entry, the bot asks if you're bringing the game. Confirming adds it to your library.
@@ -1018,6 +1038,10 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] With a full game and at least one person on the waitlist, have a seated player click **Leave** — confirm the first waitlisted person is moved into the freed seat, removed from the waitlist list, and (if their DMs are open) receives a DM saying a seat opened up
 - [ ] Do the same when promoting the waitlist below the minimum player count drops it back below 2 groups — confirm the request pin reverts to 1 copy needed
 
+### 2.3e2 Game Card Buttons — Bring a Guest
+
+No permission differences from a regular member (see 1.3e2 for the full checklist) — confirm a Host can tap **➕ Bring a Guest** and it behaves exactly the same.
+
 ### 2.3f Bring Confirm / Cancel
 
 **What it does:** After adding a game via BGG or manual entry, the bot asks if you're bringing the game. Confirming adds it to your library.
@@ -1814,6 +1838,10 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Dropping below min players after the second owner already confirmed — confirm the pin reverts to 1 copy needed but the existing confirmation is left alone (a harmless extra confirmed copy), not retracted
 - [ ] With a full game and at least one person on the waitlist, have a seated player click **Leave** — confirm the first waitlisted person is moved into the freed seat, removed from the waitlist list, and (if their DMs are open) receives a DM saying a seat opened up
 - [ ] Do the same when promoting the waitlist below the minimum player count drops it back below 2 groups — confirm the request pin reverts to 1 copy needed
+
+### 3.3e2 Game Card Buttons — Bring a Guest
+
+No permission differences from a regular member (see 1.3e2 for the full checklist) — confirm an Admin can tap **➕ Bring a Guest** and it behaves exactly the same.
 
 ### 3.3f Bring Confirm / Cancel
 
@@ -2797,6 +2825,7 @@ Locking also cleans up and follows up on the "Games to Bring" request pin (`/lib
 - [ ] Confirm every game's line shows a real `(<t:...:t>–<t:...:t>)` start/end time, not just an estimated duration
 - [ ] Seat a game so its computed start or end lands off a quarter-hour (e.g. a table that naturally frees up at :07 or :52) — confirm the posted time is rounded **up** to the next :00/:15/:30/:45, never down and never to the nearest quarter
 - [ ] Confirm each table's line lists that game's seated players as `@mention`s, comma-separated, after the title/time
+- [ ] Seat a game with a guest (via **Bring a Guest**, 1.3e2) before it locks — confirm the locked schedule embed shows the guest's display name (e.g. "Player's Guest (Name)"), not a broken `<@guest:...>` mention
 - [ ] Confirm two games sharing a seated player never overlap in time — the second one starts no earlier than the shared player's break clears after the first ends
 - [ ] With two tables free the whole time, seat a shared player in games at both — confirm the second game's line notes "⏳ waiting on `@mention` to finish an earlier game", naming the shared player, rather than silently showing a later time with no explanation
 - [ ] Confirm two games with no shared players can run fully concurrently on separate tables, both starting immediately, with no "waiting on" note on either

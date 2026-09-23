@@ -119,6 +119,10 @@ import {
   EVENT_SELECT_PREFIX,
   handleHubSuggestButton,
   handleHubSuggestModal,
+  handleGameGuestButton,
+  handleGameGuestModalSubmit,
+  handleGuestDuplicateConfirm,
+  handleGuestDuplicateCancel,
 } from '../commands/game';
 import { findGameNight, upsertGameNight } from '../utils/storage';
 import { buildGameNightEmbed, buildGameNightButtons } from '../utils/embeds';
@@ -248,6 +252,8 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handleRefModal(interaction as unknown as ModalSubmitInteraction, interaction.customId.slice('mp_ref_modal_'.length));
       } else if (interaction.customId.startsWith('mp_match_research_modal_')) {
         await handleMatchResearchModal(interaction as unknown as ModalSubmitInteraction, interaction.customId.slice('mp_match_research_modal_'.length));
+      } else if (interaction.customId.startsWith('game_guestmodal_')) {
+        await handleGameGuestModalSubmit(interaction, interaction.customId.slice('game_guestmodal_'.length));
       }
     } else if (interaction.isButton()) {
       const id = interaction.customId;
@@ -353,6 +359,10 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handleBringConfirm(interaction);
       } else if (id === 'game_bring_cancel') {
         await handleBringCancel(interaction);
+      } else if (id === 'game_guestdupe_confirm') {
+        await handleGuestDuplicateConfirm(interaction);
+      } else if (id === 'game_guestdupe_cancel') {
+        await handleGuestDuplicateCancel(interaction);
       } else if (id === 'game_bgg_prev') {
         await handleBGGSearchPage(interaction, 'prev');
       } else if (id === 'game_bgg_next') {
@@ -376,6 +386,8 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handleWaitlistJoin(interaction, id.slice('game_waitlist_join_'.length));
       } else if (id.startsWith('game_waitlist_leave_')) {
         await handleWaitlistLeave(interaction, id.slice('game_waitlist_leave_'.length));
+      } else if (id.startsWith('game_guestbtn_')) {
+        await handleGameGuestButton(interaction, id.slice('game_guestbtn_'.length));
       } else if (id.startsWith('mp_price_use_')) {
         await handlePriceUseSuggested(interaction, id.slice('mp_price_use_'.length));
       } else if (id.startsWith('mp_price_none_')) {

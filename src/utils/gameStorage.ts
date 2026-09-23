@@ -1,4 +1,5 @@
 import { readJson, writeJson } from './db';
+import { GuestSeat } from './guestSeats';
 
 const FILE = 'games.json';
 
@@ -44,6 +45,9 @@ export interface GameSuggestion {
   expansions: GameExpansion[];
   seats: string[];
   waitlist: string[];
+  // Metadata for synthetic guest pseudo-IDs present in seats/waitlist — see
+  // src/utils/guestSeats.ts. Real Discord IDs never appear in this array.
+  guests?: GuestSeat[];
   createdAt: string;
   createdBy: string;
   // Set once the scheduler (see src/utils/scheduler.ts) assigns this game a

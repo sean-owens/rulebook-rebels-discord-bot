@@ -562,6 +562,386 @@ describe('waitlist promotion on leave', () => {
   });
 });
 
+describe('Bring a Guest', () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-game-guest-test-'));
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  async function seedGuestGame(overrides: Partial<Record<string, unknown>> = {}) {
+    const { upsertGame } = await import('../src/utils/gameStorage');
+    await upsertGameNight(makeGameNight({ id: 'gn-guest', suggestionsLocked: false }));
+    const game = {
+      id: 'game-guest-1',
+      eventId: 'gn-guest',
+      channelId: 'event-channel-1',
+      messageId: 'msg-1',
+      guildId: 'g1',
+      bggId: '1',
+      title: 'Guest Game',
+      bggLink: '',
+      minPlayers: 2,
+      maxPlayers: 4,
+      suggestedPlayers: null,
+      minPlaytime: 30,
+      maxPlaytime: 60,
+      suggestedStartTime: null,
+      expansions: [],
+      seats: [],
+      waitlist: [],
+      guests: [],
+      createdAt: new Date().toISOString(),
+      createdBy: 'u1',
+      ...overrides,
+    };
+    await upsertGame(game as any);
+    return game;
+  }
+
+  function makeGuestInteraction(userId: string, name: string | null) {
+    const dmFetch = vi.fn(async () => {
+      throw new Error('no DM');
+    });
+    const channelFetch = vi.fn(async () => {
+      throw new Error('no channel');
+    });
+    return {
+      user: { id: userId },
+      guild: null,
+      client: { users: { fetch: dmFetch }, channels: { fetch: channelFetch } },
+      fields: { getTextInputValue: (key: string) => (key === 'guest_name' ? (name ?? '') : '') },
+      reply: vi.fn(async () => {}),
+      update: vi.fn(async () => {}),
+      deferReply: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
+      showModal: vi.fn(async () => {}),
+    } as any;
+  }
+
+  it('seats both the member and the guest when there is room for both', async () => {
+    const { handleGameGuestModalSubmit } = await import('../src/commands/game');
+    const { findGame } = await import('../src/utils/gameStorage');
+    await seedGuestGame({ seats: [] });
+
+    await handleGameGuestModalSubmit(makeGuestInteraction('will', 'Mom'), 'game-guest-1');
+
+    const updated = await findGame('game-guest-1');
+    expect(updated?.seats).toContain('will');
+    expect(updated?.guests).toHaveLength(1);
+    const guest = updated!.guests![0];
+    expect(guest.ownerId).toBe('will');
+    expect(guest.name).toBe('Mom');
+    expect(updated?.seats).toContain(guest.id);
+  });
+
+  it('seats the member and waitlists the guest when only one seat is open', async () => {
+    const { handleGameGuestModalSubmit } = await import('../src/commands/game');
+    const { findGame } = await import('../src/utils/gameStorage');
+    await seedGuestGame({ seats: ['a', 'b', 'c'] }); // 1 of 4 seats open
+
+    await handleGameGuestModalSubmit(makeGuestInteraction('will', 'Mom'), 'game-guest-1');
+
+    const updated = await findGame('game-guest-1');
+    expect(updated?.seats).toEqual(['a', 'b', 'c', 'will']);
+    expect(updated?.guests).toHaveLength(1);
+    expect(updated?.waitlist).toEqual([updated!.guests![0].id]);
+  });
+
+  it('waitlists both the member and the guest as independent entries when the table is already full', async () => {
+    const { handleGameGuestModalSubmit } = await import('../src/commands/game');
+    const { findGame } = await import('../src/utils/gameStorage');
+    await seedGuestGame({ seats: ['a', 'b', 'c', 'd'] }); // full
+
+    await handleGameGuestModalSubmit(makeGuestInteraction('will', 'Mom'), 'game-guest-1');
+
+    const updated = await findGame('game-guest-1');
+    expect(updated?.seats).toEqual(['a', 'b', 'c', 'd']);
+    expect(updated?.guests).toHaveLength(1);
+    expect(updated?.waitlist).toEqual(['will', updated!.guests![0].id]);
+  });
+
+  it('just adds the guest when the member is already seated', async () => {
+    const { handleGameGuestModalSubmit } = await import('../src/commands/game');
+    const { findGame } = await import('../src/utils/gameStorage');
+    await seedGuestGame({ seats: ['will'] });
+
+    await handleGameGuestModalSubmit(makeGuestInteraction('will', 'Mom'), 'game-guest-1');
+
+    const updated = await findGame('game-guest-1');
+    expect(updated?.seats).toEqual(['will', updated!.guests![0].id]);
+    expect(updated?.guests).toHaveLength(1);
+  });
+
+  it('lets the same member add a second, differently-named guest, numbering both', async () => {
+    const { handleGameGuestModalSubmit } = await import('../src/commands/game');
+    const { findGame } = await import('../src/utils/gameStorage');
+    const { guestDisplayName } = await import('../src/utils/guestSeats');
+    await seedGuestGame({ seats: ['will'] });
+
+    await handleGameGuestModalSubmit(makeGuestInteraction('will', 'Mom'), 'game-guest-1');
+    await handleGameGuestModalSubmit(makeGuestInteraction('will', 'Dad'), 'game-guest-1');
+
+    const updated = await findGame('game-guest-1');
+    expect(updated?.guests).toHaveLength(2);
+    const [g1, g2] = updated!.guests!;
+    expect(guestDisplayName(g1.id, updated!.guests!, {})).toBe("<@will>'s Guest 1 (Mom)");
+    expect(guestDisplayName(g2.id, updated!.guests!, {})).toBe("<@will>'s Guest 2 (Dad)");
+  });
+
+  it('renders without a parenthetical when the guest name is left blank', async () => {
+    const { handleGameGuestModalSubmit } = await import('../src/commands/game');
+    const { findGame } = await import('../src/utils/gameStorage');
+    const { guestDisplayName } = await import('../src/utils/guestSeats');
+    await seedGuestGame({ seats: ['will'] });
+
+    await handleGameGuestModalSubmit(makeGuestInteraction('will', null), 'game-guest-1');
+
+    const updated = await findGame('game-guest-1');
+    const guest = updated!.guests![0];
+    expect(guest.name).toBeNull();
+    expect(guestDisplayName(guest.id, updated!.guests!, {})).toBe("<@will>'s Guest");
+  });
+
+  it('asks for confirmation instead of silently adding a duplicate-named guest', async () => {
+    const { handleGameGuestModalSubmit } = await import('../src/commands/game');
+    const { findGame } = await import('../src/utils/gameStorage');
+    await seedGuestGame({ seats: ['will'] });
+
+    await handleGameGuestModalSubmit(makeGuestInteraction('will', 'Mom'), 'game-guest-1');
+    const second = makeGuestInteraction('will', 'Mom');
+    await handleGameGuestModalSubmit(second, 'game-guest-1');
+
+    expect(second.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('already have a guest named') }),
+    );
+    expect(second.deferReply).not.toHaveBeenCalled();
+
+    const updated = await findGame('game-guest-1');
+    expect(updated?.guests).toHaveLength(1); // no second guest created yet
+  });
+
+  it('creates the second same-named guest once the duplicate prompt is confirmed', async () => {
+    const { handleGameGuestModalSubmit, handleGuestDuplicateConfirm } = await import('../src/commands/game');
+    const { findGame } = await import('../src/utils/gameStorage');
+    await seedGuestGame({ seats: ['will'] });
+
+    await handleGameGuestModalSubmit(makeGuestInteraction('will', 'Mom'), 'game-guest-1');
+    await handleGameGuestModalSubmit(makeGuestInteraction('will', 'Mom'), 'game-guest-1');
+
+    const confirmInteraction = makeGuestInteraction('will', null);
+    await handleGuestDuplicateConfirm(confirmInteraction);
+
+    const updated = await findGame('game-guest-1');
+    expect(updated?.guests).toHaveLength(2);
+    expect(updated?.guests!.every((g) => g.name === 'Mom')).toBe(true);
+  });
+
+  it('creates nothing when the duplicate prompt is cancelled', async () => {
+    const { handleGameGuestModalSubmit, handleGuestDuplicateCancel } = await import('../src/commands/game');
+    const { findGame } = await import('../src/utils/gameStorage');
+    await seedGuestGame({ seats: ['will'] });
+
+    await handleGameGuestModalSubmit(makeGuestInteraction('will', 'Mom'), 'game-guest-1');
+    await handleGameGuestModalSubmit(makeGuestInteraction('will', 'Mom'), 'game-guest-1');
+
+    const cancelInteraction = makeGuestInteraction('will', null);
+    await handleGuestDuplicateCancel(cancelInteraction);
+
+    expect(cancelInteraction.update).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('No problem') }),
+    );
+    const updated = await findGame('game-guest-1');
+    expect(updated?.guests).toHaveLength(1);
+  });
+
+  it('reports an expired prompt when confirming/cancelling with nothing pending', async () => {
+    const { handleGuestDuplicateConfirm, handleGuestDuplicateCancel } = await import('../src/commands/game');
+
+    const confirmInteraction = makeGuestInteraction('nobody-pending', null);
+    await handleGuestDuplicateConfirm(confirmInteraction);
+    expect(confirmInteraction.update).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('expired') }),
+    );
+
+    const cancelInteraction = makeGuestInteraction('nobody-pending', null);
+    await handleGuestDuplicateCancel(cancelInteraction);
+    expect(cancelInteraction.update).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('No problem') }),
+    );
+  });
+
+  it('is blocked once the event is locked', async () => {
+    const { handleGameGuestModalSubmit } = await import('../src/commands/game');
+    const { findGame } = await import('../src/utils/gameStorage');
+    await seedGuestGame({ seats: ['will'] });
+    await upsertGameNight(makeGameNight({ id: 'gn-guest', suggestionsLocked: true }));
+
+    const interaction = makeGuestInteraction('will', 'Mom');
+    await handleGameGuestModalSubmit(interaction, 'game-guest-1');
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('locked') }),
+    );
+    const updated = await findGame('game-guest-1');
+    expect(updated?.guests ?? []).toHaveLength(0);
+  });
+
+  it('aborts the whole flow (no guest added) on a greeter conflict for the member', async () => {
+    const { handleGameGuestModalSubmit } = await import('../src/commands/game');
+    const { findGame } = await import('../src/utils/gameStorage');
+    await seedGuestGame({ seats: [], complexity: 'Medium' }); // not Light — blocks the greeter
+    // seedGuestGame's own upsertGameNight call has no greeters, so this must
+    // come after it to actually take effect.
+    await upsertGameNight(makeGameNight({ id: 'gn-guest', greeters: ['greeter-1'] }));
+
+    const interaction = makeGuestInteraction('greeter-1', 'Mom');
+    await handleGameGuestModalSubmit(interaction, 'game-guest-1');
+
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('Light-complexity') }),
+    );
+    const updated = await findGame('game-guest-1');
+    expect(updated?.seats).toEqual([]);
+    expect(updated?.guests ?? []).toHaveLength(0);
+  });
+
+  it('cascades on Leave: removes a seated guest along with the leaving member', async () => {
+    const { handleGameLeave, handleGameGuestModalSubmit } = await import('../src/commands/game');
+    const { findGame } = await import('../src/utils/gameStorage');
+    await seedGuestGame({ seats: ['will'] });
+    await handleGameGuestModalSubmit(makeGuestInteraction('will', 'Mom'), 'game-guest-1');
+
+    const leaveInteraction = makeGuestInteraction('will', null);
+    await handleGameLeave(leaveInteraction, 'game-guest-1');
+
+    const updated = await findGame('game-guest-1');
+    expect(updated?.seats).toEqual([]);
+    expect(updated?.guests ?? []).toHaveLength(0);
+  });
+
+  it('cascades on Leave: removes a waitlisted guest along with the leaving member', async () => {
+    const { handleGameLeave, handleGameGuestModalSubmit } = await import('../src/commands/game');
+    const { findGame } = await import('../src/utils/gameStorage');
+    await seedGuestGame({ seats: ['a', 'b', 'c', 'd'] }); // full — member + guest both waitlist
+    await handleGameGuestModalSubmit(makeGuestInteraction('will', 'Mom'), 'game-guest-1');
+
+    const leaveInteraction = makeGuestInteraction('will', null);
+    // "will" is on the waitlist (game was full), so leaving the waitlist —
+    // not the main seat list — is the correct button here.
+    const { handleWaitlistLeave } = await import('../src/commands/game');
+    await handleWaitlistLeave(leaveInteraction, 'game-guest-1');
+
+    const updated = await findGame('game-guest-1');
+    expect(updated?.waitlist).toEqual([]);
+    expect(updated?.guests ?? []).toHaveLength(0);
+  });
+
+  it('promotes both a member and their guest in one Leave when both leave together', async () => {
+    const { handleGameLeave, handleGameGuestModalSubmit } = await import('../src/commands/game');
+    const { findGame, upsertGame } = await import('../src/utils/gameStorage');
+    await seedGuestGame({ minPlayers: 2, maxPlayers: 2, seats: ['other'] });
+    // "will" + their guest fill the remaining seat and overflow one into the waitlist.
+    await handleGameGuestModalSubmit(makeGuestInteraction('will', 'Mom'), 'game-guest-1');
+    let game = await findGame('game-guest-1');
+    // Force room for exactly the 2-seat table: seat will+guest, waitlist two more.
+    game!.maxPlayers = 2;
+    game!.seats = ['will', game!.guests![0].id];
+    game!.waitlist = ['waiter-1', 'waiter-2'];
+    await upsertGame(game as any);
+
+    const leaveInteraction = makeGuestInteraction('will', null);
+    await handleGameLeave(leaveInteraction, 'game-guest-1');
+
+    const updated = await findGame('game-guest-1');
+    // Both freed seats got backfilled from the waitlist in one click.
+    expect(updated?.seats).toEqual(['waiter-1', 'waiter-2']);
+    expect(updated?.waitlist).toEqual([]);
+    expect(updated?.guests ?? []).toHaveLength(0);
+  });
+
+  it('DMs the guest owner (not the guest) when a waitlisted guest gets promoted', async () => {
+    const { handleGameLeave, handleGameGuestModalSubmit } = await import('../src/commands/game');
+    const { findGame } = await import('../src/utils/gameStorage');
+    // owner-2 is already seated (so they're not themselves queued ahead of
+    // their guest on the waitlist) — adding a guest here waitlists just the
+    // guest, alone at the front of the queue.
+    await seedGuestGame({ maxPlayers: 2, seats: ['other-1', 'owner-2'] }); // full
+    await handleGameGuestModalSubmit(makeGuestInteraction('owner-2', 'Dad'), 'game-guest-1');
+    const game = await findGame('game-guest-1');
+    const guestId = game!.guests![0].id;
+    expect(game?.waitlist).toEqual([guestId]);
+
+    const sentTo: string[] = [];
+    const leaveInteraction = {
+      user: { id: 'other-1' },
+      guild: null,
+      client: {
+        users: {
+          fetch: vi.fn(async (id: string) => ({
+            id,
+            send: vi.fn(async () => {
+              sentTo.push(id);
+            }),
+          })),
+        },
+        channels: { fetch: vi.fn(async () => { throw new Error('no channel'); }) },
+      },
+      reply: vi.fn(async () => {}),
+      update: vi.fn(async () => {}),
+    } as any;
+
+    await handleGameLeave(leaveInteraction, 'game-guest-1');
+
+    const updated = await findGame('game-guest-1');
+    expect(updated?.seats).toContain(guestId);
+    expect(sentTo).toEqual(['owner-2']); // DM'd the owner, not the synthetic guest id
+  });
+
+  it('excludes guests from the /game bgstats roster', async () => {
+    const { handleGameGuestModalSubmit, execute } = await import('../src/commands/game');
+    const { findGame } = await import('../src/utils/gameStorage');
+    await seedGuestGame({ seats: ['will'] });
+    await handleGameGuestModalSubmit(makeGuestInteraction('will', 'Mom'), 'game-guest-1');
+    const game = await findGame('game-guest-1');
+    expect(game?.guests).toHaveLength(1);
+
+    const interaction = {
+      options: {
+        getString: (name: string) => (name === 'title' ? 'Guest Game' : null),
+        getSubcommand: () => 'bgstats',
+      },
+      channelId: 'event-channel-1',
+      guildId: 'g1',
+      user: { id: 'will' },
+      client: {
+        channels: { fetch: vi.fn(async () => ({})) },
+        guilds: { fetch: vi.fn(async () => { throw new Error('no guild'); }) },
+      },
+      reply: vi.fn(async () => {}),
+      deferReply: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
+    } as any;
+
+    await execute(interaction);
+
+    // No real Discord guild in tests, so resolvePlayerNames' guild lookup
+    // fails and falls back to the raw id string — good enough to assert the
+    // guest's synthetic id never shows up, while "will" does.
+    const embedArg = interaction.editReply.mock.calls[0]?.[0];
+    const playersField = embedArg?.embeds?.[0]?.data?.fields?.find((f: any) => f.name === 'Players');
+    expect(playersField?.value).not.toContain(game!.guests![0].id);
+    expect(playersField?.value).toContain('will');
+  });
+});
+
 describe('waitlist-driven copy requests', () => {
   let tmpDir: string;
   let cwdSpy: ReturnType<typeof vi.spyOn>;
