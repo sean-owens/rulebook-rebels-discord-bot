@@ -1555,6 +1555,16 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run with no requests — confirm "No games have been requested for this event"
 - [ ] Run from outside an event channel — confirm event picker appears; selecting an event shows all requests
 
+### 2.8i `/host challenge points`
+
+**What it does:** Adds or subtracts a set number of points from one user's board game challenge leaderboard total — `amount` positive to add, negative to subtract. Works even for a user who's never guessed correctly (their total starts at 0). A subtraction that would go below 0 is clamped at 0, with a note in the reply that it was clamped. Updates the pinned leaderboard message (4.9) immediately.
+
+- [ ] With a user already on the leaderboard, run `/host challenge points user:<them> amount:50` — confirm a success message with their new total, and the pinned leaderboard message reflects it
+- [ ] Run `/host challenge points user:<them> amount:-30` — confirm their total decreases by 30, no clamp note
+- [ ] Run a subtraction larger than their current total (e.g. they have 20, subtract 50) — confirm their total shows as 0 and the reply includes a note that it was clamped
+- [ ] Run for a user with no leaderboard entry yet, with a positive amount — confirm they now appear on `/challenge leaderboard` with that total
+- [ ] Run with `amount:0` — confirm "Amount must be non-zero" and nothing changes
+
 ## 2.9 `/room` — Private Rooms
 
 ### 2.9a `/room create`
@@ -2297,6 +2307,16 @@ See 2.8f for the full checklist — this Admin-tier pass just confirms Admins re
 - [ ] Run with no requests — confirm "No games have been requested for this event"
 - [ ] Run from outside an event channel — confirm event picker appears; selecting an event shows all requests
 
+### 3.8i `/host challenge points`
+
+**What it does:** Adds or subtracts a set number of points from one user's board game challenge leaderboard total — `amount` positive to add, negative to subtract. Works even for a user who's never guessed correctly (their total starts at 0). A subtraction that would go below 0 is clamped at 0, with a note in the reply that it was clamped. Updates the pinned leaderboard message (4.9) immediately.
+
+- [ ] With a user already on the leaderboard, run `/host challenge points user:<them> amount:50` — confirm a success message with their new total, and the pinned leaderboard message reflects it
+- [ ] Run `/host challenge points user:<them> amount:-30` — confirm their total decreases by 30, no clamp note
+- [ ] Run a subtraction larger than their current total (e.g. they have 20, subtract 50) — confirm their total shows as 0 and the reply includes a note that it was clamped
+- [ ] Run for a user with no leaderboard entry yet, with a positive amount — confirm they now appear on `/challenge leaderboard` with that total
+- [ ] Run with `amount:0` — confirm "Amount must be non-zero" and nothing changes
+
 ## 3.9 `/admin` — Admin Commands
 
 **What it does:** Provides server configuration commands to members with the Admin role (or Manage Guild permission). Non-admins should not see these commands in the Discord command picker.
@@ -2568,6 +2588,15 @@ Text channels have no forum tags and no thread is created for a listing — each
 - [ ] Run with `frequency:biweekly start_date:"August 22"` (any day of the desired starting week, not necessarily a Monday) — confirm the anchor shown is normalized to that week's Monday
 - [ ] Run with an unparseable `start_date` (e.g. "whenever") — confirm a clear "Could not parse..." error and nothing is saved
 - [ ] Having already set a bi-weekly anchor, run `/admin challenge config` again changing only an unrelated setting (e.g. a schedule hour) — confirm the existing anchor is left untouched, not silently reset
+
+### 3.9t `/admin challenge reset-scores`
+
+**What it does:** Zeroes the board game challenge leaderboard for every user on the server — the same totals shown by `/challenge leaderboard` and the pinned leaderboard message. Requires `confirm:true`; without it, nothing is changed. Irreversible. Does not touch past challenges' own record of who guessed correctly each week (still shown on old reveal posts) — only the running point totals.
+
+- [ ] 👑 Run as non-admin — confirm "requires Manage Server permission"
+- [ ] Run with `confirm:false` (or omitted) — confirm "cancelled" and the leaderboard is unchanged
+- [ ] With at least one user on the leaderboard, run with `confirm:true` — confirm a success message, `/challenge leaderboard` now shows "No points on the board yet", and the pinned leaderboard message (4.9) updates to reflect the reset
+- [ ] Get a fresh correct guess after resetting — confirm scoring still works normally and the new total starts from 0, not the pre-reset value
 
 ## 3.10 `/room` — Private Rooms
 
