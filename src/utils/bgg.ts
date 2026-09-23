@@ -109,6 +109,21 @@ const MAX_FETCH_RETRIES = 2;
 // into per call via `pollFor202` rather than folded into RETRYABLE_STATUSES.
 const MAX_202_POLLS = 1;
 
+// Opt-in verbose logging of every BGG request this file makes (URL, status,
+// attempt number, elapsed time, and whether it's retrying, polling, or
+// done). Off by default — a syncall of hundreds of games would otherwise
+// flood production logs with routine 200s. Flip on in Railway's env vars
+// when diagnosing a live BGG issue, e.g. the 403 that took down a challenge
+// cycle (see RETRYABLE_STATUSES above) or a batch failing for an unclear
+// reason.
+function bggDebugLoggingEnabled(): boolean {
+  return process.env.BGG_DEBUG_LOGGING === 'true';
+}
+
+function logBGGAttempt(message: string): void {
+  if (bggDebugLoggingEnabled()) console.log(`[BGG debug] ${message}`);
+}
+
 // Shared GET wrapper for every BGG XMLAPI2 call in this file. Retries a
 // transient-looking failure a couple of times with backoff, and — when
 // `pollFor202` is set — also polls through the collection endpoint's 202.
@@ -121,17 +136,25 @@ async function fetchBGGResponse(
 ): Promise<Response> {
   const headers = { ...bggHeaders(), ...options.headers };
   for (let transientAttempt = 0, pollAttempt = 0; ; ) {
+    const attemptNum = transientAttempt + pollAttempt + 1;
+    const startedAt = Date.now();
     const res = await fetch(url, { headers });
+    const elapsedMs = Date.now() - startedAt;
     if (options.pollFor202 && res.status === 202 && pollAttempt < MAX_202_POLLS) {
+      logBGGAttempt(`attempt ${attemptNum} -> 202 (${elapsedMs}ms), polling again: ${url}`);
       pollAttempt++;
       await new Promise((r) => setTimeout(r, 3000));
       continue;
     }
     if (!res.ok && RETRYABLE_STATUSES.has(res.status) && transientAttempt < MAX_FETCH_RETRIES) {
+      logBGGAttempt(`attempt ${attemptNum} -> ${res.status} (${elapsedMs}ms), retrying: ${url}`);
       await new Promise((r) => setTimeout(r, 1000 * 2 ** transientAttempt));
       transientAttempt++;
       continue;
     }
+    logBGGAttempt(
+      `attempt ${attemptNum} -> ${res.status} (${elapsedMs}ms), ${res.ok ? 'success' : 'final failure'}: ${url}`,
+    );
     return res;
   }
 }

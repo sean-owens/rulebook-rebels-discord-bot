@@ -10,6 +10,7 @@ import {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  delete process.env.BGG_DEBUG_LOGGING;
 });
 
 function mockFetch(xml: string, status = 200): void {
@@ -146,6 +147,49 @@ describe('searchBGG', () => {
 
     const results = await searchBGG("Star Trek Captain's Chair");
     expect(results[0].name).toBe("Star Trek: Captain's Chair");
+  });
+});
+
+// ── BGG_DEBUG_LOGGING ────────────────────────────────────────────────────────
+
+describe('BGG_DEBUG_LOGGING', () => {
+  it('logs nothing per-request when unset', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    mockFetch(`<items total="0"></items>`);
+    await searchBGG('quiet');
+    expect(logSpy).not.toHaveBeenCalled();
+    logSpy.mockRestore();
+  });
+
+  it('logs each attempt (status, elapsed time) when set to true', async () => {
+    process.env.BGG_DEBUG_LOGGING = 'true';
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    mockFetch(`<items total="0"></items>`);
+    await searchBGG('verbose');
+    expect(logSpy).toHaveBeenCalledTimes(1);
+    expect(logSpy.mock.calls[0][0]).toMatch(/\[BGG debug\] attempt 1 -> 200 \(\d+ms\), success/);
+    logSpy.mockRestore();
+  });
+
+  it('logs a retry attempt separately from the final success', async () => {
+    process.env.BGG_DEBUG_LOGGING = 'true';
+    vi.useFakeTimers();
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 403, text: () => Promise.resolve('') })
+      .mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve('<items total="0"></items>') });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const promise = searchBGG('retry');
+    await vi.runAllTimersAsync();
+    await promise;
+
+    expect(logSpy).toHaveBeenCalledTimes(2);
+    expect(logSpy.mock.calls[0][0]).toMatch(/attempt 1 -> 403 \(\d+ms\), retrying/);
+    expect(logSpy.mock.calls[1][0]).toMatch(/attempt 2 -> 200 \(\d+ms\), success/);
+    logSpy.mockRestore();
+    vi.useRealTimers();
   });
 });
 
