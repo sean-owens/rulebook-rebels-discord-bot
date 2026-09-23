@@ -234,6 +234,30 @@ describe('isCorrectGuess', () => {
     expect(isCorrectGuess('', 'Catan')).toBe(false);
     expect(isCorrectGuess('the', 'Catan')).toBe(false);
   });
+
+  it('accepts the subtitle merged into the base with no space, in the title\'s own order', () => {
+    // "Thunder Road: Vendetta" — base with the subtitle appended and the
+    // internal space between "Thunder" and "Road" dropped.
+    expect(isCorrectGuess('thunder road', 'Thunder Road: Vendetta')).toBe(true);
+    expect(isCorrectGuess('thunderRoad Vendetta', 'Thunder Road: Vendetta')).toBe(true);
+    expect(isCorrectGuess('ThunderRoad Vendetta', 'Thunder Road: Vendetta')).toBe(true);
+  });
+
+  it('accepts a guess matching only the subtitle, apostrophe and all', () => {
+    // "Star Trek: Captain's Chair" — guessing just the subtitle, with or
+    // without the base title, in either order.
+    expect(isCorrectGuess('captains chair', "Star Trek: Captain's Chair")).toBe(true);
+    expect(isCorrectGuess('star trek captains chair', "Star Trek: Captain's Chair")).toBe(true);
+    expect(isCorrectGuess("star trek captains Chair", "Star Trek: Captain's Chair")).toBe(true);
+  });
+
+  it('accepts the full title with base and subtitle reordered', () => {
+    expect(isCorrectGuess('captains chair star trek', "Star Trek: Captain's Chair")).toBe(true);
+  });
+
+  it('is not fooled by a reordering of an unrelated title', () => {
+    expect(isCorrectGuess('mars terraforming', 'Catan')).toBe(false);
+  });
 });
 
 describe('selectWeeklyGame', () => {
