@@ -163,31 +163,72 @@ export function generateClues(game: BGGGame): [string, string, string] {
 
 const LEADING_ARTICLES = /^(the|a|an)\s+/;
 
-// Lowercases, drops a colon/parenthetical subtitle (so "Terraforming Mars:
-// Ares Expedition" and "Terraforming Mars" normalize the same — a deliberate
-// forgiveness call, see isCorrectGuess), strips punctuation, and drops a
-// leading article.
-export function normalizeGuess(text: string): string {
+// Lowercases, drops apostrophes entirely (so "Captain's" -> "captains", one
+// word rather than two), replaces remaining punctuation with spaces,
+// collapses whitespace, and drops a leading article.
+function cleanWords(text: string): string {
   return text
     .toLowerCase()
-    .split(/[:(]/)[0]
+    .replace(/['’]/g, '')
     .replace(/[^a-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .replace(LEADING_ARTICLES, '');
 }
 
-// Exact match after normalization, or a typo-tolerant fuzzy match bounded to
-// ~15% of the title's length (min 1, max 6 edits) — forgiving of small typos
-// without accepting a genuinely different title.
-export function isCorrectGuess(guess: string, title: string): boolean {
-  const normGuess = normalizeGuess(guess);
-  const normTitle = normalizeGuess(title);
-  if (!normGuess || !normTitle) return false;
-  if (normGuess === normTitle) return true;
+// Lowercases, drops a colon/parenthetical subtitle (so "Terraforming Mars:
+// Ares Expedition" and "Terraforming Mars" normalize the same — a deliberate
+// forgiveness call, see isCorrectGuess), strips punctuation, and drops a
+// leading article.
+export function normalizeGuess(text: string): string {
+  return cleanWords(text.split(/[:(]/)[0]);
+}
 
-  const maxDist = Math.min(6, Math.max(1, Math.floor(normTitle.length * 0.15)));
-  return editDistanceAtMost(normGuess, normTitle, maxDist);
+// Splits a title into its normalized base and (optional) subtitle, e.g.
+// "Star Trek: Captain's Chair" -> { base: "star trek", subtitle: "captains chair" }.
+function splitTitle(title: string): { base: string; subtitle: string } {
+  const [rawBase, ...rest] = title.split(/[:(]/);
+  const rawSubtitle = rest.join(' ').replace(/\)/g, '');
+  return { base: cleanWords(rawBase), subtitle: cleanWords(rawSubtitle) };
+}
+
+// Alphabetizes a normalized string's words so word order stops mattering —
+// "captains chair star trek" and "star trek captains chair" both collapse
+// to the same canonical form. Doesn't touch spelling, so it composes with
+// the fuzzy edit-distance check below rather than replacing it.
+function sortedWords(normalized: string): string {
+  return normalized.split(' ').filter(Boolean).sort().join(' ');
+}
+
+// Exact match, or a typo-tolerant fuzzy match bounded to ~15% of the
+// target's length (min 1, max 6 edits) — forgiving of small typos without
+// accepting a genuinely different title.
+function fuzzyMatches(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const maxDist = Math.min(6, Math.max(1, Math.floor(b.length * 0.15)));
+  return editDistanceAtMost(a, b, maxDist);
+}
+
+// Checks a guess against the title's base, subtitle, and full (base +
+// subtitle) forms — so a guess can include or omit the subtitle — trying
+// both each candidate's natural word order and a word-order-independent
+// form, so "captains chair star trek" matches "Star Trek: Captain's Chair"
+// as readily as "star trek captains chair" does. See cleanWords/fuzzyMatches
+// for the punctuation/typo forgiveness layered underneath.
+export function isCorrectGuess(guess: string, title: string): boolean {
+  const normGuess = cleanWords(guess);
+  if (!normGuess) return false;
+
+  const { base, subtitle } = splitTitle(title);
+  const full = subtitle ? `${base} ${subtitle}` : base;
+  const candidates = [...new Set([base, subtitle, full])].filter(Boolean);
+  if (candidates.length === 0) return false;
+
+  return candidates.some(
+    (candidate) =>
+      fuzzyMatches(normGuess, candidate) || fuzzyMatches(sortedWords(normGuess), sortedWords(candidate)),
+  );
 }
 
 // Shared by /challenge leaderboard (commands/boardgamechallenge.ts) and the
