@@ -12,6 +12,8 @@ import {
   revealChallenge,
   getRecentGameIds,
   getLeaderboard,
+  resetLeaderboard,
+  adjustUserPoints,
 } from '../src/utils/boardGameChallengeStorage';
 
 const BASE_CHALLENGE = {
@@ -209,6 +211,73 @@ describe('boardGameChallengeStorage', () => {
 
       const leaderboard = await getLeaderboard('guild-1');
       expect(leaderboard.map((e) => e.userId)).toEqual(['user-2', 'user-1']);
+    });
+  });
+
+  describe('resetLeaderboard', () => {
+    it('zeroes out every user on the guild leaderboard', async () => {
+      const c = await createWeeklyChallenge('guild-1', BASE_CHALLENGE);
+      await recordCorrectGuess('guild-1', c.id, 'user-1', 1);
+      await resetLeaderboard('guild-1');
+      expect(await getLeaderboard('guild-1')).toEqual([]);
+    });
+
+    it('does not touch a different guild\'s leaderboard', async () => {
+      const c1 = await createWeeklyChallenge('guild-1', BASE_CHALLENGE);
+      const c2 = await createWeeklyChallenge('guild-2', BASE_CHALLENGE);
+      await recordCorrectGuess('guild-1', c1.id, 'user-1', 1);
+      await recordCorrectGuess('guild-2', c2.id, 'user-1', 1);
+
+      await resetLeaderboard('guild-1');
+
+      expect(await getLeaderboard('guild-1')).toEqual([]);
+      expect(await getLeaderboard('guild-2')).toEqual([{ userId: 'user-1', points: 100 }]);
+    });
+
+    it('does not touch past challenges\' own correctGuesses records', async () => {
+      const c = await createWeeklyChallenge('guild-1', BASE_CHALLENGE);
+      await recordCorrectGuess('guild-1', c.id, 'user-1', 1);
+      await resetLeaderboard('guild-1');
+
+      const stored = await getChallenge('guild-1', c.id);
+      expect(stored?.correctGuesses).toEqual([
+        expect.objectContaining({ userId: 'user-1', points: 100 }),
+      ]);
+    });
+  });
+
+  describe('adjustUserPoints', () => {
+    it('adds to an existing total', async () => {
+      const c = await createWeeklyChallenge('guild-1', BASE_CHALLENGE);
+      await recordCorrectGuess('guild-1', c.id, 'user-1', 1); // 100
+      const result = await adjustUserPoints('guild-1', 'user-1', 50);
+      expect(result).toEqual({ total: 150, clamped: false });
+      expect(await getLeaderboard('guild-1')).toEqual([{ userId: 'user-1', points: 150 }]);
+    });
+
+    it('subtracts from an existing total', async () => {
+      const c = await createWeeklyChallenge('guild-1', BASE_CHALLENGE);
+      await recordCorrectGuess('guild-1', c.id, 'user-1', 1); // 100
+      const result = await adjustUserPoints('guild-1', 'user-1', -30);
+      expect(result).toEqual({ total: 70, clamped: false });
+    });
+
+    it('clamps at 0 when subtracting more than the user has, and reports it', async () => {
+      const c = await createWeeklyChallenge('guild-1', BASE_CHALLENGE);
+      await recordCorrectGuess('guild-1', c.id, 'user-1', 3); // 50
+      const result = await adjustUserPoints('guild-1', 'user-1', -80);
+      expect(result).toEqual({ total: 0, clamped: true });
+      expect(await getLeaderboard('guild-1')).toEqual([{ userId: 'user-1', points: 0 }]);
+    });
+
+    it('works for a user with no prior entry, treating their total as 0', async () => {
+      const result = await adjustUserPoints('guild-1', 'user-new', 25);
+      expect(result).toEqual({ total: 25, clamped: false });
+    });
+
+    it('does not touch a different guild\'s leaderboard', async () => {
+      await adjustUserPoints('guild-1', 'user-1', 40);
+      expect(await getLeaderboard('guild-2')).toEqual([]);
     });
   });
 });

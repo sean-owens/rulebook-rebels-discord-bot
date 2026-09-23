@@ -9,6 +9,7 @@ import {
 } from './gamenight';
 import { handleHostGameCancel } from './game';
 import { handleUnrequest as handleLibraryUnrequest } from './library';
+import { handleHostChallengePoints } from './boardgamechallenge';
 
 export const data = new SlashCommandBuilder()
   .setName('host')
@@ -192,6 +193,24 @@ export const data = new SlashCommandBuilder()
           .setName('unrequest')
           .setDescription('View and remove any game request from an upcoming event'),
       ),
+  )
+  // ── challenge group ───────────────────────────────────────────────────────────
+  .addSubcommandGroup((group) =>
+    group
+      .setName('challenge')
+      .setDescription('Board game challenge scoring')
+      .addSubcommand((sub) =>
+        sub
+          .setName('points')
+          .setDescription("Add or subtract points from a user's board game challenge total")
+          .addUserOption((opt) => opt.setName('user').setDescription('Who to adjust').setRequired(true))
+          .addIntegerOption((opt) =>
+            opt
+              .setName('amount')
+              .setDescription('Positive to add, negative to subtract (e.g. 50 or -50)')
+              .setRequired(true),
+          ),
+      ),
   );
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -209,5 +228,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     if (sub === 'cancel') await handleHostGameCancel(interaction);
   } else if (group === 'library') {
     if (sub === 'unrequest') await handleLibraryUnrequest(interaction, true);
+  } else if (group === 'challenge') {
+    if (sub === 'points') await handleHostChallengePoints(interaction);
   }
 }

@@ -13,8 +13,8 @@ import {
   TextChannel,
 } from 'discord.js';
 import { getGuildConfig, updateGuildConfig, GuildConfig } from '../utils/config';
-import { getActiveChallenge } from '../utils/boardGameChallengeStorage';
-import { getLeaderboard, buildLeaderboardEmbed } from '../utils/boardGameChallenge';
+import { getActiveChallenge, resetLeaderboard, adjustUserPoints } from '../utils/boardGameChallengeStorage';
+import { getLeaderboard, buildLeaderboardEmbed, updateChallengeLeaderboardPin } from '../utils/boardGameChallenge';
 import { parseHourInput, mondayOfWeekInTimeZone, mondayOfDateInTimeZone } from '../utils/timezone';
 import { parseDateTime } from './gamenight';
 
@@ -281,6 +281,67 @@ export async function handleChallengeConfig(interaction: ChatInputCommandInterac
     ]
       .filter((line) => line !== '')
       .join('\n'),
+  });
+}
+
+// /admin challenge reset-scores — admin-only (see CLAUDE.md 1c: this is a
+// breaking, irreversible action, so it requires an explicit confirm:true
+// rather than running off just the subcommand name). Only clears the
+// cumulative leaderboard totals — see resetLeaderboard's own comment for why
+// past challenges' correctGuesses records are left alone.
+export async function handleChallengeResetScores(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const isAdmin = interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ?? false;
+  if (!isAdmin) {
+    await interaction.editReply({ content: 'This command requires Manage Server permission.' });
+    return;
+  }
+
+  const confirm = interaction.options.getBoolean('confirm', true);
+  if (!confirm) {
+    await interaction.editReply({
+      content: 'Scoreboard reset cancelled — run again with `confirm:true` to actually reset it.',
+    });
+    return;
+  }
+
+  const guildId = interaction.guildId!;
+  await resetLeaderboard(guildId);
+  await updateChallengeLeaderboardPin(interaction.client, guildId);
+
+  await interaction.editReply({ content: '🔄 The board game challenge scoreboard has been reset for everyone.' });
+}
+
+// /host challenge points — host-level (see /host's own ManageEvents default
+// permission, which gates this whole command already). A positive amount
+// adds, a negative amount subtracts; the result is clamped at 0 by
+// adjustUserPoints, which this surfaces to the host rather than leaving a
+// silent 0 unexplained.
+export async function handleHostChallengePoints(interaction: ChatInputCommandInteraction): Promise<void> {
+  const targetUser = interaction.options.getUser('user', true);
+  const amount = interaction.options.getInteger('amount', true);
+
+  if (amount === 0) {
+    await interaction.reply({ content: 'Amount must be non-zero.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const guildId = interaction.guildId!;
+  const { total, clamped } = await adjustUserPoints(guildId, targetUser.id, amount);
+  await updateChallengeLeaderboardPin(interaction.client, guildId);
+
+  const verb = amount > 0 ? 'Added' : 'Subtracted';
+  const preposition = amount > 0 ? 'to' : 'from';
+  const pts = (n: number) => `${n} point${n === 1 ? '' : 's'}`;
+  await interaction.reply({
+    content: [
+      `${verb} **${pts(Math.abs(amount))}** ${preposition} <@${targetUser.id}>. New total: **${pts(total)}**.`,
+      clamped ? "-# Clamped at 0 — this would've gone negative." : '',
+    ]
+      .filter((line) => line !== '')
+      .join('\n'),
+    flags: MessageFlags.Ephemeral,
   });
 }
 

@@ -38,7 +38,7 @@ import {
 } from './marketplace';
 import { handleRoomConfig } from './room';
 import { handleGeneralHubConfig } from '../utils/generalHub';
-import { handleChallengeConfig, WEEKDAY_CHOICES } from './boardgamechallenge';
+import { handleChallengeConfig, handleChallengeResetScores, WEEKDAY_CHOICES } from './boardgamechallenge';
 
 export const data = new SlashCommandBuilder()
   .setName('admin')
@@ -541,7 +541,18 @@ export const data = new SlashCommandBuilder()
             );
         }
         return sub;
-      }),
+      })
+      .addSubcommand((sub) =>
+        sub
+          .setName('reset-scores')
+          .setDescription('Reset the board game challenge leaderboard for everyone (irreversible)')
+          .addBooleanOption((opt) =>
+            opt
+              .setName('confirm')
+              .setDescription('Must be true — a safety check against an accidental reset')
+              .setRequired(true),
+          ),
+      ),
   );
 
 export async function handleAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
@@ -597,6 +608,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     if (sub === 'config') await handleGeneralHubConfig(interaction);
   } else if (group === 'challenge') {
     if (sub === 'config') await handleChallengeConfig(interaction);
+    else if (sub === 'reset-scores') await handleChallengeResetScores(interaction);
   }
 }
 

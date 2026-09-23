@@ -124,6 +124,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
                 '`/host event archive` — Archive past event channels',
                 '`/host game cancel` — Remove any game from the event lineup',
                 '`/host library unrequest` — Remove any game request from an event',
+                '`/host challenge points` — Add or subtract board game challenge points for a user',
               ].join('\n'),
             },
           ]
@@ -147,16 +148,22 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
               ].join('\n'),
             },
             {
-              name: '🔧  /admin — Welcome, marketplace & rooms',
+              name: '🔧  /admin — Welcome & marketplace',
               value: [
                 '`/admin welcome config` — Configure the welcome message/channel and the public new-member announcement channel',
                 '`/admin welcome test` — Preview the welcome message',
                 '`/admin welcome greet` — Manually send the welcome message to a member',
                 '`/admin marketplace config` — Set the marketplace channel (Forum or Text) and negotiation mode',
                 '`/admin marketplace purge` — Delete old/closed marketplace listings',
+              ].join('\n'),
+            },
+            {
+              name: '🔧  /admin — Rooms, challenge & usage',
+              value: [
                 '`/admin room config` — Set the Discord category used for /room private channels',
                 '`/admin general config` — Set the channel for the general chat "Quick Actions" button hub',
                 '`/admin challenge config` — Set the channel, frequency (daily/weekly/bi-weekly), on/off state, hint/reveal schedule, and whether old posts get cleaned up when a new cycle starts, for the board game challenge',
+                '`/admin challenge reset-scores` — Reset the board game challenge leaderboard for everyone (requires confirm:true)',
                 '`/admin usage` — Show which commands are used on this server, and how often',
                 '`/admin bgstats` — Show BG Stats link open counts for the most recently locked event',
               ].join('\n'),
