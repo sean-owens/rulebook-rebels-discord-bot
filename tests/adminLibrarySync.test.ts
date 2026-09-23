@@ -203,6 +203,27 @@ describe('/admin library syncall — force option', () => {
       expect.objectContaining({ content: expect.stringContaining('nothing to sync') }),
     );
   });
+
+  it('logs the batch ids and the actual error when a batch fails, instead of failing silently', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockLoadGameInfos.mockResolvedValue([
+      makeInfo({ objectid: '1', gameName: 'Game 1' }),
+      makeInfo({ objectid: '2', gameName: 'Game 2' }),
+    ]);
+    mockGetBGGGamesBatch.mockRejectedValue(new Error('BGG returned 403 for https://boardgamegeek.com/xmlapi2/thing?id=1,2&stats=1'));
+
+    const interaction = makeInteraction(null);
+    await handleSyncAll(interaction);
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('batch 1/1 (ids: 1,2) failed'),
+      expect.any(Error),
+    );
+    expect(interaction.followUp).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('2** failed') }),
+    );
+    errorSpy.mockRestore();
+  });
 });
 
 describe('/admin library backfilltop', () => {
@@ -293,5 +314,21 @@ describe('/admin library backfilltop', () => {
     expect(interaction.reply).toHaveBeenCalledWith(
       expect.objectContaining({ content: expect.stringContaining('nothing to backfill') }),
     );
+  });
+
+  it('logs the batch ids and the actual error when a batch fails, instead of failing silently', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockGetTopRankedGames.mockReturnValue([makeCatalogEntry({ id: '1', rank: 1 })]);
+    mockLoadGameInfos.mockResolvedValue([]);
+    mockGetBGGGamesBatch.mockRejectedValue(new Error('BGG returned 403 for https://boardgamegeek.com/xmlapi2/thing?id=1&stats=1'));
+
+    const interaction = makeBackfillInteraction(null);
+    await handleBackfillTopRanked(interaction);
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('batch 1/1 (ids: 1) failed'),
+      expect.any(Error),
+    );
+    errorSpy.mockRestore();
   });
 });

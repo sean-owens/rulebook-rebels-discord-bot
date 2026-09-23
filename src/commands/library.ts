@@ -1194,7 +1194,8 @@ export async function handleSyncAll(interaction: ChatInputCommandInteraction): P
         await applyBGGDataToGameInfo(info, bggGame, force);
         updated++;
       }
-    } catch {
+    } catch (err) {
+      console.error(`[library syncall] batch ${i + 1}/${batches.length} (ids: ${ids.join(',')}) failed:`, err);
       failed += batches[i].length;
     }
   }
@@ -1265,7 +1266,8 @@ export async function handleBackfillTopRanked(interaction: ChatInputCommandInter
         await applyBGGDataToGameInfo(existing, bggGame, force);
         updated++;
       }
-    } catch {
+    } catch (err) {
+      console.error(`[library backfilltop] batch ${i + 1}/${batches.length} (ids: ${ids.join(',')}) failed:`, err);
       failed += batches[i].length;
     }
   }
