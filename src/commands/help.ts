@@ -73,6 +73,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         value: [
           '`post sell` — List an item for sale (BGG-assisted with expansion and price reference; custom items supported)',
           '`post trade` — List an item you want to trade away',
+          '`import` — Post several listings at once from a CSV file (preview first, nothing posts until you confirm)',
+          '`template` — Get a sample CSV to fill in for `import`',
           '`price` — Look up current BGG marketplace prices without creating a listing',
           '`conditions` — Show the condition grading scale (New → Acceptable)',
           '`browse` — Browse active listings (filter by sell or trade)',

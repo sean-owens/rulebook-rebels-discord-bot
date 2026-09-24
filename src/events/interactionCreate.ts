@@ -60,6 +60,8 @@ import {
   handleBuyNowButton,
   handleBuyNowConfirm,
   handleBuyNowCancel,
+  handleImportConfirm,
+  handleImportCancel,
   handleBidModal,
   handleAcceptBid,
   handleDenyBid,
@@ -408,6 +410,10 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handleInterestButton(interaction, id.slice('mp_interest_'.length));
       } else if (id.startsWith('mp_buynowyes_')) {
         await handleBuyNowConfirm(interaction, id.slice('mp_buynowyes_'.length));
+      } else if (id.startsWith('mp_import_yes_')) {
+        await handleImportConfirm(interaction, id.slice('mp_import_yes_'.length));
+      } else if (id.startsWith('mp_import_no_')) {
+        await handleImportCancel(interaction, id.slice('mp_import_no_'.length));
       } else if (id.startsWith('mp_buynowno_')) {
         await handleBuyNowCancel(interaction);
       } else if (id.startsWith('mp_buynow_')) {

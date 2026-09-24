@@ -710,6 +710,25 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run on a sold or closed listing — confirm "Only active or pending listings can be edited" and no modal opens
 - [ ] Confirm the autocomplete on `id` only offers your own active/pending listings (same filter as `close`)
 
+### 1.7o `/marketplace import` and `/marketplace template`
+
+**What it does:** Posts several listings at once from a CSV file. `/marketplace template` sends a sample CSV (columns: `type` sell/trade (blank = sell), `item`, `condition`, `price`, `offers_allowed`, `looking_for`, `notes`, `bgg_id`). `/marketplace import file:<csv>` validates the file and shows an ephemeral **preview** — each row with its BGG match (✅ exact, ⚠️ best guess, ➖ none = custom item), plus a list of rows with problems — and nothing is created until you tap **✅ Post these listings**. Matching uses the local BGG catalog only (no live BGG calls), so imported listings have no thumbnail/expansion bundling. A `bgg_id` value overrides name matching. Limits: 25 rows, 100 KB, `.csv` only. An item you already have an active/pending listing for (same type and name), or a repeat within the file, is skipped.
+
+- [ ] Run `/marketplace template` — confirm an ephemeral reply with a downloadable `marketplace-import-template.csv` (header + a sell, a firm-price sell, and a trade example) and an explanation of the columns
+- [ ] Fill the template with 3 valid rows (including one trade) and run `/marketplace import` — confirm the preview lists all 3 with BGG match indicators and shows "3 listings ready"; confirm **no listing exists yet** (`/marketplace my` is unchanged)
+- [ ] Tap **Post these listings** — confirm 3 listings are created and posted to the marketplace channel, with the right condition/price/"Open to Offers" vs "Firm Price"/looking-for/notes, and the summary reply says "Created 3 listings"
+- [ ] Use an item name that only partially matches a BGG game (e.g. "Gloom") — confirm the preview flags "⚠️ Best-guess BGG match" naming the game; add the correct `bgg_id` and re-import — confirm it now shows ✅
+- [ ] Use an item that isn't on BGG — confirm the preview says "No BGG match — posts as a custom item" and it posts fine without a BGG link
+- [ ] Add rows with problems (missing item, invalid condition like "mint", price "abc", `offers_allowed` = maybe, a firm-price row with no price, non-numeric `bgg_id`, unknown `type`) — confirm each is listed as "❌ Line N: ..." with the correct line number, valid rows still import, and the bad ones are not created
+- [ ] Use a `bgg_id` that doesn't exist — confirm that row is reported as not in the catalog and skipped
+- [ ] Import an item you already have an active listing for — confirm it's shown as "⏭️ Skipped" and not duplicated; repeat the same item twice in one file — confirm the second is skipped
+- [ ] Tap **Cancel** — confirm "Import cancelled — nothing was posted." and no listings exist; tapping **Post** on an old preview afterward says the preview expired
+- [ ] Tap **Post these listings** twice quickly (or on an already-used preview) — confirm listings are only created once
+- [ ] As a different user, tap Post or Cancel on someone else's preview — confirm "This isn't your import." and the original user can still confirm
+- [ ] Upload a non-`.csv` file, an oversized file (>100 KB), an empty file, a file missing the `item` or `condition` column, a header-only file, and a file with 26 rows — confirm each gets a clear rejection message and no preview
+- [ ] With no marketplace channel configured (`/admin marketplace config`), import — confirm the preview footer warns nothing will be posted, and after confirming the summary notes the listings were saved but couldn't be posted
+- [ ] Confirm the import appears in the transaction log (1.7k) as `listing_created` entries with `source=csv_import`
+
 ## 1.8 `/room` — Private Rooms
 
 ### 1.8a `/room create`
@@ -1494,6 +1513,10 @@ No permission differences from a regular member (see 1.3e2 for the full checklis
 - [ ] Run `/marketplace edit` on a trade listing — confirm the modal shows a "Looking for" field (not a price field), pre-filled with the current value; changing it updates the post's "Looking For" field
 - [ ] 👑 Run as a different user on someone else's listing (Host, not the owner) — confirm "You can only edit your own listings" — Host does not grant an override here, unlike `close`
 - [ ] Run on a sold or closed listing — confirm "Only active or pending listings can be edited" and no modal opens
+
+### 2.7o `/marketplace import` and `/marketplace template`
+
+No permission differences from a regular member (see 1.7o for the full checklist) — confirm a Host can run `/marketplace template` and `/marketplace import` and that the preview/confirm flow behaves exactly the same.
 
 ## 2.8 `/host` — Host Commands
 
