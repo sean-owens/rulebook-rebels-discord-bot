@@ -255,13 +255,16 @@ export function getCatalogEntryById(id: string): BGGCatalogEntry | undefined {
   return idIndex.get(id);
 }
 
-export function searchCatalog(query: string, limit = 5): BGGCatalogEntry[] {
+// `skipExact` bypasses the exact-name shortcut so a query that is itself a
+// complete title (e.g. "ticket to ride") still returns its longer siblings
+// ("Ticket to Ride: Europe") — used by the challenge's ambiguity check.
+export function searchCatalog(query: string, limit = 5, opts: { skipExact?: boolean } = {}): BGGCatalogEntry[] {
   if (!_loaded || !query.trim()) return [];
 
   const normQuery = normalizeName(query);
 
   // Exact normalized match (e.g. "brass birmingham" → "Brass: Birmingham")
-  const exactMatches = exactIndex.get(normQuery);
+  const exactMatches = opts.skipExact ? undefined : exactIndex.get(normQuery);
   if (exactMatches && exactMatches.length > 0) {
     return sortResults(exactMatches).slice(0, limit);
   }

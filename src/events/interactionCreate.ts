@@ -148,10 +148,12 @@ import {
 import {
   execute as executeChallenge,
   handleHubChallengeStatusButton,
+  handleChallengeDisambiguationSelect,
   handleHubChallengeLeaderboardButton,
 } from '../commands/boardgamechallenge';
 import { extractCommandUsage, recordCommandUsage } from '../utils/commandUsageStorage';
 import { handleWelcomeWaveButton } from './guildMemberAdd';
+import { CHALLENGE_DISAMBIG_PREFIX } from './messageCreate';
 import { WAVE_BUTTON_PREFIX, waveButtonTargetUserId } from '../utils/welcomeAnnouncement';
 
 export async function handleInteraction(interaction: Interaction): Promise<void> {
@@ -219,6 +221,8 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
       else if (id === 'hub_mp_condition_select') await handleHubMarketplaceConditionSelect(interaction);
       else if (id === 'snacks_remove_select') await handleSnacksRemoveSelect(interaction);
       else if (id === 'hub_snacks_remove_select') await handleHubSnacksRemoveSelect(interaction);
+      else if (id.startsWith(CHALLENGE_DISAMBIG_PREFIX))
+        await handleChallengeDisambiguationSelect(interaction, id.slice(CHALLENGE_DISAMBIG_PREFIX.length));
     } else if (interaction.isUserSelectMenu()) {
       const id = interaction.customId;
       if (id === 'hub_room_invite_select') await handleHubRoomInviteSelect(interaction);
