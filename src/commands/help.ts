@@ -108,7 +108,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         name: '🎲  /challenge — "Guess the Board Game"',
         value: [
           '`leaderboard` — See who has the most challenge points',
-          '`status` — See this cycle\'s hints so far, and when the next one posts. Reply with your guess in the configured channel — the schedule (daily, weekly, or bi-weekly) and hint/reveal times are set per-server via `/admin challenge config`',
+          '`status` — See this cycle\'s hints so far, and when the next one posts. Reply with your guess in the configured channel (if it could match several games, the bot asks which you meant) — the schedule (daily, weekly, or bi-weekly) and hint/reveal times are set per-server via `/admin challenge config`',
         ].join('\n'),
       },
       ...(isHost

@@ -17,6 +17,7 @@ const mockRevealChallenge = vi.fn();
 const mockGetRecentGameIds = vi.fn();
 const mockGetLeaderboard = vi.fn();
 const mockUpdateChallengeChannel = vi.fn();
+const mockRecordCorrectGuess = vi.fn();
 vi.mock('../src/utils/boardGameChallengeStorage', () => ({
   getActiveChallenge: (...args: unknown[]) => mockGetActiveChallenge(...args),
   getChallengesForGuild: (...args: unknown[]) => mockGetChallengesForGuild(...args),
@@ -26,6 +27,7 @@ vi.mock('../src/utils/boardGameChallengeStorage', () => ({
   getRecentGameIds: (...args: unknown[]) => mockGetRecentGameIds(...args),
   getLeaderboard: (...args: unknown[]) => mockGetLeaderboard(...args),
   updateChallengeChannel: (...args: unknown[]) => mockUpdateChallengeChannel(...args),
+  recordCorrectGuess: (...args: unknown[]) => mockRecordCorrectGuess(...args),
 }));
 
 const mockGetBGGGame = vi.fn();
@@ -62,6 +64,9 @@ import {
   generateClues,
   normalizeGuess,
   isCorrectGuess,
+  classifyGuessMatch,
+  findDisambiguationCandidates,
+  awardCorrectGuess,
   selectWeeklyGame,
   checkAndAdvanceChallengeSchedule,
   postHint,
@@ -69,6 +74,7 @@ import {
   updateChallengeLeaderboardPin,
 } from '../src/utils/boardGameChallenge';
 import { BGGGame } from '../src/utils/bgg';
+import { _loadFromCsvText, _resetCatalog } from '../src/utils/bggCatalog';
 import { WeeklyChallenge } from '../src/utils/boardGameChallengeStorage';
 
 function makeGame(overrides: Partial<BGGGame> = {}): BGGGame {
@@ -257,6 +263,97 @@ describe('isCorrectGuess', () => {
 
   it('is not fooled by a reordering of an unrelated title', () => {
     expect(isCorrectGuess('mars terraforming', 'Catan')).toBe(false);
+  });
+});
+
+describe('classifyGuessMatch', () => {
+  it('classifies by which part of the title the guess matched', () => {
+    const title = "Star Trek: Captain's Chair";
+    expect(classifyGuessMatch('star trek captains chair', title)).toBe('full');
+    expect(classifyGuessMatch('captains chair star trek', title)).toBe('full');
+    expect(classifyGuessMatch('captains chair', title)).toBe('subtitle');
+    expect(classifyGuessMatch('star trek', title)).toBe('base');
+    expect(classifyGuessMatch('chess', title)).toBe('none');
+    expect(classifyGuessMatch('', title)).toBe('none');
+  });
+
+  it('treats a title with no subtitle as a full match', () => {
+    expect(classifyGuessMatch('catan', 'Catan')).toBe('full');
+  });
+});
+
+describe('findDisambiguationCandidates', () => {
+  const CSV = `id,name,yearpublished,rank,bayesaverage,average,usersrated,is_expansion,abstracts_rank
+1,Ticket to Ride,2004,50,,,,0,
+2,"Ticket to Ride: Europe",2005,80,,,,0,
+3,"Ticket to Ride: Nordic Countries",2007,300,,,,0,
+4,"Ticket to Ride: USA 1910",2006,,,,,1,
+5,"Star Wars: A Queen's Gambit",2019,,,,,0,
+6,"Star Wars: Rebellion",2016,120,,,,0,
+7,"Risk: Star Wars Edition",2005,,,,,0,
+8,Wingspan,2019,5,,,,0,
+`;
+
+  beforeEach(() => {
+    _resetCatalog();
+    _loadFromCsvText(CSV);
+  });
+  afterEach(() => _resetCatalog());
+
+  it('lists every non-expansion game sharing the guessed base, best-ranked first', () => {
+    const result = findDisambiguationCandidates('ticket to ride', '2');
+    expect(result.map((e) => e.id)).toEqual(['1', '2', '3']);
+  });
+
+  it('only counts games whose own base matches, not ones that merely contain the words', () => {
+    const result = findDisambiguationCandidates('star wars', '5');
+    expect(result.map((e) => e.id).sort()).toEqual(['5', '6']);
+  });
+
+  it('returns just the answer when nothing else shares the base', () => {
+    expect(findDisambiguationCandidates('wingspan', '8').map((e) => e.id)).toEqual(['8']);
+  });
+
+  it('returns an empty list when the catalog is not loaded', () => {
+    _resetCatalog();
+    expect(findDisambiguationCandidates('ticket to ride', '2')).toEqual([]);
+  });
+
+  it('caps the list at the requested limit', () => {
+    expect(findDisambiguationCandidates('ticket to ride', '2', 2)).toHaveLength(2);
+  });
+});
+
+describe('awardCorrectGuess', () => {
+  const challenge = { id: 'g-2026-08-24', guildId: 'g', title: 'Catan', hintsPostedCount: 2 } as any;
+
+  function makeClient() {
+    const send = vi.fn(async () => {});
+    return { client: { users: { fetch: vi.fn(async () => ({ send })) }, user: { id: 'bot' } } as any, send };
+  }
+
+  it('scores, announces, and DMs the guesser', async () => {
+    mockRecordCorrectGuess.mockResolvedValue({ points: 80, totalPoints: 130 });
+    mockGetGuildConfig.mockResolvedValue({});
+    const { client, send } = makeClient();
+    const channel = { send: vi.fn(async () => {}) } as any;
+
+    const result = await awardCorrectGuess(client, 'g', challenge, 'u1', channel);
+
+    expect(mockRecordCorrectGuess).toHaveBeenCalledWith('g', challenge.id, 'u1', 2);
+    expect(result).toEqual({ points: 80, totalPoints: 130 });
+    expect(channel.send).toHaveBeenCalledWith(expect.stringContaining('<@u1>'));
+    expect(send).toHaveBeenCalledWith(expect.stringContaining('130 points'));
+  });
+
+  it('does nothing further when the user was already scored', async () => {
+    mockRecordCorrectGuess.mockResolvedValue(undefined);
+    const { client, send } = makeClient();
+    const channel = { send: vi.fn(async () => {}) } as any;
+
+    expect(await awardCorrectGuess(client, 'g', challenge, 'u1', channel)).toBeUndefined();
+    expect(channel.send).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
   });
 });
 

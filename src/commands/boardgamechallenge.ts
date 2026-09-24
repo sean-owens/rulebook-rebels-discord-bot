@@ -10,11 +10,17 @@ import {
   MessageFlags,
   PermissionFlagsBits,
   SlashCommandBuilder,
+  StringSelectMenuInteraction,
   TextChannel,
 } from 'discord.js';
 import { getGuildConfig, updateGuildConfig, GuildConfig } from '../utils/config';
 import { getActiveChallenge, resetLeaderboard, adjustUserPoints } from '../utils/boardGameChallengeStorage';
-import { getLeaderboard, buildLeaderboardEmbed, updateChallengeLeaderboardPin } from '../utils/boardGameChallenge';
+import {
+  getLeaderboard,
+  buildLeaderboardEmbed,
+  updateChallengeLeaderboardPin,
+  awardCorrectGuess,
+} from '../utils/boardGameChallenge';
 import { parseHourInput, mondayOfWeekInTimeZone, mondayOfDateInTimeZone } from '../utils/timezone';
 import { parseDateTime } from './gamenight';
 
@@ -92,6 +98,48 @@ export function buildChallengeHubButtons(): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId('hub_challenge_status').setLabel('📊 Status').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId('hub_challenge_leaderboard').setLabel('🏆 Leaderboard').setStyle(ButtonStyle.Secondary),
+  );
+}
+
+// Handles the "which game did you mean?" dropdown sent for an ambiguous
+// base-only guess (see messageCreate.ts). `encoded` is "<challengeId>_<guesserId>".
+// Only the original guesser may answer; a pick is compared by BGG id, not text.
+export async function handleChallengeDisambiguationSelect(
+  interaction: StringSelectMenuInteraction,
+  encoded: string,
+): Promise<void> {
+  const sep = encoded.lastIndexOf('_');
+  const challengeId = encoded.slice(0, sep);
+  const guesserId = encoded.slice(sep + 1);
+
+  if (interaction.user.id !== guesserId) {
+    await interaction.reply({ content: "This isn't your guess to answer.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+  if (!interaction.guildId) return;
+
+  const challenge = await getActiveChallenge(interaction.guildId);
+  if (!challenge || challenge.id !== challengeId) {
+    await interaction.update({ content: 'This challenge has already ended.', components: [] });
+    return;
+  }
+  if (challenge.correctGuesses.some((g) => g.userId === guesserId)) {
+    await interaction.update({ content: 'You already scored on this challenge.', components: [] });
+    return;
+  }
+
+  if (interaction.values[0] !== challenge.bggId) {
+    await interaction.update({ content: '❌ Not quite — try guessing again in the channel!', components: [] });
+    return;
+  }
+
+  await interaction.update({ content: '✅ Correct!', components: [] });
+  await awardCorrectGuess(
+    interaction.client,
+    interaction.guildId,
+    challenge,
+    guesserId,
+    interaction.channel as TextChannel,
   );
 }
 

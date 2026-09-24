@@ -1,7 +1,42 @@
-import { Message, TextChannel } from 'discord.js';
+import { ActionRowBuilder, Message, StringSelectMenuBuilder, TextChannel } from 'discord.js';
 import { getGuildConfig } from '../utils/config';
-import { getActiveChallenge, recordCorrectGuess } from '../utils/boardGameChallengeStorage';
-import { isCorrectGuess, updateChallengeLeaderboardPin } from '../utils/boardGameChallenge';
+import { getActiveChallenge, WeeklyChallenge } from '../utils/boardGameChallengeStorage';
+import {
+  classifyGuessMatch,
+  findDisambiguationCandidates,
+  awardCorrectGuess,
+} from '../utils/boardGameChallenge';
+import type { BGGCatalogEntry } from '../utils/bggCatalog';
+
+export const CHALLENGE_DISAMBIG_PREFIX = 'bgchallenge_disambig_';
+
+// Side effect: asks the guesser which of several same-base games they meant.
+// The customId carries the challenge and guesser ids (no underscores in
+// either) so the select handler can reject anyone else's click.
+async function sendDisambiguationPrompt(
+  message: Message,
+  challenge: WeeklyChallenge,
+  candidates: BGGCatalogEntry[],
+): Promise<void> {
+  const select = new StringSelectMenuBuilder()
+    .setCustomId(`${CHALLENGE_DISAMBIG_PREFIX}${challenge.id}_${message.author.id}`)
+    .setPlaceholder('Which game did you mean?')
+    .addOptions(
+      candidates.map((c) => ({
+        label: (c.year ? `${c.name} (${c.year})` : c.name).slice(0, 100),
+        value: c.id,
+      })),
+    );
+
+  await message
+    .reply({
+      content: '🤔 That could match more than one game — pick the one you meant:',
+      components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
+    })
+    .catch((err: unknown) =>
+      console.warn(`[BoardGameChallenge] Failed to send disambiguation prompt in guild ${challenge.guildId}:`, err),
+    );
+}
 
 // Guesses for the weekly board game challenge (see boardGameChallenge.ts)
 // arrive as plain messages in the guild's configured channel rather than a
@@ -17,44 +52,34 @@ export async function handleMessageCreate(message: Message): Promise<void> {
   if (!challenge || challenge.hintsPostedCount === 0) return;
   if (challenge.correctGuesses.some((g) => g.userId === message.author.id)) return;
 
-  if (!isCorrectGuess(message.content, challenge.title)) {
+  const tier = classifyGuessMatch(message.content, challenge.title);
+  if (tier === 'none') {
     await message.react('❌').catch(() => null);
     return;
   }
 
-  const result = await recordCorrectGuess(
+  // A base-only guess ("Star Wars") that several catalog games share isn't
+  // scored on the spot — the guesser picks which one they meant instead.
+  if (tier === 'base') {
+    const candidates = findDisambiguationCandidates(message.content, challenge.bggId);
+    if (candidates.length > 1) {
+      await sendDisambiguationPrompt(message, challenge, candidates);
+      return;
+    }
+  }
+
+  const result = await awardCorrectGuess(
+    message.client,
     message.guildId,
-    challenge.id,
+    challenge,
     message.author.id,
-    challenge.hintsPostedCount,
+    message.channel as TextChannel,
   );
   if (!result) return; // already scored (race with another event) — nothing left to do
 
   // Delete the guess so the answer never sits visible in-channel for others
-  // to copy before Saturday's reveal, and confirm privately instead.
+  // to copy before the reveal.
   await message.delete().catch((err) =>
     console.warn(`[BoardGameChallenge] Failed to delete correct guess in guild ${message.guildId}:`, err),
   );
-
-  // The delete above leaves no visible trace anything happened — post a
-  // public, answer-free acknowledgement so a correct guess is obviously
-  // recognized instead of just silently vanishing. The channel is always the
-  // configured (guild text) challenge channel checked above, so it's always sendable.
-  await (message.channel as TextChannel)
-    .send(`🎉 <@${message.author.id}> guessed it! (+${result.points} points)`)
-    .catch((err: unknown) =>
-      console.warn(`[BoardGameChallenge] Failed to post correct-guess announcement in guild ${message.guildId}:`, err),
-    );
-
-  try {
-    await message.author.send(
-      `🎉 Correct! **${challenge.title}** was this cycle's board game challenge — you earned **${result.points} points** ` +
-        `(guessed after hint ${challenge.hintsPostedCount}/3). Your running total is now **${result.totalPoints} points**. ` +
-        "Keep it to yourself until the reveal!",
-    );
-  } catch (err) {
-    console.warn(`[BoardGameChallenge] Failed to DM ${message.author.id} their guess result:`, err);
-  }
-
-  await updateChallengeLeaderboardPin(message.client, message.guildId);
 }
