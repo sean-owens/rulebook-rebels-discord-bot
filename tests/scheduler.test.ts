@@ -1873,6 +1873,68 @@ describe('lockAndScheduleEvent', () => {
     ]);
   });
 
+  describe('DMing the host about games with no teacher', () => {
+    async function seedTeachingGame(id: string, title: string, extra: Record<string, unknown>) {
+      const { upsertGame } = await import('../src/utils/gameStorage');
+      await upsertGame({
+        id, eventId: 'gn1', channelId: 'event-channel-1', messageId: `m-${id}`, guildId: 'guild-1',
+        bggId: id, title, bggLink: '', minPlayers: 1, maxPlayers: 4, suggestedPlayers: null,
+        minPlaytime: 40, maxPlaytime: 60, suggestedStartTime: null, expansions: [], seats: ['p1', 'p2'], waitlist: [],
+        createdAt: new Date().toISOString(), createdBy: 'p1', complexity: 'Light', ...extra,
+      } as any);
+    }
+
+    function makeClientWithHostDm() {
+      const hostSend = vi.fn(async () => {});
+      const client = { ...makeClient(vi.fn(async () => ({ id: 'msg', pin: vi.fn(async () => {}) }))), users: { fetch: vi.fn(async () => ({ send: hostSend })) } };
+      return { client, hostSend };
+    }
+
+    it('DMs the event host listing only the games nobody can teach', async () => {
+      const { upsertGameNight } = await import('../src/utils/storage');
+      const gn = makeGameNight({ createdBy: 'host-1' });
+      await upsertGameNight(gn as any);
+      await seedTeachingGame('a', 'Wingspan', { teachers: [], helpers: [] });
+      await seedTeachingGame('b', 'Catan', { teachers: ['p1'], helpers: [] });
+      await seedTeachingGame('c', 'Azul', {});
+      const { client, hostSend } = makeClientWithHostDm();
+
+      await lockAndScheduleEvent(client as any, gn as any, BUFFER_CONFIG);
+
+      expect(client.users.fetch).toHaveBeenCalledWith('host-1');
+      expect(hostSend).toHaveBeenCalledTimes(1);
+      const text = (hostSend.mock.calls[0] as unknown as [string])[0];
+      expect(text).toContain('**Wingspan**');
+      expect(text).not.toContain('Catan');
+      expect(text).not.toContain('Azul');
+    });
+
+    it('sends no DM when every game has a teacher (or predates teaching tracking)', async () => {
+      const { upsertGameNight } = await import('../src/utils/storage');
+      const gn = makeGameNight();
+      await upsertGameNight(gn as any);
+      await seedTeachingGame('b', 'Catan', { teachers: ['p1'], helpers: [] });
+      await seedTeachingGame('c', 'Azul', {});
+      const { client, hostSend } = makeClientWithHostDm();
+
+      await lockAndScheduleEvent(client as any, gn as any, BUFFER_CONFIG);
+
+      expect(hostSend).not.toHaveBeenCalled();
+    });
+
+    it('still locks when the host has DMs disabled', async () => {
+      const { upsertGameNight } = await import('../src/utils/storage');
+      const gn = makeGameNight();
+      await upsertGameNight(gn as any);
+      await seedTeachingGame('a', 'Wingspan', { teachers: [], helpers: [] });
+      const { client } = makeClientWithHostDm();
+      client.users.fetch = vi.fn(async () => ({ send: vi.fn(async () => { throw new Error('Cannot send messages to this user'); }) }));
+
+      await expect(lockAndScheduleEvent(client as any, gn as any, BUFFER_CONFIG)).resolves.toBeUndefined();
+      expect(gn.suggestionsLocked).toBe(true);
+    });
+  });
+
   describe('dropping zero-signup "games to bring" requests', () => {
     // A send mock that returns a pinnable message object (unlike the shared
     // makeClient default, which resolves to undefined) — needed because this

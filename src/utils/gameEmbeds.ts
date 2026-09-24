@@ -103,6 +103,16 @@ export async function buildGameEmbed(
     embed.addFields({ name: 'Resources', value: resourceParts.join(' • ') });
   }
 
+  if (game.teachers !== undefined) {
+    const parts: string[] = [];
+    if (game.teachers.length > 0) parts.push(`🎓 Can teach: ${game.teachers.map(getName).join(', ')}`);
+    if ((game.helpers ?? []).length > 0)
+      parts.push(`🙋 Can answer questions: ${(game.helpers ?? []).map(getName).join(', ')}`);
+    if (game.teachers.length === 0)
+      parts.push('⚠️ Nobody has said they can teach this yet — tap **🎓 I Can Teach** if you can!');
+    embed.addFields({ name: 'Teaching', value: parts.join('\n') });
+  }
+
   if (group2Ready) {
     const g1Lines = game.seats.map((id, i) => `${i + 1}. ${getName(id)}`);
     embed.addFields({ name: `Group 1 (${seatCount}/${maxSeats})`, value: g1Lines.join('\n') });
@@ -166,6 +176,11 @@ export function buildGameButtons(gameId: string, isFull: boolean): ActionRowBuil
       .setCustomId(`game_guestbtn_${gameId}`)
       .setLabel('Bring a Guest')
       .setEmoji('➕')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(`game_teachbtn_${gameId}`)
+      .setLabel('I Can Teach')
+      .setEmoji('🎓')
       .setStyle(ButtonStyle.Secondary),
   );
 
