@@ -120,6 +120,8 @@ import {
   handleHubSuggestButton,
   handleHubSuggestModal,
   handleGameGuestButton,
+  handleGameTeachToggle,
+  handleTeachingChoice,
   handleGameGuestModalSubmit,
   handleGuestDuplicateConfirm,
   handleGuestDuplicateCancel,
@@ -392,6 +394,10 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handleWaitlistLeave(interaction, id.slice('game_waitlist_leave_'.length));
       } else if (id.startsWith('game_guestbtn_')) {
         await handleGameGuestButton(interaction, id.slice('game_guestbtn_'.length));
+      } else if (id.startsWith('game_teachbtn_')) {
+        await handleGameTeachToggle(interaction, id.slice('game_teachbtn_'.length));
+      } else if (id.startsWith('game_teach_')) {
+        await handleTeachingChoice(interaction, id.slice('game_teach_'.length));
       } else if (id.startsWith('mp_price_use_')) {
         await handlePriceUseSuggested(interaction, id.slice('mp_price_use_'.length));
       } else if (id.startsWith('mp_price_none_')) {

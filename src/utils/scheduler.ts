@@ -20,6 +20,7 @@ import {
   buildBgStatsQrAttachment,
 } from './bgStats';
 import { GuestSeat, isGuestSeatId, guestDisplayName } from './guestSeats';
+import { findGamesNeedingTeacher, buildTeacherHostMessage } from './teaching';
 
 export const LOCK_MESSAGE =
   "This event's lineup is locked ahead of the scheduled start — suggestions and seats can no longer change.";
@@ -1517,6 +1518,16 @@ export async function lockAndScheduleEvent(
 
   if (config.postBgStatsLinks) {
     await postBgStatsButtons(client, gn, games, result);
+  }
+
+  const needTeacher = findGamesNeedingTeacher(games);
+  if (needTeacher.length > 0) {
+    try {
+      const host = await client.users.fetch(gn.createdBy);
+      await host.send(buildTeacherHostMessage(gn.title ?? 'your event', needTeacher));
+    } catch (err) {
+      console.warn(`Could not DM host about games needing a teacher for game night ${gn.id}:`, err);
+    }
   }
 
   console.log(

@@ -97,7 +97,16 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.3a `/game suggest`
 
-**What it does:** Suggests a game for the event (or, from inside a private room, for that room — see below). Checks the group library first (exact match → partial match → BGG search). Prompts to add tags if not already tagged.
+**What it does:** Suggests a game for the event (or, from inside a private room, for that room — see below). Checks the group library first (exact match → partial match → BGG search). Every path (library match, BGG result, manual entry) ends with a required "how well do you know it?" teaching prompt before the card is posted (see 1.3a), then prompts to add tags if not already tagged.
+
+#### Teaching prompt (all suggest paths)
+- [ ] Suggest a game by any path (library exact match, partial-match dropdown, BGG result, manual entry) — confirm a private "Last step" prompt with **🎓 I can teach it / 🙋 I can answer questions / 🌱 I'm new to it** appears *before* the card is posted, and nothing is posted yet
+- [ ] Pick **I can teach it** — confirm the card posts with "🎓 Can teach: @you" in its Teaching field
+- [ ] Pick **I can answer questions** — confirm the card shows "🙋 Can answer questions: @you" and the "⚠️ Nobody has said they can teach this yet" warning
+- [ ] Pick **I'm new to it** — confirm the card shows only the "⚠️ Nobody has said they can teach this yet" warning
+- [ ] Have someone else tap a button on *your* prompt — confirm they get "This isn't your suggestion." and the prompt keeps waiting
+- [ ] Leave the prompt unanswered for 5 minutes — confirm it changes to "Timed out — ... was not added" and no card is posted
+- [ ] Trigger a duplicate-game, greeter-restriction, or owner-not-attending error — confirm it shows *before* the teaching prompt (you're never asked about a game that can't be added)
 
 #### From a private room
 - [ ] Run `/game suggest title:Wingspan` from inside a `/room`-created private room channel (1.8a) — confirm it posts the game card directly in the room, with no event picker
@@ -194,6 +203,17 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Dropping below min players after the second owner already confirmed — confirm the pin reverts to 1 copy needed but the existing confirmation is left alone (a harmless extra confirmed copy), not retracted
 - [ ] With a full game and at least one person on the waitlist, have a seated player click **Leave** — confirm the first waitlisted person is moved into the freed seat, removed from the waitlist list, and (if their DMs are open) receives a DM saying a seat opened up
 - [ ] Do the same when promoting the waitlist below the minimum player count drops it back below 2 groups — confirm the request pin reverts to 1 copy needed
+
+### 1.3e1 Game Card Buttons — I Can Teach
+
+**What it does:** Lets a seated player mark themselves as able to teach the game. Tapping **🎓 I Can Teach** toggles you on the card's Teaching field (tap again to remove yourself); it also moves you off the "can answer questions" list so you aren't listed twice. You must be seated in the game. Leaving the game removes you from the teacher/question lists. Games suggested before this feature show no Teaching field at all. When the lineup locks (4.7), the event host is DMed a list of games that have players seated but nobody who can teach them.
+
+- [ ] As a seated player, tap **🎓 I Can Teach** — confirm you appear under "🎓 Can teach" and the "⚠️ Nobody has said they can teach this yet" warning disappears (if you were the first)
+- [ ] Tap it again — confirm you're removed and the warning returns if you were the only teacher
+- [ ] As a player who is **not** seated in the game, tap it — confirm "Join the game first..." and nothing changes
+- [ ] As a teacher, tap **Leave** — confirm you're no longer listed under "Can teach"
+- [ ] As someone who chose "I can answer questions" at suggestion time, tap **I Can Teach** — confirm you move to "Can teach" and no longer appear under "Can answer questions"
+- [ ] Confirm the button row shows Join / Leave / Bring a Guest / I Can Teach, and (when full) the waitlist row still appears beneath
 
 ### 1.3e2 Game Card Buttons — Bring a Guest
 
@@ -945,7 +965,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.3a `/game suggest`
 
-**What it does:** Suggests a game for the event (or, from inside a private room, for that room — see below). Checks the group library first (exact match → partial match → BGG search). Prompts to add tags if not already tagged.
+**What it does:** Suggests a game for the event (or, from inside a private room, for that room — see below). Checks the group library first (exact match → partial match → BGG search). Every path (library match, BGG result, manual entry) ends with a required "how well do you know it?" teaching prompt before the card is posted (see 1.3a), then prompts to add tags if not already tagged.
 
 #### From a private room
 - [ ] Run `/game suggest title:Wingspan` from inside a `/room`-created private room channel (1.8a) — confirm it posts the game card directly in the room, with no event picker
@@ -1042,6 +1062,10 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Dropping below min players after the second owner already confirmed — confirm the pin reverts to 1 copy needed but the existing confirmation is left alone (a harmless extra confirmed copy), not retracted
 - [ ] With a full game and at least one person on the waitlist, have a seated player click **Leave** — confirm the first waitlisted person is moved into the freed seat, removed from the waitlist list, and (if their DMs are open) receives a DM saying a seat opened up
 - [ ] Do the same when promoting the waitlist below the minimum player count drops it back below 2 groups — confirm the request pin reverts to 1 copy needed
+
+### 2.3e1 Game Card Buttons — I Can Teach
+
+No permission differences from a regular member (see 1.3e1 for the full checklist) — confirm the **🎓 I Can Teach** button behaves the same for this role.
 
 ### 2.3e2 Game Card Buttons — Bring a Guest
 
@@ -1746,7 +1770,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.3a `/game suggest`
 
-**What it does:** Suggests a game for the event (or, from inside a private room, for that room — see below). Checks the group library first (exact match → partial match → BGG search). Prompts to add tags if not already tagged.
+**What it does:** Suggests a game for the event (or, from inside a private room, for that room — see below). Checks the group library first (exact match → partial match → BGG search). Every path (library match, BGG result, manual entry) ends with a required "how well do you know it?" teaching prompt before the card is posted (see 1.3a), then prompts to add tags if not already tagged.
 
 #### From a private room
 - [ ] Run `/game suggest title:Wingspan` from inside a `/room`-created private room channel (1.8a) — confirm it posts the game card directly in the room, with no event picker
@@ -1843,6 +1867,10 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Dropping below min players after the second owner already confirmed — confirm the pin reverts to 1 copy needed but the existing confirmation is left alone (a harmless extra confirmed copy), not retracted
 - [ ] With a full game and at least one person on the waitlist, have a seated player click **Leave** — confirm the first waitlisted person is moved into the freed seat, removed from the waitlist list, and (if their DMs are open) receives a DM saying a seat opened up
 - [ ] Do the same when promoting the waitlist below the minimum player count drops it back below 2 groups — confirm the request pin reverts to 1 copy needed
+
+### 3.3e1 Game Card Buttons — I Can Teach
+
+No permission differences from a regular member (see 1.3e1 for the full checklist) — confirm the **🎓 I Can Teach** button behaves the same for this role.
 
 ### 3.3e2 Game Card Buttons — Bring a Guest
 
@@ -2830,6 +2858,8 @@ Locking also cleans up and follows up on the "Games to Bring" request pin (`/lib
 - [ ] Confirm every game's line shows a real `(<t:...:t>–<t:...:t>)` start/end time, not just an estimated duration
 - [ ] Seat a game so its computed start or end lands off a quarter-hour (e.g. a table that naturally frees up at :07 or :52) — confirm the posted time is rounded **up** to the next :00/:15/:30/:45, never down and never to the nearest quarter
 - [ ] Confirm each table's line lists that game's seated players as `@mention`s, comma-separated, after the title/time
+- [ ] Leave one seated game with nobody able to teach it (suggester picked "I'm new to it", no 🎓 volunteers) and give another a teacher — at lock, confirm the event host receives a DM listing only the teacher-less game(s), and no DM is sent if every seated game has a teacher (or the only teacher-less games have no seated players)
+- [ ] With the host's DMs disabled, confirm the lock still completes normally (the DM failure is only logged)
 - [ ] Seat a game with a guest (via **Bring a Guest**, 1.3e2) before it locks — confirm the locked schedule embed shows the guest's display name (e.g. "Player's Guest (Name)"), not a broken `<@guest:...>` mention
 - [ ] Confirm two games sharing a seated player never overlap in time — the second one starts no earlier than the shared player's break clears after the first ends
 - [ ] With two tables free the whole time, seat a shared player in games at both — confirm the second game's line notes "⏳ waiting on `@mention` to finish an earlier game", naming the shared player, rather than silently showing a later time with no explanation

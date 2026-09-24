@@ -33,6 +33,7 @@ import {
   handleEventSelect,
   handleBGGSearchPage,
   encodeEventSelectCustomId,
+  handleTeachingChoice,
 } from '../src/commands/game';
 import { upsertGameNight, GameNight } from '../src/utils/storage';
 import { searchBGG } from '../src/utils/bgg';
@@ -67,6 +68,26 @@ function makeGameNight(overrides: Partial<GameNight> = {}): GameNight {
   };
 }
 
+// Every suggest flow ends with a required "how well do you know it?" prompt
+// (see askTeachingLevel in game.ts) that waits for a button click. This wraps
+// an interaction's editReply so that prompt is answered automatically as soon
+// as it's shown, letting flow tests carry on to card creation.
+function autoAnswerTeaching(interaction: any, level: 'teach' | 'answer' | 'learning' = 'learning') {
+  const original = interaction.editReply;
+  interaction.editReply = vi.fn(async (opts: any) => {
+    const buttons = opts?.components?.[0]?.toJSON?.().components ?? [];
+    const target = buttons.find((b: any) => b.custom_id?.startsWith('game_teach_') && b.custom_id.endsWith(`_${level}`));
+    if (target) {
+      await handleTeachingChoice(
+        { user: interaction.user, reply: vi.fn(async () => {}), deferUpdate: vi.fn(async () => {}) } as any,
+        target.custom_id.slice('game_teach_'.length),
+      );
+    }
+    return original(opts);
+  });
+  return interaction;
+}
+
 function makeSuggestInteraction(
   title: string,
   channelId: string,
@@ -74,7 +95,7 @@ function makeSuggestInteraction(
   userId = 'u1',
 ) {
   const postedChannel = { send: vi.fn(async () => ({ id: 'card-msg-1' })) };
-  return {
+  return autoAnswerTeaching({
     options: {
       getString: (name: string) => (name === 'title' ? title : null),
       getBoolean: () => null,
@@ -92,7 +113,7 @@ function makeSuggestInteraction(
     deferred: false,
     client: { channels: { fetch: vi.fn(async () => postedChannel) } },
     _postedChannel: postedChannel,
-  } as any;
+  } as any);
 }
 
 describe('/game suggest — event resolution outside an event channel', () => {
@@ -1379,7 +1400,7 @@ describe('/game suggest — inside a private room', () => {
     await addGame('g1', 'invitee-1', 'Wingspan');
 
     const postedChannel = { send: vi.fn(async () => ({ id: 'card-msg-1' })) };
-    const interaction = {
+    const interaction = autoAnswerTeaching({
       channelId: 'room-channel-1',
       guildId: 'g1',
       user: { id: 'creator-1' },
@@ -1392,7 +1413,7 @@ describe('/game suggest — inside a private room', () => {
       deferReply: vi.fn(async () => {}),
       editReply: vi.fn(async () => {}),
       client: { channels: { fetch: vi.fn(async () => postedChannel) } },
-    } as any;
+    });
 
     await handleHubSuggestModal(interaction);
 

@@ -70,6 +70,13 @@ import {
 import { resolvePlayerNames } from '../utils/playerNames';
 import { getShortLinkStatsForGame, registerShortLinkStatusMessage } from '../utils/shortLinkStorage';
 import { GuestSeat, isGuestSeatId, makeGuestId } from '../utils/guestSeats';
+import {
+  TeachingLevel,
+  isTeachingLevel,
+  initialTeaching,
+  removeFromTeaching,
+  toggleTeacher,
+} from '../utils/teaching';
 
 const MANUAL_VALUE = '__manual__';
 const BGG_VALUE = '__bgg__';
@@ -106,6 +113,96 @@ interface PendingLibrarySuggest {
   withExpansions: boolean;
 }
 const pendingLibrarySuggest = new Map<string, PendingLibrarySuggest>();
+
+const TEACHING_PROMPT_TIMEOUT_MS = 5 * 60 * 1000;
+const pendingTeaching = new Map<string, { userId: string; resolve: (level: TeachingLevel | undefined) => void }>();
+
+// Required last step of every suggest flow: asks the suggester how well they
+// know the game before its card is posted. The caller's (already deferred)
+// interaction shows the prompt and is reused afterward, so the flow just
+// awaits this and carries on. Resolves undefined — nothing should be posted —
+// if the prompt times out (or the bot restarts, which drops pending prompts).
+async function askTeachingLevel(
+  interaction: { user: { id: string }; editReply: (o: { content: string; components: ActionRowBuilder<ButtonBuilder>[] }) => Promise<unknown> },
+  gameTitle: string,
+): Promise<TeachingLevel | undefined> {
+  const token = randomUUID().slice(0, 8);
+  const button = (level: TeachingLevel, label: string, emoji: string, style: ButtonStyle) =>
+    new ButtonBuilder().setCustomId(`game_teach_${token}_${level}`).setLabel(label).setEmoji(emoji).setStyle(style);
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    button('teach', 'I can teach it', '🎓', ButtonStyle.Success),
+    button('answer', 'I can answer questions', '🙋', ButtonStyle.Primary),
+    button('learning', "I'm new to it", '🌱', ButtonStyle.Secondary),
+  );
+
+  const answered = new Promise<TeachingLevel | undefined>((resolve) => {
+    pendingTeaching.set(token, { userId: interaction.user.id, resolve });
+    setTimeout(() => {
+      if (pendingTeaching.delete(token)) resolve(undefined);
+    }, TEACHING_PROMPT_TIMEOUT_MS);
+  });
+
+  await interaction.editReply({
+    content:
+      `Last step for **${gameTitle}**: how well do you know it? We try to have at least one person at the table ` +
+      'who can teach each game — if you pick "new to it", someone else can volunteer with the 🎓 button on the card.',
+    components: [row],
+  });
+
+  const level = await answered;
+  if (!level) {
+    await interaction.editReply({
+      content: `Timed out — **${gameTitle}** was not added. Suggest it again whenever you're ready.`,
+      components: [],
+    });
+  }
+  return level;
+}
+
+export async function handleTeachingChoice(interaction: ButtonInteraction, encoded: string): Promise<void> {
+  const [token, level] = encoded.split('_');
+  const pending = pendingTeaching.get(token);
+  if (!pending || !isTeachingLevel(level)) {
+    await interaction.reply({
+      content: 'That prompt has expired — please suggest the game again.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  if (pending.userId !== interaction.user.id) {
+    await interaction.reply({ content: "This isn't your suggestion.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+  pendingTeaching.delete(token);
+  await interaction.deferUpdate();
+  pending.resolve(level);
+}
+
+export async function handleGameTeachToggle(interaction: ButtonInteraction, gameId: string): Promise<void> {
+  const { findGame, upsertGame: save } = await import('../utils/gameStorage');
+  const game = await findGame(gameId);
+  if (!game) {
+    await interaction.reply({ content: 'Game not found.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  if (!game.seats.includes(interaction.user.id)) {
+    await interaction.reply({
+      content: 'Join the game first, then you can mark yourself as able to teach it.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  toggleTeacher(game, interaction.user.id);
+  await save(game);
+
+  const nameMap = await resolveNames(interaction, [...game.seats, ...(game.waitlist ?? [])]);
+  await interaction.update({
+    embeds: [await buildGameEmbed(game, nameMap)],
+    files: [buildBggAttachment()],
+    components: buildGameButtons(gameId, game.seats.length >= game.maxPlayers),
+  });
+}
 
 // Stores the selected eventId for users suggesting from outside an event channel
 const pendingEventContext = new Map<string, string>();
@@ -1122,6 +1219,9 @@ export async function postLibraryGame(
     return;
   }
 
+  const teachingLevel = await askTeachingLevel(interaction, gameName);
+  if (!teachingLevel) return;
+
   const minPlayers = info?.minPlayers ?? 2;
   const maxPlayers = info?.maxPlayers ?? 4;
   const playTime = info?.playTime ?? 60;
@@ -1152,6 +1252,7 @@ export async function postLibraryGame(
     expansions,
     seats: [interaction.user.id],
     waitlist: [],
+    ...initialTeaching(interaction.user.id, teachingLevel),
     createdAt: new Date().toISOString(),
     createdBy: interaction.user.id,
   };
@@ -1396,6 +1497,9 @@ export async function handleManualGameSubmit(interaction: ModalSubmitInteraction
   const bggLink = interaction.fields.getTextInputValue('link_rules').trim();
   const howToPlayUrl = interaction.fields.getTextInputValue('link_howtoplay').trim() || null;
 
+  const teachingLevel = await askTeachingLevel(interaction, title);
+  if (!teachingLevel) return;
+
   const { min: minPlayers, max: maxPlayers } = parseRange(playersRaw, 2, 4);
   const { min: minPlaytime, max: maxPlaytime } = parseRange(durationRaw, 30, 60);
 
@@ -1421,6 +1525,7 @@ export async function handleManualGameSubmit(interaction: ModalSubmitInteraction
     expansions: [],
     seats: [interaction.user.id],
     waitlist: [],
+    ...initialTeaching(interaction.user.id, teachingLevel),
     createdAt: new Date().toISOString(),
     createdBy: interaction.user.id,
   };
@@ -1531,6 +1636,7 @@ export async function handleGameLeave(
   }
 
   game.seats = game.seats.filter((id) => id !== userId);
+  removeFromTeaching(game, userId);
 
   // A member's own guest(s) can't stay behind without them — cascade the
   // leave to remove every guest they reserved on this game, from whichever
@@ -2007,6 +2113,9 @@ async function postBGGGame(
     return;
   }
 
+  const teachingLevel = await askTeachingLevel(interaction, bggGame.name);
+  if (!teachingLevel) return;
+
   const eventChannelId = gameNight.eventChannelId ?? interaction.channelId;
   const id = randomUUID().slice(0, 8);
   const game: GameSuggestion = {
@@ -2031,6 +2140,7 @@ async function postBGGGame(
     expansions: expansions.map((e) => ({ id: e.id, name: e.name }) as GameExpansion),
     seats: [interaction.user.id],
     waitlist: [],
+    ...initialTeaching(interaction.user.id, teachingLevel),
     createdAt: new Date().toISOString(),
     createdBy: interaction.user.id,
   };
