@@ -83,11 +83,19 @@ export const BGG_TO_TAG: Record<string, string> = {
 
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
 
-function bggHeaders(): Record<string, string> {
+// Deliberately an honest, self-identifying User-Agent — never a browser one.
+// BGG sits behind Cloudflare bot management, which compares the claimed
+// User-Agent against the connection's TLS/HTTP fingerprint: a Node process
+// claiming to be Chrome is a textbook mismatch and gets a 403 "Just a moment…"
+// challenge page (issue #78), while the identical request with an honest
+// User-Agent gets a normal 200. Do not "fix" a future 403 by making this
+// look more like a browser.
+export const BGG_USER_AGENT = 'RulebookRebelsBot/1.0 (Discord bot for a board game group)';
+
+export function bggHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
-    'User-Agent':
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    Accept: 'application/xml, text/xml, */*',
+    'User-Agent': BGG_USER_AGENT,
+    Accept: 'application/xml',
   };
   const apiKey = process.env.BGG_API_KEY;
   if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
