@@ -43,6 +43,10 @@ import {
   handleUnrequestAll,
   handleLibraryListNav,
   handleLibraryMineNav,
+  handleLibraryListJumpButton,
+  handleLibraryListJumpModal,
+  handleLibraryMineJumpButton,
+  handleLibraryMineJumpModal,
   handleLibraryConfirmBring,
   handleLibraryDeclineBring,
   handleHubRequestButton,
@@ -234,6 +238,8 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
     } else if (interaction.isModalSubmit()) {
       if (interaction.customId === 'game_manual') await handleManualGameSubmit(interaction);
       else if (interaction.customId === 'library_edit_modal') await handleEditModal(interaction);
+      else if (interaction.customId === 'library_list_jump_modal') await handleLibraryListJumpModal(interaction);
+      else if (interaction.customId === 'library_mine_jump_modal') await handleLibraryMineJumpModal(interaction);
       else if (interaction.customId === 'hub_suggest_modal') await handleHubSuggestModal(interaction);
       else if (interaction.customId === 'hub_request_modal') await handleHubRequestModal(interaction);
       else if (interaction.customId === 'hub_view_modal') await handleHubViewModal(interaction);
@@ -289,6 +295,10 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handleLibraryListNav(interaction, 'prev');
       } else if (id === 'library_list_next') {
         await handleLibraryListNav(interaction, 'next');
+      } else if (id === 'library_list_page') {
+        await handleLibraryListJumpButton(interaction);
+      } else if (id === 'library_mine_page') {
+        await handleLibraryMineJumpButton(interaction);
       } else if (id === 'library_mine_prev') {
         await handleLibraryMineNav(interaction, 'prev');
       } else if (id === 'library_mine_next') {
