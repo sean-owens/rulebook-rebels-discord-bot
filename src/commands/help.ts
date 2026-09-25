@@ -123,6 +123,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
                 '`/host event cancel` — Cancel a game night',
                 '`/host event privacy` — Open or restrict one event\'s channel, overriding the server default',
                 '`/host event greeters` — Set, view, remove one, or clear all of this event\'s greeters — restricted to Light games, never seated together',
+                '`/host event repost` — Repost the lineup, requests, snacks or Quick Actions as a fresh pinned message',
                 '`/host event archive` — Archive past event channels',
                 '`/host game cancel` — Remove any game from the event lineup',
                 '`/host library unrequest` — Remove any game request from an event',

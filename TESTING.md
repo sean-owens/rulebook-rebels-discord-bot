@@ -1667,6 +1667,21 @@ No permission differences from a regular member (see 1.7o for the full checklist
 - [ ] Run for a user with no leaderboard entry yet, with a positive amount — confirm they now appear on `/challenge leaderboard` with that total
 - [ ] Run with `amount:0` — confirm "Amount must be non-zero" and nothing changes
 
+### 2.8j `/host event repost`
+
+**What it does:** Replaces one of the event channel's pinned, edit-in-place messages with a fresh, up-to-date copy at the bottom of the channel — for when the original has scrolled far up or become hard to find. Run inside an active event channel and choose **Game lineup**, **Games to bring**, **Snacks list**, **Quick Actions buttons**, or **All of the above**. The old message is deleted, the new one is posted and pinned, and it keeps updating in place from then on. Only the person running it sees the confirmation.
+
+- [ ] Add a few games and let the lineup scroll up the channel, then run `/host event repost item:Game lineup` — confirm a new "Game Lineup" message appears at the bottom with the current games, it is pinned, the old one is gone, and the ephemeral reply says "Reposted: Game lineup"
+- [ ] Suggest another game afterward — confirm the **new** message updates in place (no second lineup message appears)
+- [ ] Repeat for **Games to bring** (with at least one request) and **Quick Actions buttons** — confirm each is reposted, pinned, and its buttons still work
+- [ ] With a snack list started (`/snacks add`), repost **Snacks list** — confirm the reposted list shows the current snacks; add another snack and confirm the new message updates in place
+- [ ] Repost **Snacks list** when nobody has added a snack yet — confirm the reply says there was nothing to repost and nothing is posted
+- [ ] Choose **All of the above** — confirm lineup, games to bring, and Quick Actions are reposted (and the snack list too if one exists), with a summary of anything skipped
+- [ ] Manually delete the pinned lineup message first, then repost it — confirm it still works (no error) and a fresh pinned message appears
+- [ ] Run outside an event channel (e.g. a general channel or a private room) — confirm "Run this inside an active event channel" and nothing is posted
+- [ ] Run in an archived or cancelled event's channel — confirm the same "active event channel" message
+- [ ] 👑 Attempt as a regular member (no Manage Events) — confirm the command isn't available / is refused ("Only hosts and admins can repost event lists")
+
 ## 2.9 `/room` — Private Rooms
 
 ### 2.9a `/room create`
@@ -2439,6 +2454,10 @@ See 2.8f for the full checklist — this Admin-tier pass just confirms Admins re
 - [ ] Run a subtraction larger than their current total (e.g. they have 20, subtract 50) — confirm their total shows as 0 and the reply includes a note that it was clamped
 - [ ] Run for a user with no leaderboard entry yet, with a positive amount — confirm they now appear on `/challenge leaderboard` with that total
 - [ ] Run with `amount:0` — confirm "Amount must be non-zero" and nothing changes
+
+### 3.8j `/host event repost`
+
+See 2.8j for the full checklist — this Admin-tier pass just confirms Admins retain the same access Hosts have: run `/host event repost item:All of the above` in an active event channel and confirm the lineup, games to bring, and Quick Actions messages are reposted and pinned.
 
 ## 3.9 `/admin` — Admin Commands
 
