@@ -336,10 +336,15 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run `/library mine` with no games — confirm "You haven't added any games" message
 - [ ] With another member's library linked to you as a delegate (1.4n), run `/library mine` — confirm their games appear alongside your own, each marked `*(shared from <@ownerId>)*`
 - [ ] With enough games (yours plus any linked delegates') to exceed one page:
-  - [ ] Confirm **← Previous** and **Next →** buttons appear, with a "Page X of Y" indicator between them
+  - [ ] Confirm **← Previous** and **Next →** buttons appear, with a blue **Go to… (X/Y)** button between them showing the current page
   - [ ] **← Previous** is disabled on the first page
   - [ ] Click **Next →** — confirm page 2 is shown with different games
   - [ ] **Next →** is disabled on the last page
+  - [ ] Click **Go to… (X/Y)** — confirm a small modal opens asking for a page number or game name
+  - [ ] Type a page number (e.g. 12) and submit — confirm that page is shown and Previous/Next continue from it
+  - [ ] Type the start of a game name (e.g. "wing") — confirm the page containing the first game whose name starts with that text is shown (a name that only appears mid-title, like "duel" for "Wonders Duel", also works when nothing starts with it)
+  - [ ] Type a page number out of range (0 or past the last page) or a name that isn't on the list — confirm a private error ("Pick a page between 1 and N" / "No game matching …") and the list stays on the same page
+  - [ ] Confirm the Go to… button is present (and works) on the first and last page too
   - [ ] Confirm no error occurs regardless of how large the combined list is (regression: this previously crashed once the list exceeded Discord's embed description limit)
 
 ### 1.4d `/library list`
@@ -355,6 +360,11 @@ All `/game` commands should be used inside an active event channel unless otherw
   - [ ] **← Previous** is disabled on the first page
   - [ ] Click **Next →** — confirm page 2 is shown
   - [ ] **Next →** is disabled on the last page
+  - [ ] Click **Go to… (X/Y)** — confirm a small modal opens asking for a page number or game name
+  - [ ] Type a page number (e.g. 12) and submit — confirm that page is shown and Previous/Next continue from it
+  - [ ] Type the start of a game name (e.g. "wing") — confirm the page containing the first game whose name starts with that text is shown (a name that only appears mid-title, like "duel" for "Wonders Duel", also works when nothing starts with it)
+  - [ ] Type a page number out of range (0 or past the last page) or a name that isn't on the list — confirm a private error ("Pick a page between 1 and N" / "No game matching …") and the list stays on the same page
+  - [ ] Confirm the Go to… button is present (and works) on the first and last page too
 
 ### 1.4e `/library view`
 
@@ -1158,10 +1168,15 @@ No permission differences from a regular member (see 1.3e2 for the full checklis
 - [ ] Run `/library mine` with no games — confirm "You haven't added any games" message
 - [ ] With another member's library linked to you as a delegate (2.4n), run `/library mine` — confirm their games appear alongside your own, each marked `*(shared from <@ownerId>)*`
 - [ ] With enough games (yours plus any linked delegates') to exceed one page:
-  - [ ] Confirm **← Previous** and **Next →** buttons appear, with a "Page X of Y" indicator between them
+  - [ ] Confirm **← Previous** and **Next →** buttons appear, with a blue **Go to… (X/Y)** button between them showing the current page
   - [ ] **← Previous** is disabled on the first page
   - [ ] Click **Next →** — confirm page 2 is shown with different games
   - [ ] **Next →** is disabled on the last page
+  - [ ] Click **Go to… (X/Y)** — confirm a small modal opens asking for a page number or game name
+  - [ ] Type a page number (e.g. 12) and submit — confirm that page is shown and Previous/Next continue from it
+  - [ ] Type the start of a game name (e.g. "wing") — confirm the page containing the first game whose name starts with that text is shown (a name that only appears mid-title, like "duel" for "Wonders Duel", also works when nothing starts with it)
+  - [ ] Type a page number out of range (0 or past the last page) or a name that isn't on the list — confirm a private error ("Pick a page between 1 and N" / "No game matching …") and the list stays on the same page
+  - [ ] Confirm the Go to… button is present (and works) on the first and last page too
   - [ ] Confirm no error occurs regardless of how large the combined list is (regression: this previously crashed once the list exceeded Discord's embed description limit)
 
 ### 2.4d `/library list`
@@ -1177,6 +1192,11 @@ No permission differences from a regular member (see 1.3e2 for the full checklis
   - [ ] **← Previous** is disabled on the first page
   - [ ] Click **Next →** — confirm page 2 is shown
   - [ ] **Next →** is disabled on the last page
+  - [ ] Click **Go to… (X/Y)** — confirm a small modal opens asking for a page number or game name
+  - [ ] Type a page number (e.g. 12) and submit — confirm that page is shown and Previous/Next continue from it
+  - [ ] Type the start of a game name (e.g. "wing") — confirm the page containing the first game whose name starts with that text is shown (a name that only appears mid-title, like "duel" for "Wonders Duel", also works when nothing starts with it)
+  - [ ] Type a page number out of range (0 or past the last page) or a name that isn't on the list — confirm a private error ("Pick a page between 1 and N" / "No game matching …") and the list stays on the same page
+  - [ ] Confirm the Go to… button is present (and works) on the first and last page too
 
 ### 2.4e `/library view`
 
@@ -1970,10 +1990,15 @@ No permission differences from a regular member (see 1.3e2 for the full checklis
 - [ ] Run `/library mine` with no games — confirm "You haven't added any games" message
 - [ ] With another member's library linked to you as a delegate (3.4n), run `/library mine` — confirm their games appear alongside your own, each marked `*(shared from <@ownerId>)*`
 - [ ] With enough games (yours plus any linked delegates') to exceed one page:
-  - [ ] Confirm **← Previous** and **Next →** buttons appear, with a "Page X of Y" indicator between them
+  - [ ] Confirm **← Previous** and **Next →** buttons appear, with a blue **Go to… (X/Y)** button between them showing the current page
   - [ ] **← Previous** is disabled on the first page
   - [ ] Click **Next →** — confirm page 2 is shown with different games
   - [ ] **Next →** is disabled on the last page
+  - [ ] Click **Go to… (X/Y)** — confirm a small modal opens asking for a page number or game name
+  - [ ] Type a page number (e.g. 12) and submit — confirm that page is shown and Previous/Next continue from it
+  - [ ] Type the start of a game name (e.g. "wing") — confirm the page containing the first game whose name starts with that text is shown (a name that only appears mid-title, like "duel" for "Wonders Duel", also works when nothing starts with it)
+  - [ ] Type a page number out of range (0 or past the last page) or a name that isn't on the list — confirm a private error ("Pick a page between 1 and N" / "No game matching …") and the list stays on the same page
+  - [ ] Confirm the Go to… button is present (and works) on the first and last page too
   - [ ] Confirm no error occurs regardless of how large the combined list is (regression: this previously crashed once the list exceeded Discord's embed description limit)
 
 ### 3.4d `/library list`
@@ -1989,6 +2014,11 @@ No permission differences from a regular member (see 1.3e2 for the full checklis
   - [ ] **← Previous** is disabled on the first page
   - [ ] Click **Next →** — confirm page 2 is shown
   - [ ] **Next →** is disabled on the last page
+  - [ ] Click **Go to… (X/Y)** — confirm a small modal opens asking for a page number or game name
+  - [ ] Type a page number (e.g. 12) and submit — confirm that page is shown and Previous/Next continue from it
+  - [ ] Type the start of a game name (e.g. "wing") — confirm the page containing the first game whose name starts with that text is shown (a name that only appears mid-title, like "duel" for "Wonders Duel", also works when nothing starts with it)
+  - [ ] Type a page number out of range (0 or past the last page) or a name that isn't on the list — confirm a private error ("Pick a page between 1 and N" / "No game matching …") and the list stays on the same page
+  - [ ] Confirm the Go to… button is present (and works) on the first and last page too
 
 ### 3.4e `/library view`
 
