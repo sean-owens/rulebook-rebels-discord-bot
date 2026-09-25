@@ -74,6 +74,7 @@ import { getBggAccount } from '../utils/bggAccountStorage';
 import { mergeUserCollection, UserCollectionEntry } from '../utils/userCollectionStorage';
 import { GENRE_TAG_DEFINITIONS } from '../utils/tagDefinitions';
 import { resolveJumpTarget } from '../utils/pageJump';
+import { sendLongRunningResult } from '../utils/longRunningReply';
 
 const HEADER_PATTERNS = new Set(['game', 'name', 'game name', 'title', 'board game', 'boardgame']);
 
@@ -1253,10 +1254,10 @@ export async function handleSyncAll(interaction: ChatInputCommandInteraction): P
     }
   }
 
-  await interaction.followUp({
-    content: `${force ? 'Sync' : 'Enrich'} complete — **${updated}** updated, **${failed}** failed.`,
-    flags: MessageFlags.Ephemeral,
-  });
+  await sendLongRunningResult(
+    interaction,
+    `${force ? 'Sync' : 'Enrich'} complete — **${updated}** updated, **${failed}** failed.`,
+  );
 }
 
 // Pre-warms game_info.json with full BGG details for BGG's top-ranked pool —
@@ -1325,10 +1326,7 @@ export async function handleBackfillTopRanked(interaction: ChatInputCommandInter
     }
   }
 
-  await interaction.followUp({
-    content: `Backfill complete — **${updated}** updated, **${failed}** failed.`,
-    flags: MessageFlags.Ephemeral,
-  });
+  await sendLongRunningResult(interaction, `Backfill complete — **${updated}** updated, **${failed}** failed.`);
 }
 
 export async function enrichFromBGG(canonical: string, force = false): Promise<void> {
