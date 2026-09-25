@@ -65,7 +65,17 @@ Railway does **not** register slash commands on deploy. Whenever a command's nam
 npm run deploy
 ```
 
-It registers the commands for whichever bot the local `.env` credentials belong to (to `DISCORD_GUILD_ID` if set, otherwise globally). Before running it, make sure `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, and `DISCORD_GUILD_ID` in `.env` all belong to the *same* bot — they can drift apart — and that it is the bot you mean to update. Do it once for the development bot after a change lands on `main`, and once for the production bot when that change is promoted. If commands look wrong even after a successful deploy, check for stale commands registered in the *other* scope (global vs. guild).
+It registers the commands for whichever bot the local `.env` credentials belong to. Before running it, make sure `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, and `DISCORD_GUILD_ID` in `.env` all belong to the *same* bot — they can drift apart — and that it is the bot you mean to update. Do it once for the development bot after a change lands on `main`, and once for the production bot when that change is promoted.
+
+**Always deploy guild-scoped (with `DISCORD_GUILD_ID` set).** Without it the script registers *global* commands, which Discord shows alongside the server-scoped ones — every command appears twice, and the global copy goes stale because it isn't refreshed by later guild-scoped deploys. Both bots ended up in exactly this state once (14 global + 14 server-scoped commands each) and had to be cleaned up.
+
+To update the production bot without touching your local `.env`, run the deploy with production's variables injected (this runs on your machine; it does not change any Railway configuration) and the production server's ID:
+
+```
+DISCORD_GUILD_ID=<production server id> railway run -e production npm run deploy
+```
+
+**Checking for duplicates.** If commands look doubled or out of date even after a successful deploy, list both scopes for the bot — `GET /applications/{clientId}/commands` (global) and `GET /applications/{clientId}/guilds/{guildId}/commands` (server) — with the bot's token. Global should be empty. To clear a stray global set, `PUT` an empty array (`[]`) to the global endpoint; the server-scoped commands are unaffected and the global set can always be re-registered later.
 
 ### Verifying a deploy
 
