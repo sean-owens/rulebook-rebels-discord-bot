@@ -98,6 +98,7 @@ All code that touches the BoardGameGeek API must follow these rules, which come 
 - **All BGG API requests must be made server-side** (i.e. from the bot process). Never make BGG requests from a client or browser context.
 - **Cache results wherever practical.** Repeated lookups for the same game or user data should be served from local storage rather than hitting the API again. The BGG backup data in `BGG/backup-data/` exists for this reason.
 - **Keep request volume to a minimum.** Batch or debounce where possible; never poll BGG in a loop without a strong reason.
+- **Send an honest User-Agent (`BGG_USER_AGENT` in `src/utils/bgg.ts`); never spoof a browser.** BGG's Cloudflare bot protection flags a Node client claiming to be Chrome (TLS-fingerprint mismatch) and serves a 403 challenge page, while the same request with an honest User-Agent succeeds (issue #78). Don't work around a future 403 with browser headers, cookies copied from a browser, or a proxy — that evades BGG's protection and conflicts with their terms.
 - **Monitor usage** at `https://boardgamegeek.com/applications` → "Usage" to stay within license limits.
 
 ### Powered by BGG attribution

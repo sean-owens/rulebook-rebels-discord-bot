@@ -220,7 +220,7 @@ Locally these files live under `data/`. When `AWS_S3_BUCKET_NAME` is set (as on 
 
 - A snapshot of BGG's ranked-games dump (`BGG/backup-data/boardgames_ranks_*.zip`) is loaded into memory at startup as a local catalog used for name matching and the challenge's game pool. Update it by replacing the zip, committing, and redeploying (set `BGG_CATALOG_MAINTAINER_ID` for a weekly reminder DM).
 - Live BGG API calls are made server-side only, cached where possible, and kept to a minimum. Any embed showing BGG data must include the "Powered by BGG" logo (see [`BGG/README.md`](BGG/README.md) and `CLAUDE.md` §4).
-- Known issue: BGG's Cloudflare currently blocks live API calls from Railway's IP range (issue #78). Features that need only the local catalog are unaffected; live lookups fall back to cached data where the code supports it.
+- The bot identifies itself to BGG with an honest `RulebookRebelsBot/…` User-Agent. Do not change it to a browser-style one: BGG's Cloudflare bot protection compares the claimed User-Agent to the connection's TLS fingerprint, and a Node process claiming to be Chrome gets a 403 "Just a moment…" challenge page (this caused issue #78, which looked like an IP block but was not one — the same request from the same IP succeeds with an honest User-Agent). If live BGG calls start returning 403 again, check that header first.
 
 ---
 
