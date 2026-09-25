@@ -21,6 +21,7 @@ import {
 } from './bgStats';
 import { GuestSeat, isGuestSeatId, guestDisplayName } from './guestSeats';
 import { findGamesNeedingTeacher, buildTeacherHostMessage } from './teaching';
+import { sendSnackReminders } from './snackReminders';
 
 export const LOCK_MESSAGE =
   "This event's lineup is locked ahead of the scheduled start — suggestions and seats can no longer change.";
@@ -1505,6 +1506,8 @@ export async function lockAndScheduleEvent(
   for (const req of remainingRequests) {
     await reconcileRequestCopies(client, gn.guildId, gn.rsvps, req, gn.date);
   }
+
+  await sendSnackReminders(client, gn);
 
   if (gn.eventChannelId) {
     try {

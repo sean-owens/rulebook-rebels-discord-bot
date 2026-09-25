@@ -906,6 +906,17 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Tap "🗑️ Remove Mine" having added exactly one item — confirm it's removed directly, same as `/snacks remove`
 - [ ] Tap "🗑️ Remove Mine" having added more than one item — confirm a select menu lets you pick which one to remove
 
+### 1.11d Lock-time snack reminder
+
+**What it does:** When an event's lineup locks (see 4.7), the bot DMs every member who has snacks on that event's snack list a reminder of exactly what *they* signed up to bring, with a link to the event channel and a note that `/snacks remove` takes something off. It goes out right after the "please bring this game" asks. Members who RSVP'd "can't go" are skipped, and a member with DMs disabled is skipped without blocking anyone else or the lock itself. Private rooms have no lock, so they get no reminder.
+
+- [ ] Before the lineup locks, have two members add snacks (one adds two items) via `/snacks add` — then lock the event (wait for the lock time, or use the configured lock window) and confirm each member receives one DM listing only their own snacks (the two-item member sees both, in the order added), with the event channel linked
+- [ ] Confirm a member who is also being asked to bring a game gets both the "please bring this game" DM and the snack reminder
+- [ ] Have a member with a snack RSVP "can't go" before the lock — confirm they get no reminder
+- [ ] Remove a snack with `/snacks remove` before the lock — confirm the reminder no longer lists it (and that a member who removed all their snacks gets no DM)
+- [ ] Lock an event with no snack list at all — confirm no snack DMs are sent and the lock completes normally
+- [ ] With one snack-holder's DMs disabled, confirm the other member still gets their reminder and the schedule is still posted
+
 ## 1.12 `/challenge` — "Guess the Board Game"
 
 **Prerequisites:** an admin must run `/admin challenge config` (3.9s) to set a channel and turn the feature on — see 4.9 for the full automated hint/reveal flow, and 3.9s for the `frequency` setting (daily/weekly/bi-weekly) that governs how often a new challenge cycle starts. No permission differences between member/host/admin, so this section isn't mirrored into Parts 2/3.
@@ -2940,6 +2951,7 @@ Locking also cleans up and follows up on the "Games to Bring" request pin (`/lib
 - [ ] Seat a game so its computed start or end lands off a quarter-hour (e.g. a table that naturally frees up at :07 or :52) — confirm the posted time is rounded **up** to the next :00/:15/:30/:45, never down and never to the nearest quarter
 - [ ] Confirm each table's line lists that game's seated players as `@mention`s, comma-separated, after the title/time
 - [ ] Leave one seated game with nobody able to teach it (suggester picked "I'm new to it", no 🎓 volunteers) and give another a teacher — at lock, confirm the event host receives a DM listing only the teacher-less game(s), and no DM is sent if every seated game has a teacher (or the only teacher-less games have no seated players)
+- [ ] With snacks on the event's snack list, confirm that at lock each member who signed up receives a DM reminding them of their own snacks (see 1.11d), sent alongside the game-bring asks and before the schedule is posted
 - [ ] With the host's DMs disabled, confirm the lock still completes normally (the DM failure is only logged)
 - [ ] Seat a game with a guest (via **Bring a Guest**, 1.3e2) before it locks — confirm the locked schedule embed shows the guest's display name (e.g. "Player's Guest (Name)"), not a broken `<@guest:...>` mention
 - [ ] Confirm two games sharing a seated player never overlap in time — the second one starts no earlier than the shared player's break clears after the first ends
