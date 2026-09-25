@@ -2535,6 +2535,7 @@ See 2.8j for the full checklist — this Admin-tier pass just confirms Admins re
 - [ ] Run `/admin library syncall` (no `force` option) with a small library — confirm all games with a BGG ID are refreshed and a summary count is shown, including overwriting a game that already had different manually-set data
 - [ ] Run `/admin library syncall force:False` — confirm only games missing BGG data are queried/updated, and an already fully-enriched game's existing data is left unchanged
 - [ ] Run `/admin library syncall force:False` again immediately after — confirm the reply says nothing is missing BGG data and no BGG request is made
+- [ ] With a large library (or otherwise a sync that runs past 15 minutes), let `syncall` finish — confirm the "Sync complete — N updated, N failed." result arrives as a **DM** from the bot (with a note that the command ran longer than Discord allows for a reply) instead of being lost, and that the logs show no "Invalid Webhook Token" error. A sync that finishes within 15 minutes still replies ephemerally in the channel as before
 - [ ] Confirm games with no BGG ID are skipped and counted separately (not treated as failures)
 - [ ] Run with an empty library — confirm an appropriate "nothing to sync" message
 - [ ] Confirm the command does not time out or double-reply on a larger library (should defer/edit the reply while syncing)
@@ -2548,6 +2549,7 @@ See 2.8j for the full checklist — this Admin-tier pass just confirms Admins re
 - [ ] Run `/admin library backfilltop count:10` on a fresh cache — confirm it creates brand-new `game_info.json` entries (not just updates to existing ones) for top-ranked games nobody has personally added, and a summary count is shown
 - [ ] Run `/admin library backfilltop count:10` again immediately after (no `force`) — confirm it reports nothing to backfill and makes no BGG request, since all 10 are now fully cached
 - [ ] Run `/admin library backfilltop count:10 force:true` — confirm it re-fetches all 10 regardless of already being fully cached
+- [ ] For a backfill that runs past 15 minutes (e.g. `count:500` on a fresh cache), confirm the "Backfill complete" result is delivered by DM, same as `syncall` (3.9d)
 - [ ] Confirm a top-ranked game that's already in someone's library (and already fully enriched) is skipped under the default `force:false`, not double-counted or re-fetched
 - [ ] Confirm the command does not time out or double-reply for a larger `count` (should defer/edit the reply while backfilling, same as `syncall`)
 - [ ] After backfilling a small `count`, force `getBGGGame` to fail (or simulate a BGG outage) and let the weekly challenge's random pick land outside that backfilled set — confirm the challenge still degrades gracefully (per 4.9) rather than assuming backfilltop guarantees full coverage of every possible pick
