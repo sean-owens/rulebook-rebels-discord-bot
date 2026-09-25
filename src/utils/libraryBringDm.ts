@@ -9,6 +9,7 @@ import {
   pickPreferredOwner,
   buildExpansionNote,
 } from './libraryStorage';
+import { findGamesByEvent } from './gameStorage';
 
 function bringActionRow(requestId: string): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -112,14 +113,24 @@ export async function reconcileRequestCopies(
       ...req.pendingAsks.map((a) => a.ownerId),
     ]);
 
+    // An owner who suggested this game for the event (and so is already seated
+    // in it) is the likeliest to bring it anyway — ask them ahead of fairness.
+    const suggesterId = (await findGamesByEvent(req.eventId)).find(
+      (g) => g.title.toLowerCase() === req.gameName.toLowerCase(),
+    )?.createdBy;
+
     let toAsk = neededPending - req.pendingAsks.length;
     while (toAsk > 0) {
-      // An explicit copy-select owner pick (req.preferredOwnerId) always gets
-      // asked first; every other slot (and any further copy, or a fallback if
-      // the preferred owner was already tried/ineligible) uses fairness.
-      const ownerId =
-        req.preferredOwnerId && !tried.has(req.preferredOwnerId) && attendingOwnerIds.includes(req.preferredOwnerId)
-          ? req.preferredOwnerId
+      // Priority: an explicit copy-select owner pick (req.preferredOwnerId, a
+      // specific/specialized copy), then the game's suggester if they own it,
+      // then fairness for every other slot (and any further copy, or a
+      // fallback if the earlier choices were already tried/ineligible).
+      const eligible = (id: string | undefined): id is string =>
+        !!id && !tried.has(id) && attendingOwnerIds.includes(id);
+      const ownerId = eligible(req.preferredOwnerId)
+        ? req.preferredOwnerId
+        : eligible(suggesterId)
+          ? suggesterId
           : await pickPreferredOwner(req.eventId, attendingOwnerIds, [...tried]);
       if (!ownerId) break; // no more eligible owners left to ask
       tried.add(ownerId);
