@@ -1935,6 +1935,37 @@ describe('lockAndScheduleEvent', () => {
     });
   });
 
+  describe('snack reminders at lock', () => {
+    it('DMs each member their snacks when the lineup locks, without blocking the lock', async () => {
+      const { upsertGameNight } = await import('../src/utils/storage');
+      const { addSnackItem } = await import('../src/utils/snackStorage');
+      const gn = makeGameNight();
+      await upsertGameNight(gn as any);
+      await addSnackItem('event-channel-1', 'guild-1', 'gn1', 'alice', 'Chips');
+      await addSnackItem('event-channel-1', 'guild-1', 'gn1', 'bob', 'Soda');
+
+      const dms: string[] = [];
+      const base = makeClient(vi.fn(async () => ({ id: 'msg', pin: vi.fn(async () => {}) })));
+      const client = {
+        ...base,
+        users: {
+          fetch: vi.fn(async (id: string) => ({
+            send: vi.fn(async () => {
+              if (id === 'bob') throw new Error('DMs closed');
+              dms.push(id);
+            }),
+          })),
+        },
+      };
+
+      await lockAndScheduleEvent(client as any, gn as any, BUFFER_CONFIG);
+
+      expect(dms).toEqual(['alice']);
+      expect(gn.suggestionsLocked).toBe(true);
+      expect(base._channel.send).toHaveBeenCalled(); // the schedule still posted
+    });
+  });
+
   describe('dropping zero-signup "games to bring" requests', () => {
     // A send mock that returns a pinnable message object (unlike the shared
     // makeClient default, which resolves to undefined) — needed because this
