@@ -54,6 +54,16 @@ import { removeGame, getGamesByUser } from '../utils/libraryStorage';
 import { searchCatalog, searchCatalogWithFallback, getCatalogEntryById, BGGCatalogEntry } from '../utils/bggCatalog';
 import { fetchBGGMarketplacePrices, getBGGGame } from '../utils/bgg';
 import {
+  IMPORT_TEMPLATE_CSV,
+  MAX_IMPORT_BYTES,
+  MAX_IMPORT_ROWS,
+  ImportMatch,
+  ImportRowError,
+  ParsedImportRow,
+  matchImportItem,
+  parseImportCsv,
+} from '../utils/marketplaceImport';
+import {
   SellDraft,
   saveDraft as persistDraft,
   deleteDraft as persistDeleteDraft,
@@ -308,6 +318,17 @@ export const data = new SlashCommandBuilder()
   )
   .addSubcommand((sub) =>
     sub.setName('conditions').setDescription('Show the condition grading scale used for marketplace listings'),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName('import')
+      .setDescription('Post several listings at once from a CSV file (see /marketplace template)')
+      .addAttachmentOption((opt) =>
+        opt.setName('file').setDescription('CSV file of items to list').setRequired(true),
+      ),
+  )
+  .addSubcommand((sub) =>
+    sub.setName('template').setDescription('Get a sample CSV file to fill in for /marketplace import'),
   );
 
 // ── Autocomplete ────────────────────────────────────────────────────────────
@@ -2647,7 +2668,245 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     else if (sub === 'close') await handleClose(interaction);
     else if (sub === 'reopen') await handleReopen(interaction);
     else if (sub === 'edit') await handleEditCommand(interaction);
+    else if (sub === 'import') await handleImport(interaction);
+    else if (sub === 'template') await handleImportTemplate(interaction);
   }
+}
+
+// ── /marketplace import (CSV bulk listing) ──────────────────────────────────
+//
+// Parsing/validation/matching live in src/utils/marketplaceImport.ts; this
+// section is the Discord side: fetch the attachment, show a preview, and post
+// on confirm. Items match against the local BGG catalog only (no live BGG
+// calls per row), so a row's thumbnail/expansion data isn't fetched — imported
+// listings are plain sell/trade listings, optionally linked to a BGG entry.
+
+interface ImportItem {
+  row: ParsedImportRow;
+  match: ImportMatch;
+  skipReason?: string;
+}
+
+interface PendingImport {
+  userId: string;
+  guildId: string;
+  username: string;
+  items: ImportItem[];
+  expiresAt: number;
+}
+
+const IMPORT_PREVIEW_TTL_MS = 15 * 60 * 1000;
+const MAX_LISTED_IMPORT_ERRORS = 10;
+const pendingImports = new Map<string, PendingImport>();
+
+export async function handleImportTemplate(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.reply({
+    content:
+      'Fill in this file and upload it with `/marketplace import`. Columns: `type` (sell or trade, blank = sell), ' +
+      '`item` and `condition` (new, like_new, very_good, good, acceptable) are required; `price` (sell only), ' +
+      '`offers_allowed` (yes/no, blank = yes; a firm "no" needs a price), `looking_for` (trade only), `notes`, and ' +
+      `an optional \`bgg_id\` to link an exact BoardGameGeek game. Up to ${MAX_IMPORT_ROWS} rows per import. ` +
+      'Leave the header row as-is.',
+    files: [new AttachmentBuilder(Buffer.from(IMPORT_TEMPLATE_CSV, 'utf8'), { name: 'marketplace-import-template.csv' })],
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+function normalizedListingKey(type: string, itemName: string): string {
+  return `${type}:${itemName.trim().toLowerCase()}`;
+}
+
+function describeImportItem(index: number, item: ImportItem): string {
+  const { row, match } = item;
+  const icon = row.type === 'sell' ? '🛒' : '🔄';
+  const price = row.type === 'sell' ? (row.price != null ? formatPrice(row.price) : 'open to offers') : row.lookingFor ? `for ${row.lookingFor}` : 'open to offers';
+  const head = `${index + 1}. ${icon} **${row.item}** · ${CONDITION_LABELS[row.condition]} · ${price}`;
+  if (item.skipReason) return `${head}\n   ⏭️ Skipped — ${item.skipReason}`;
+  const year = match.matchedYear ? ` (${match.matchedYear})` : '';
+  if (match.quality === 'exact') return `${head}\n   ✅ BGG: ${match.matchedName}${year}`;
+  if (match.quality === 'guess') return `${head}\n   ⚠️ Best-guess BGG match: ${match.matchedName}${year} — wrong? fix the name or add a bgg_id`;
+  return `${head}\n   ➖ No BGG match — posts as a custom item`;
+}
+
+function importPreviewEmbed(items: ImportItem[], errors: ImportRowError[], channelConfigured: boolean): EmbedBuilder {
+  const postable = items.filter((i) => !i.skipReason).length;
+  const lines = items.map((item, i) => describeImportItem(i, item));
+  if (errors.length > 0) {
+    lines.push('', `**${errors.length} row(s) with problems (not imported):**`);
+    for (const e of errors.slice(0, MAX_LISTED_IMPORT_ERRORS)) lines.push(`❌ Line ${e.line}: ${e.message}`);
+    if (errors.length > MAX_LISTED_IMPORT_ERRORS) lines.push(`…and ${errors.length - MAX_LISTED_IMPORT_ERRORS} more.`);
+  }
+  return new EmbedBuilder()
+    .setColor(postable > 0 ? 0x5865f2 : 0xed4245)
+    .setTitle(`Import preview — ${postable} listing${postable === 1 ? '' : 's'} ready`)
+    .setDescription(lines.join('\n').slice(0, 4000))
+    .setFooter({
+      text: channelConfigured
+        ? 'Nothing is posted until you confirm. Prefer to fix something? Cancel, edit the CSV, and re-upload.'
+        : 'No marketplace channel is configured, so listings would be created but not posted anywhere (see /admin marketplace config).',
+    });
+}
+
+function importButtons(token: string, canConfirm: boolean): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`mp_import_yes_${token}`)
+      .setLabel('Post these listings')
+      .setEmoji('✅')
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(!canConfirm),
+    new ButtonBuilder().setCustomId(`mp_import_no_${token}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary),
+  );
+}
+
+export async function handleImport(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const attachment = interaction.options.getAttachment('file', true);
+  if (!/\.csv$/i.test(attachment.name)) {
+    await interaction.editReply({ content: 'Please upload a `.csv` file. Run `/marketplace template` for a sample.' });
+    return;
+  }
+  if (attachment.size > MAX_IMPORT_BYTES) {
+    await interaction.editReply({ content: `That file is too large (max ${Math.round(MAX_IMPORT_BYTES / 1024)} KB).` });
+    return;
+  }
+
+  let text: string;
+  try {
+    const res = await fetch(attachment.url, { signal: AbortSignal.timeout(10_000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    text = await res.text();
+  } catch (err) {
+    console.warn('[marketplace] CSV import: could not download attachment:', err);
+    await interaction.editReply({ content: "Couldn't download that file — please try uploading it again." });
+    return;
+  }
+
+  const parsed = parseImportCsv(text);
+  if (parsed.fatal) {
+    await interaction.editReply({ content: parsed.fatal });
+    return;
+  }
+
+  const guildId = interaction.guildId!;
+  const userId = interaction.user.id;
+  const username = interaction.member
+    ? (interaction.member as { displayName?: string }).displayName ?? interaction.user.username
+    : interaction.user.username;
+
+  const existing = new Set(
+    (await getUserListings(guildId, userId))
+      .filter((l) => l.status === 'active' || l.status === 'pending')
+      .map((l) => normalizedListingKey(l.type, l.itemName)),
+  );
+
+  const errors = [...parsed.errors];
+  const items: ImportItem[] = [];
+  for (const row of parsed.rows) {
+    const match = matchImportItem(row);
+    if (match.quality === 'bad_id') {
+      errors.push({ line: row.line, message: `bgg_id ${row.bggId} isn't in the BoardGameGeek catalog.` });
+      continue;
+    }
+    const key = normalizedListingKey(row.type, row.item);
+    let skipReason: string | undefined;
+    if (existing.has(key)) skipReason = 'you already have an active listing for this item (or it appears twice in the file)';
+    existing.add(key);
+    items.push({ row, match, skipReason });
+  }
+  errors.sort((a, b) => a.line - b.line);
+
+  const config = await getGuildConfig(guildId);
+  const postable = items.filter((i) => !i.skipReason).length;
+  let token = '';
+  if (postable > 0) {
+    token = require('crypto').randomUUID() as string;
+    pendingImports.set(token, { userId, guildId, username, items, expiresAt: Date.now() + IMPORT_PREVIEW_TTL_MS });
+    for (const [k, v] of pendingImports) if (v.expiresAt < Date.now()) pendingImports.delete(k);
+  }
+
+  await interaction.editReply({
+    embeds: [importPreviewEmbed(items, errors, !!config.marketplaceChannelId)],
+    components: postable > 0 ? [importButtons(token, true)] : [],
+  });
+}
+
+export async function handleImportCancel(interaction: ButtonInteraction, token: string): Promise<void> {
+  const pending = pendingImports.get(token);
+  if (pending && pending.userId !== interaction.user.id) {
+    await interaction.reply({ content: "This isn't your import.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+  pendingImports.delete(token);
+  await interaction.update({ content: 'Import cancelled — nothing was posted.', embeds: [], components: [] });
+}
+
+export async function handleImportConfirm(interaction: ButtonInteraction, token: string): Promise<void> {
+  const pending = pendingImports.get(token);
+  if (!pending || pending.expiresAt < Date.now()) {
+    pendingImports.delete(token);
+    await interaction.update({
+      content: 'This import preview has expired — please run `/marketplace import` again.',
+      embeds: [],
+      components: [],
+    });
+    return;
+  }
+  if (pending.userId !== interaction.user.id) {
+    await interaction.reply({ content: "This isn't your import.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+  // Single-use: taken before the slow posting loop so a double-tap can't post twice.
+  pendingImports.delete(token);
+  await interaction.update({ content: 'Posting your listings…', embeds: [], components: [] });
+
+  const created: string[] = [];
+  const failed: string[] = [];
+  let unposted = 0;
+  for (const { row, match, skipReason } of pending.items) {
+    if (skipReason) continue;
+    try {
+      const listing = await createListing(pending.guildId, {
+        guildId: pending.guildId,
+        userId: pending.userId,
+        username: pending.username,
+        type: row.type,
+        bggId: match.bggId,
+        itemName: row.item,
+        condition: row.condition,
+        notes: row.notes,
+        askingPrice: row.price,
+        bidsAllowed: row.bidsAllowed,
+        lookingFor: row.lookingFor,
+      });
+      await appendMarketplaceLog({
+        timestamp: new Date().toISOString(),
+        guildId: pending.guildId,
+        event: 'listing_created',
+        listingId: listing.id,
+        listingName: listing.itemName,
+        listingType: row.type,
+        actorId: pending.userId,
+        actorUsername: pending.username,
+        amount: row.price,
+        details: `condition=${row.condition} bidsAllowed=${row.bidsAllowed} source=csv_import`,
+      });
+      const posted = await postListingToChannel(listing, pending.guildId, interaction.client);
+      if (posted) await updateListing(pending.guildId, listing.id, posted);
+      else unposted++;
+      created.push(row.item);
+    } catch (err) {
+      console.error(`[marketplace] CSV import: failed to create listing "${row.item}":`, err);
+      failed.push(row.item);
+    }
+  }
+
+  const lines = [`✅ Created ${created.length} listing${created.length === 1 ? '' : 's'}.`];
+  if (unposted > 0) lines.push(`⚠️ ${unposted} couldn't be posted to a marketplace channel — check \`/admin marketplace config\`. They're still saved; see \`/marketplace my\`.`);
+  if (failed.length > 0) lines.push(`❌ Failed: ${failed.join(', ')} — re-import just those rows.`);
+  lines.push('View them with `/marketplace my`.');
+  await interaction.editReply({ content: lines.join('\n'), embeds: [], components: [] });
 }
 
 // ── Price suggestion buttons ─────────────────────────────────────────────────

@@ -224,6 +224,22 @@ describe('/admin library syncall — force option', () => {
     );
     errorSpy.mockRestore();
   });
+
+  // Regression: a ~1000-game sync outlasted Discord's 15-minute interaction
+  // token, so the final followUp threw "Invalid Webhook Token" (50027) and the
+  // admin never learned the sync had succeeded.
+  it('delivers the completion result by DM when the sync outlasted the 15-minute interaction token', async () => {
+    mockLoadGameInfos.mockResolvedValue([makeInfo({ objectid: '1', gameName: 'Game 1' })]);
+    mockGetBGGGamesBatch.mockResolvedValue([makeBGGGame('1')]);
+
+    const interaction = makeInteraction(null);
+    interaction.createdTimestamp = Date.now() - 20 * 60 * 1000;
+    interaction.user = { id: 'admin-1', send: vi.fn(async () => {}) };
+    await handleSyncAll(interaction);
+
+    expect(interaction.followUp).not.toHaveBeenCalled();
+    expect(interaction.user.send).toHaveBeenCalledWith(expect.stringContaining('Sync complete — **1** updated, **0** failed.'));
+  });
 });
 
 describe('/admin library backfilltop', () => {

@@ -1,4 +1,5 @@
 import { readJson, writeJson } from './db';
+import { GuestSeat } from './guestSeats';
 
 const FILE = 'games.json';
 
@@ -44,6 +45,15 @@ export interface GameSuggestion {
   expansions: GameExpansion[];
   seats: string[];
   waitlist: string[];
+  // Metadata for synthetic guest pseudo-IDs present in seats/waitlist — see
+  // src/utils/guestSeats.ts. Real Discord IDs never appear in this array.
+  guests?: GuestSeat[];
+  // Seated players who can teach this game / can only answer rules questions
+  // (see src/utils/teaching.ts). Undefined on games suggested before this
+  // existed — those show no teaching info at all, rather than a false
+  // "nobody can teach this" warning.
+  teachers?: string[];
+  helpers?: string[];
   createdAt: string;
   createdBy: string;
   // Set once the scheduler (see src/utils/scheduler.ts) assigns this game a

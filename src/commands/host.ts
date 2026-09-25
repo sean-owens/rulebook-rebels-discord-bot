@@ -1,4 +1,6 @@
-import { ChatInputCommandInteraction, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
+import { ChatInputCommandInteraction, MessageFlags, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
+import { loadGameNights } from '../utils/storage';
+import { ALL_REPOST_TARGETS, REPOST_TARGET_LABELS, RepostTarget, repostPin } from '../utils/repostPins';
 import {
   handleCreate as handleEventCreate,
   handleEdit as handleEventEdit,
@@ -9,6 +11,7 @@ import {
 } from './gamenight';
 import { handleHostGameCancel } from './game';
 import { handleUnrequest as handleLibraryUnrequest } from './library';
+import { handleHostChallengePoints } from './boardgamechallenge';
 
 export const data = new SlashCommandBuilder()
   .setName('host')
@@ -166,6 +169,24 @@ export const data = new SlashCommandBuilder()
               .setDescription('Remove just this one greeter, leaving any other greeter in place')
               .setRequired(false),
           ),
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('repost')
+          .setDescription("Repost a pinned list as a fresh, up-to-date message at the bottom of this event's channel")
+          .addStringOption((opt) =>
+            opt
+              .setName('item')
+              .setDescription('Which message to repost')
+              .setRequired(true)
+              .addChoices(
+                { name: 'Game lineup', value: 'game_list' },
+                { name: 'Games to bring', value: 'requests' },
+                { name: 'Snacks list', value: 'snacks' },
+                { name: 'Quick Actions buttons', value: 'hub' },
+                { name: 'All of the above', value: 'all' },
+              ),
+          ),
       ),
   )
   // ── game group ────────────────────────────────────────────────────────────────
@@ -192,7 +213,66 @@ export const data = new SlashCommandBuilder()
           .setName('unrequest')
           .setDescription('View and remove any game request from an upcoming event'),
       ),
+  )
+  // ── challenge group ───────────────────────────────────────────────────────────
+  .addSubcommandGroup((group) =>
+    group
+      .setName('challenge')
+      .setDescription('Board game challenge scoring')
+      .addSubcommand((sub) =>
+        sub
+          .setName('points')
+          .setDescription("Add or subtract points from a user's board game challenge total")
+          .addUserOption((opt) => opt.setName('user').setDescription('Who to adjust').setRequired(true))
+          .addIntegerOption((opt) =>
+            opt
+              .setName('amount')
+              .setDescription('Positive to add, negative to subtract (e.g. 50 or -50)')
+              .setRequired(true),
+          ),
+      ),
   );
+
+export async function handleEventRepost(interaction: ChatInputCommandInteraction): Promise<void> {
+  if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageEvents)) {
+    await interaction.reply({ content: 'Only hosts and admins can repost event lists.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const gameNight = (await loadGameNights()).find(
+    (gn) => gn.eventChannelId === interaction.channelId && !gn.cancelled && !gn.archived,
+  );
+  if (!gameNight) {
+    await interaction.reply({
+      content: 'Run this inside an active event channel.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const item = interaction.options.getString('item', true);
+  const targets: RepostTarget[] = item === 'all' ? ALL_REPOST_TARGETS : [item as RepostTarget];
+
+  const reposted: string[] = [];
+  const skipped: string[] = [];
+  for (const target of targets) {
+    try {
+      (await repostPin(interaction.client, gameNight, target) ? reposted : skipped).push(REPOST_TARGET_LABELS[target]);
+    } catch (err) {
+      console.error(`[repost] Failed to repost ${target} in channel ${interaction.channelId}:`, err);
+      skipped.push(REPOST_TARGET_LABELS[target]);
+    }
+  }
+
+  const lines: string[] = [];
+  if (reposted.length > 0) lines.push(`✅ Reposted: ${reposted.join(', ')}.`);
+  if (skipped.length > 0) {
+    lines.push(`⏭️ Nothing to repost (or it failed — check the bot's logs): ${skipped.join(', ')}.`);
+  }
+  await interaction.editReply({ content: lines.join('\n') });
+}
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
   const group = interaction.options.getSubcommandGroup(true);
@@ -205,9 +285,12 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     else if (sub === 'archive') await handleEventArchive(interaction);
     else if (sub === 'privacy') await handleEventPrivacy(interaction);
     else if (sub === 'greeters') await handleEventSetGreeters(interaction);
+    else if (sub === 'repost') await handleEventRepost(interaction);
   } else if (group === 'game') {
     if (sub === 'cancel') await handleHostGameCancel(interaction);
   } else if (group === 'library') {
     if (sub === 'unrequest') await handleLibraryUnrequest(interaction, true);
+  } else if (group === 'challenge') {
+    if (sub === 'points') await handleHostChallengePoints(interaction);
   }
 }

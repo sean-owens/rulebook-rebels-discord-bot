@@ -6,24 +6,29 @@ import { ChannelType } from 'discord.js';
 import {
   execute,
   handleChallengeConfig,
+  handleChallengeResetScores,
+  handleHostChallengePoints,
   buildChallengeHubEmbed,
   buildChallengeHubButtons,
   handleHubChallengeStatusButton,
   handleHubChallengeLeaderboardButton,
+  handleChallengeDisambiguationSelect,
 } from '../src/commands/boardgamechallenge';
 import { getGuildConfig, updateGuildConfig } from '../src/utils/config';
-import { createWeeklyChallenge, recordCorrectGuess } from '../src/utils/boardGameChallengeStorage';
+import { createWeeklyChallenge, recordCorrectGuess, recordHintPosted, getLeaderboard } from '../src/utils/boardGameChallengeStorage';
 import { mondayOfWeekInTimeZone } from '../src/utils/timezone';
 
 function makeInteraction(sub: string, overrides: Record<string, unknown> = {}) {
   return {
     guildId: 'guild-1',
+    client: {},
     options: {
       getSubcommand: () => sub,
       getChannel: () => null,
       getBoolean: () => null,
       getString: () => null,
       getInteger: () => null,
+      getUser: () => null,
     },
     memberPermissions: { has: () => true },
     reply: vi.fn(async () => {}),
@@ -490,6 +495,143 @@ describe('/challenge command', () => {
     });
   });
 
+  describe('handleChallengeResetScores', () => {
+    it('rejects non-admins', async () => {
+      const interaction = makeInteraction('reset-scores', { memberPermissions: { has: () => false } });
+      await handleChallengeResetScores(interaction);
+      expect(interaction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('Manage Server') }),
+      );
+    });
+
+    it('does nothing without confirm:true', async () => {
+      const c = await createWeeklyChallenge('guild-1', {
+        weekStart: '2026-08-24',
+        bggId: '13',
+        title: 'Catan',
+        clues: ['a', 'b', 'c'],
+        thumbnail: null,
+        bggLink: 'https://boardgamegeek.com/boardgame/13',
+        channelId: 'channel-1',
+      });
+      await recordCorrectGuess('guild-1', c.id, 'user-1', 1);
+
+      const interaction = makeInteraction('reset-scores', {
+        options: { getBoolean: () => false },
+      });
+      await handleChallengeResetScores(interaction);
+
+      expect(interaction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('cancelled') }),
+      );
+      expect(await getLeaderboard('guild-1')).toEqual([{ userId: 'user-1', points: 100 }]);
+    });
+
+    it('clears the leaderboard when confirm:true', async () => {
+      const c = await createWeeklyChallenge('guild-1', {
+        weekStart: '2026-08-24',
+        bggId: '13',
+        title: 'Catan',
+        clues: ['a', 'b', 'c'],
+        thumbnail: null,
+        bggLink: 'https://boardgamegeek.com/boardgame/13',
+        channelId: 'channel-1',
+      });
+      await recordCorrectGuess('guild-1', c.id, 'user-1', 1);
+
+      const interaction = makeInteraction('reset-scores', {
+        options: { getBoolean: () => true },
+      });
+      await handleChallengeResetScores(interaction);
+
+      expect(interaction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('reset') }),
+      );
+      expect(await getLeaderboard('guild-1')).toEqual([]);
+    });
+  });
+
+  describe('handleHostChallengePoints', () => {
+    it('adds points to a user with an existing total', async () => {
+      const c = await createWeeklyChallenge('guild-1', {
+        weekStart: '2026-08-24',
+        bggId: '13',
+        title: 'Catan',
+        clues: ['a', 'b', 'c'],
+        thumbnail: null,
+        bggLink: 'https://boardgamegeek.com/boardgame/13',
+        channelId: 'channel-1',
+      });
+      await recordCorrectGuess('guild-1', c.id, 'user-1', 1); // 100
+
+      const interaction = makeInteraction('points', {
+        options: { getUser: () => ({ id: 'user-1' }), getInteger: () => 50 },
+      });
+      await handleHostChallengePoints(interaction);
+
+      expect(await getLeaderboard('guild-1')).toEqual([{ userId: 'user-1', points: 150 }]);
+      expect(interaction.reply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('Added **50 points** to <@user-1>') }),
+      );
+    });
+
+    it('subtracts points from a user', async () => {
+      const c = await createWeeklyChallenge('guild-1', {
+        weekStart: '2026-08-24',
+        bggId: '13',
+        title: 'Catan',
+        clues: ['a', 'b', 'c'],
+        thumbnail: null,
+        bggLink: 'https://boardgamegeek.com/boardgame/13',
+        channelId: 'channel-1',
+      });
+      await recordCorrectGuess('guild-1', c.id, 'user-1', 1); // 100
+
+      const interaction = makeInteraction('points', {
+        options: { getUser: () => ({ id: 'user-1' }), getInteger: () => -30 },
+      });
+      await handleHostChallengePoints(interaction);
+
+      expect(await getLeaderboard('guild-1')).toEqual([{ userId: 'user-1', points: 70 }]);
+      expect(interaction.reply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('Subtracted **30 points** from <@user-1>') }),
+      );
+    });
+
+    it('clamps at 0 and notes it when subtracting more than the user has', async () => {
+      const interaction = makeInteraction('points', {
+        options: { getUser: () => ({ id: 'user-1' }), getInteger: () => -50 },
+      });
+      await handleHostChallengePoints(interaction);
+
+      expect(await getLeaderboard('guild-1')).toEqual([{ userId: 'user-1', points: 0 }]);
+      expect(interaction.reply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining("Clamped at 0") }),
+      );
+    });
+
+    it('rejects an amount of 0', async () => {
+      const interaction = makeInteraction('points', {
+        options: { getUser: () => ({ id: 'user-1' }), getInteger: () => 0 },
+      });
+      await handleHostChallengePoints(interaction);
+
+      expect(interaction.reply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('non-zero') }),
+      );
+      expect(await getLeaderboard('guild-1')).toEqual([]);
+    });
+
+    it('works for a user with no prior leaderboard entry', async () => {
+      const interaction = makeInteraction('points', {
+        options: { getUser: () => ({ id: 'user-new' }), getInteger: () => 25 },
+      });
+      await handleHostChallengePoints(interaction);
+
+      expect(await getLeaderboard('guild-1')).toEqual([{ userId: 'user-new', points: 25 }]);
+    });
+  });
+
   describe('challenge hub (see /hub)', () => {
     it('embed/buttons match /challenge\'s own two subcommands', () => {
       const embed = buildChallengeHubEmbed().toJSON();
@@ -516,6 +658,71 @@ describe('/challenge command', () => {
       await handleHubChallengeLeaderboardButton(interaction);
       expect(interaction.reply).toHaveBeenCalledWith(
         expect.objectContaining({ content: expect.stringContaining('No points on the board') }),
+      );
+    });
+  });
+
+  describe('disambiguation dropdown', () => {
+    async function setup() {
+      const c = await createWeeklyChallenge('guild-1', {
+        weekStart: '2026-08-24',
+        bggId: '13',
+        title: 'Catan',
+        clues: ['a', 'b', 'c'],
+        thumbnail: null,
+        bggLink: 'https://boardgamegeek.com/boardgame/13',
+        channelId: 'channel-1',
+      });
+      await recordHintPosted('guild-1', c.id, 1, 'msg-1');
+      return c;
+    }
+
+    function makeSelect(userId: string, value: string) {
+      const send = vi.fn(async () => {});
+      return {
+        guildId: 'guild-1',
+        user: { id: userId },
+        values: [value],
+        channel: { send: vi.fn(async () => {}) },
+        client: { users: { fetch: vi.fn(async () => ({ send })) }, user: { id: 'bot' } },
+        reply: vi.fn(async () => {}),
+        update: vi.fn(async () => {}),
+      } as any;
+    }
+
+    it('rejects a click from someone other than the guesser', async () => {
+      const c = await setup();
+      const interaction = makeSelect('user-2', '13');
+      await handleChallengeDisambiguationSelect(interaction, `${c.id}_user-1`);
+      expect(interaction.reply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining("isn't your guess") }),
+      );
+      expect(await getLeaderboard('guild-1')).toEqual([]);
+    });
+
+    it('scores the guesser when they pick the right game', async () => {
+      const c = await setup();
+      const interaction = makeSelect('user-1', '13');
+      await handleChallengeDisambiguationSelect(interaction, `${c.id}_user-1`);
+      expect(interaction.update).toHaveBeenCalledWith(expect.objectContaining({ content: '✅ Correct!' }));
+      expect(await getLeaderboard('guild-1')).toEqual([{ userId: 'user-1', points: 100 }]);
+    });
+
+    it('does not score a wrong pick', async () => {
+      const c = await setup();
+      const interaction = makeSelect('user-1', '999');
+      await handleChallengeDisambiguationSelect(interaction, `${c.id}_user-1`);
+      expect(interaction.update).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('Not quite') }),
+      );
+      expect(await getLeaderboard('guild-1')).toEqual([]);
+    });
+
+    it('reports an ended challenge instead of scoring', async () => {
+      const interaction = makeSelect('user-1', '13');
+      await handleChallengeDisambiguationSelect(interaction, 'guild-1-2026-01-01_user-1');
+      expect(interaction.update).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('ended') }),
       );
     });
   });

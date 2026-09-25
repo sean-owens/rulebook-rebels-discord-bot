@@ -69,6 +69,14 @@ import {
 } from '../utils/bgStats';
 import { resolvePlayerNames } from '../utils/playerNames';
 import { getShortLinkStatsForGame, registerShortLinkStatusMessage } from '../utils/shortLinkStorage';
+import { GuestSeat, isGuestSeatId, makeGuestId } from '../utils/guestSeats';
+import {
+  TeachingLevel,
+  isTeachingLevel,
+  initialTeaching,
+  removeFromTeaching,
+  toggleTeacher,
+} from '../utils/teaching';
 
 const MANUAL_VALUE = '__manual__';
 const BGG_VALUE = '__bgg__';
@@ -91,11 +99,110 @@ interface PendingBring {
 }
 const pendingBrings = new Map<string, PendingBring>();
 
+interface PendingGuestConfirm {
+  gameId: string;
+  name: string;
+}
+// Holds a guest name pending confirmation when it duplicates one the same
+// member already added to this game (see handleGameGuestModalSubmit) —
+// keyed by user id, same convention as pendingBrings above.
+const pendingGuestConfirm = new Map<string, PendingGuestConfirm>();
+
 interface PendingLibrarySuggest {
   title: string;
   withExpansions: boolean;
 }
 const pendingLibrarySuggest = new Map<string, PendingLibrarySuggest>();
+
+const TEACHING_PROMPT_TIMEOUT_MS = 5 * 60 * 1000;
+const pendingTeaching = new Map<string, { userId: string; resolve: (level: TeachingLevel | undefined) => void }>();
+
+// Required last step of every suggest flow: asks the suggester how well they
+// know the game before its card is posted. The caller's (already deferred)
+// interaction shows the prompt and is reused afterward, so the flow just
+// awaits this and carries on. Resolves undefined — nothing should be posted —
+// if the prompt times out (or the bot restarts, which drops pending prompts).
+async function askTeachingLevel(
+  interaction: { user: { id: string }; editReply: (o: { content: string; components: ActionRowBuilder<ButtonBuilder>[] }) => Promise<unknown> },
+  gameTitle: string,
+): Promise<TeachingLevel | undefined> {
+  const token = randomUUID().slice(0, 8);
+  const button = (level: TeachingLevel, label: string, emoji: string, style: ButtonStyle) =>
+    new ButtonBuilder().setCustomId(`game_teach_${token}_${level}`).setLabel(label).setEmoji(emoji).setStyle(style);
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    button('teach', 'I can teach it', '🎓', ButtonStyle.Success),
+    button('answer', 'I can answer questions', '🙋', ButtonStyle.Primary),
+    button('learning', "I'm new to it", '🌱', ButtonStyle.Secondary),
+  );
+
+  const answered = new Promise<TeachingLevel | undefined>((resolve) => {
+    pendingTeaching.set(token, { userId: interaction.user.id, resolve });
+    setTimeout(() => {
+      if (pendingTeaching.delete(token)) resolve(undefined);
+    }, TEACHING_PROMPT_TIMEOUT_MS);
+  });
+
+  await interaction.editReply({
+    content:
+      `Last step for **${gameTitle}**: how well do you know it? We try to have at least one person at the table ` +
+      'who can teach each game — if you pick "new to it", someone else can volunteer with the 🎓 button on the card.',
+    components: [row],
+  });
+
+  const level = await answered;
+  if (!level) {
+    await interaction.editReply({
+      content: `Timed out — **${gameTitle}** was not added. Suggest it again whenever you're ready.`,
+      components: [],
+    });
+  }
+  return level;
+}
+
+export async function handleTeachingChoice(interaction: ButtonInteraction, encoded: string): Promise<void> {
+  const [token, level] = encoded.split('_');
+  const pending = pendingTeaching.get(token);
+  if (!pending || !isTeachingLevel(level)) {
+    await interaction.reply({
+      content: 'That prompt has expired — please suggest the game again.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  if (pending.userId !== interaction.user.id) {
+    await interaction.reply({ content: "This isn't your suggestion.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+  pendingTeaching.delete(token);
+  await interaction.deferUpdate();
+  pending.resolve(level);
+}
+
+export async function handleGameTeachToggle(interaction: ButtonInteraction, gameId: string): Promise<void> {
+  const { findGame, upsertGame: save } = await import('../utils/gameStorage');
+  const game = await findGame(gameId);
+  if (!game) {
+    await interaction.reply({ content: 'Game not found.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  if (!game.seats.includes(interaction.user.id)) {
+    await interaction.reply({
+      content: 'Join the game first, then you can mark yourself as able to teach it.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  toggleTeacher(game, interaction.user.id);
+  await save(game);
+
+  const nameMap = await resolveNames(interaction, [...game.seats, ...(game.waitlist ?? [])]);
+  await interaction.update({
+    embeds: [await buildGameEmbed(game, nameMap)],
+    files: [buildBggAttachment()],
+    components: buildGameButtons(gameId, game.seats.length >= game.maxPlayers),
+  });
+}
 
 // Stores the selected eventId for users suggesting from outside an event channel
 const pendingEventContext = new Map<string, string>();
@@ -833,12 +940,15 @@ async function handleGameBgStats(interaction: ChatInputCommandInteraction): Prom
   const gameNight = await findGameNightForInteraction(interaction.user.id, interaction.channelId);
   const location = locationOption ?? gameNight?.location ?? '';
 
-  const nameMap = await resolvePlayerNames(interaction.client, interaction.guildId!, match.seats);
+  // A guest has no BGG/BG Stats account — exclude guest pseudo-IDs entirely
+  // rather than logging a play against a phantom account.
+  const realSeats = match.seats.filter((id) => !isGuestSeatId(id));
+  const nameMap = await resolvePlayerNames(interaction.client, interaction.guildId!, realSeats);
   const url = buildBgStatsPlayUrl({
     gameName: match.title,
     bggId: match.bggId,
     location,
-    players: match.seats.map((id) => ({ name: nameMap[id] ?? id, sourcePlayerId: id })),
+    players: realSeats.map((id) => ({ name: nameMap[id] ?? id, sourcePlayerId: id })),
     sourcePlayId: match.id,
     playDate: new Date(),
   });
@@ -864,7 +974,7 @@ async function handleGameBgStats(interaction: ChatInputCommandInteraction): Prom
     )
     .addFields({
       name: 'Players',
-      value: match.seats.map((id) => nameMap[id] ?? id).join('\n') || '*(no seats defined)*',
+      value: realSeats.map((id) => nameMap[id] ?? id).join('\n') || '*(no seats defined)*',
     })
     .setColor(0xe8a838)
     .setImage(`attachment://${qrFilename}`);
@@ -1109,6 +1219,9 @@ export async function postLibraryGame(
     return;
   }
 
+  const teachingLevel = await askTeachingLevel(interaction, gameName);
+  if (!teachingLevel) return;
+
   const minPlayers = info?.minPlayers ?? 2;
   const maxPlayers = info?.maxPlayers ?? 4;
   const playTime = info?.playTime ?? 60;
@@ -1139,6 +1252,7 @@ export async function postLibraryGame(
     expansions,
     seats: [interaction.user.id],
     waitlist: [],
+    ...initialTeaching(interaction.user.id, teachingLevel),
     createdAt: new Date().toISOString(),
     createdBy: interaction.user.id,
   };
@@ -1149,7 +1263,7 @@ export async function postLibraryGame(
     content: `Owned by: ${owners}`,
     embeds: [await buildGameEmbed(game, {})],
     files: [buildBggAttachment()],
-    components: [buildGameButtons(id, game.seats.length >= game.maxPlayers)],
+    components: buildGameButtons(id, game.seats.length >= game.maxPlayers),
   });
 
   game.messageId = msg.id;
@@ -1383,6 +1497,9 @@ export async function handleManualGameSubmit(interaction: ModalSubmitInteraction
   const bggLink = interaction.fields.getTextInputValue('link_rules').trim();
   const howToPlayUrl = interaction.fields.getTextInputValue('link_howtoplay').trim() || null;
 
+  const teachingLevel = await askTeachingLevel(interaction, title);
+  if (!teachingLevel) return;
+
   const { min: minPlayers, max: maxPlayers } = parseRange(playersRaw, 2, 4);
   const { min: minPlaytime, max: maxPlaytime } = parseRange(durationRaw, 30, 60);
 
@@ -1408,6 +1525,7 @@ export async function handleManualGameSubmit(interaction: ModalSubmitInteraction
     expansions: [],
     seats: [interaction.user.id],
     waitlist: [],
+    ...initialTeaching(interaction.user.id, teachingLevel),
     createdAt: new Date().toISOString(),
     createdBy: interaction.user.id,
   };
@@ -1416,7 +1534,7 @@ export async function handleManualGameSubmit(interaction: ModalSubmitInteraction
   const msg = await channel.send({
     embeds: [await buildGameEmbed(game, {})],
     files: [buildBggAttachment()],
-    components: [buildGameButtons(id, game.seats.length >= game.maxPlayers)],
+    components: buildGameButtons(id, game.seats.length >= game.maxPlayers),
   });
 
   game.messageId = msg.id;
@@ -1491,7 +1609,7 @@ export async function handleGameJoin(
   await interaction.update({
     embeds: [await buildGameEmbed(game, nameMap)],
     files: [buildBggAttachment()],
-    components: [buildGameButtons(gameId, game.seats.length >= game.maxPlayers)],
+    components: buildGameButtons(gameId, game.seats.length >= game.maxPlayers),
   });
 }
 
@@ -1518,17 +1636,34 @@ export async function handleGameLeave(
   }
 
   game.seats = game.seats.filter((id) => id !== userId);
+  removeFromTeaching(game, userId);
+
+  // A member's own guest(s) can't stay behind without them — cascade the
+  // leave to remove every guest they reserved on this game, from whichever
+  // list each currently sits in (a guest is only ever in one at a time).
+  const guestsBeforeLeave = game.guests ?? [];
+  const myGuestIds = guestsBeforeLeave.filter((g) => g.ownerId === userId).map((g) => g.id);
+  if (myGuestIds.length > 0) {
+    game.seats = game.seats.filter((id) => !myGuestIds.includes(id));
+    game.waitlist = (game.waitlist ?? []).filter((id) => !myGuestIds.includes(id));
+    game.guests = guestsBeforeLeave.filter((g) => g.ownerId !== userId);
+  }
 
   const waitlist = game.waitlist ?? [];
   const prevHadGroup2 = waitlist.length >= game.minPlayers;
-  const promotedUserId = game.seats.length < game.maxPlayers ? waitlist[0] : undefined;
-  if (promotedUserId) {
-    game.seats.push(promotedUserId);
-    game.waitlist = waitlist.slice(1);
+  // A member leaving alongside their own guest(s) can free more than one
+  // seat at once, so this promotes as many waitlisted entries as now fit —
+  // not just the first one.
+  const promoted: string[] = [];
+  while (game.seats.length < game.maxPlayers && (game.waitlist ?? []).length > 0) {
+    const next = game.waitlist[0];
+    game.seats.push(next);
+    game.waitlist = game.waitlist.slice(1);
+    promoted.push(next);
   }
   await save(game);
 
-  if (promotedUserId) {
+  if (promoted.length > 0) {
     const nowHasGroup2 = (game.waitlist ?? []).length >= game.minPlayers;
     if (prevHadGroup2 && !nowHasGroup2) {
       // Only updates copiesNeeded in storage — no DM goes out here. This can
@@ -1542,11 +1677,31 @@ export async function handleGameLeave(
         /* no event channel */
       }
     }
-    try {
-      const promotedUser = await interaction.client.users.fetch(promotedUserId);
-      await promotedUser.send(`A seat opened up in **${game.title}** — you've been moved off the waitlist and into the game!`);
-    } catch {
-      /* DMs disabled */
+    for (const promotedId of promoted) {
+      if (isGuestSeatId(promotedId)) {
+        // No Discord account to DM — tell the guest's owner instead. Their
+        // GuestSeat metadata is still on game.guests (a promoted guest here
+        // belongs to someone other than the member who just left, whose own
+        // guests were already stripped out above).
+        const guest = (game.guests ?? []).find((g) => g.id === promotedId);
+        if (guest) {
+          try {
+            const owner = await interaction.client.users.fetch(guest.ownerId);
+            await owner.send(
+              `A seat opened up in **${game.title}** — your guest${guest.name ? ` (${guest.name})` : ''} has been moved off the waitlist and into the game!`,
+            );
+          } catch {
+            /* DMs disabled */
+          }
+        }
+        continue;
+      }
+      try {
+        const promotedUser = await interaction.client.users.fetch(promotedId);
+        await promotedUser.send(`A seat opened up in **${game.title}** — you've been moved off the waitlist and into the game!`);
+      } catch {
+        /* DMs disabled */
+      }
     }
   }
 
@@ -1560,7 +1715,7 @@ export async function handleGameLeave(
   await interaction.update({
     embeds: [await buildGameEmbed(game, nameMap)],
     files: [buildBggAttachment()],
-    components: [buildGameButtons(gameId, game.seats.length >= game.maxPlayers)],
+    components: buildGameButtons(gameId, game.seats.length >= game.maxPlayers),
   });
 }
 
@@ -1628,7 +1783,7 @@ export async function handleWaitlistJoin(
   await interaction.update({
     embeds: [await buildGameEmbed(game, nameMap)],
     files: [buildBggAttachment()],
-    components: [buildGameButtons(gameId, game.seats.length >= game.maxPlayers)],
+    components: buildGameButtons(gameId, game.seats.length >= game.maxPlayers),
   });
 }
 
@@ -1657,7 +1812,17 @@ export async function handleWaitlistLeave(
   }
 
   const prevHadGroup2 = waitlist.length >= game.minPlayers;
-  game.waitlist = waitlist.filter((id) => id !== userId);
+  // A guest can only ever be in one list at a time, so a member leaving the
+  // waitlist only needs their own waitlisted guest(s) cascaded here — any
+  // seated guest of theirs is handled by handleGameLeave instead.
+  const guestsBeforeLeave = game.guests ?? [];
+  const myWaitlistedGuestIds = guestsBeforeLeave
+    .filter((g) => g.ownerId === userId && waitlist.includes(g.id))
+    .map((g) => g.id);
+  game.waitlist = waitlist.filter((id) => id !== userId && !myWaitlistedGuestIds.includes(id));
+  if (myWaitlistedGuestIds.length > 0) {
+    game.guests = guestsBeforeLeave.filter((g) => !myWaitlistedGuestIds.includes(g.id));
+  }
   await save(game);
 
   const nowHasGroup2 = game.waitlist.length >= game.minPlayers;
@@ -1676,8 +1841,190 @@ export async function handleWaitlistLeave(
   await interaction.update({
     embeds: [await buildGameEmbed(game, nameMap)],
     files: [buildBggAttachment()],
-    components: [buildGameButtons(gameId, game.seats.length >= game.maxPlayers)],
+    components: buildGameButtons(gameId, game.seats.length >= game.maxPlayers),
   });
+}
+
+// ── Bring a Guest ─────────────────────────────────────────────────────────────
+
+function duplicateGuestConfirmRow(): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId('game_guestdupe_confirm')
+      .setLabel('Yes, add another')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('game_guestdupe_cancel')
+      .setLabel('No, cancel')
+      .setStyle(ButtonStyle.Secondary),
+  );
+}
+
+async function showGuestModal(interaction: ButtonInteraction, gameId: string): Promise<void> {
+  const nameInput = new TextInputBuilder()
+    .setCustomId('guest_name')
+    .setLabel("Guest's name (optional)")
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder('e.g. Mom')
+    .setMaxLength(50)
+    .setRequired(false);
+
+  const modal = new ModalBuilder()
+    .setCustomId(`game_guestmodal_${gameId}`)
+    .setTitle('Bring a Guest')
+    .addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(nameInput));
+
+  await interaction.showModal(modal);
+}
+
+export async function handleGameGuestButton(
+  interaction: ButtonInteraction,
+  gameId: string,
+): Promise<void> {
+  const { findGame } = await import('../utils/gameStorage');
+  const game = await findGame(gameId);
+  if (!game) {
+    await interaction.reply({ content: 'Game not found.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  const gameNight = await findGameNight(game.eventId);
+  if (gameNight && isLineupLocked(gameNight)) {
+    await interaction.reply({ content: LOCK_MESSAGE, flags: MessageFlags.Ephemeral });
+    return;
+  }
+  await showGuestModal(interaction, gameId);
+}
+
+export async function handleGameGuestModalSubmit(
+  interaction: ModalSubmitInteraction,
+  gameId: string,
+): Promise<void> {
+  const { findGame } = await import('../utils/gameStorage');
+  const game = await findGame(gameId);
+  if (!game) {
+    await interaction.reply({ content: 'Game not found.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  const gameNight = await findGameNight(game.eventId);
+  if (gameNight && isLineupLocked(gameNight)) {
+    await interaction.reply({ content: LOCK_MESSAGE, flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const name = interaction.fields.getTextInputValue('guest_name').trim() || null;
+  const userId = interaction.user.id;
+
+  if (name) {
+    const isDuplicate = (game.guests ?? []).some(
+      (g) => g.ownerId === userId && g.name?.toLowerCase() === name.toLowerCase(),
+    );
+    if (isDuplicate) {
+      pendingGuestConfirm.set(userId, { gameId, name });
+      await interaction.reply({
+        content: `You already have a guest named **${name}** for this game — is this a different person, or did that submit twice by accident?`,
+        components: [duplicateGuestConfirmRow()],
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+  }
+
+  await placeGuestAndReply(interaction, gameId, name);
+}
+
+export async function handleGuestDuplicateConfirm(interaction: ButtonInteraction): Promise<void> {
+  const pending = pendingGuestConfirm.get(interaction.user.id);
+  if (!pending) {
+    await interaction.update({ content: 'This prompt has expired.', components: [] });
+    return;
+  }
+  pendingGuestConfirm.delete(interaction.user.id);
+  await placeGuestAndReply(interaction, pending.gameId, pending.name);
+}
+
+export async function handleGuestDuplicateCancel(interaction: ButtonInteraction): Promise<void> {
+  pendingGuestConfirm.delete(interaction.user.id);
+  await interaction.update({ content: 'No problem — no guest added.', components: [] });
+}
+
+// Shared placement logic for a confirmed (non-duplicate, or duplicate but
+// user-confirmed) guest reservation — called from the modal submit directly
+// when there's no name clash, or from handleGuestDuplicateConfirm once the
+// user has confirmed one. See decision #3 in the plan: the member is seated
+// if there's room, and the guest is placed independently of that (seated if
+// room remains, else waitlisted on its own) rather than an atomic
+// all-or-nothing "party of 2".
+async function placeGuestAndReply(
+  interaction: ButtonInteraction | ModalSubmitInteraction,
+  gameId: string,
+  name: string | null,
+): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const { findGame, upsertGame: save } = await import('../utils/gameStorage');
+  const game = await findGame(gameId);
+  if (!game) {
+    await interaction.editReply({ content: 'Game not found.' });
+    return;
+  }
+  const gameNight = await findGameNight(game.eventId);
+  if (gameNight && isLineupLocked(gameNight)) {
+    await interaction.editReply({ content: LOCK_MESSAGE });
+    return;
+  }
+
+  const userId = interaction.user.id;
+  const guestSeat: GuestSeat = { id: makeGuestId(), ownerId: userId, name };
+
+  let memberSeatedMessage = '';
+  if (!game.seats.includes(userId)) {
+    if (gameNight) {
+      const violation = greeterSeatViolation(gameNight, game, userId);
+      if (violation) {
+        await interaction.editReply({ content: violation });
+        return;
+      }
+    }
+    if (game.seats.length < game.maxPlayers) {
+      game.seats.push(userId);
+      memberSeatedMessage = "You're in! ";
+    } else {
+      game.waitlist = [...(game.waitlist ?? []), userId];
+      memberSeatedMessage = "You're on the waitlist (the table's full). ";
+    }
+  }
+
+  let guestMessage: string;
+  if (game.seats.length < game.maxPlayers) {
+    game.seats.push(guestSeat.id);
+    guestMessage = 'Your guest is seated too!';
+  } else {
+    game.waitlist = [...(game.waitlist ?? []), guestSeat.id];
+    guestMessage = "Your guest is on the waitlist since the table's full.";
+  }
+  game.guests = [...(game.guests ?? []), guestSeat];
+
+  await save(game);
+  try {
+    await updateGameListPin(interaction.client, game.eventId);
+  } catch {
+    /* no event channel */
+  }
+
+  try {
+    const cardChannel = (await interaction.client.channels.fetch(game.channelId)) as TextChannel;
+    const cardMsg = await cardChannel.messages.fetch(game.messageId);
+    const nameMap = await resolveNames(interaction, [...game.seats, ...(game.waitlist ?? [])]);
+    await cardMsg.edit({
+      embeds: [await buildGameEmbed(game, nameMap)],
+      files: [buildBggAttachment()],
+      components: buildGameButtons(gameId, game.seats.length >= game.maxPlayers),
+    });
+  } catch {
+    /* card may have been deleted */
+  }
+
+  await interaction.editReply({ content: `${memberSeatedMessage}${guestMessage}` });
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1766,6 +2113,9 @@ async function postBGGGame(
     return;
   }
 
+  const teachingLevel = await askTeachingLevel(interaction, bggGame.name);
+  if (!teachingLevel) return;
+
   const eventChannelId = gameNight.eventChannelId ?? interaction.channelId;
   const id = randomUUID().slice(0, 8);
   const game: GameSuggestion = {
@@ -1790,6 +2140,7 @@ async function postBGGGame(
     expansions: expansions.map((e) => ({ id: e.id, name: e.name }) as GameExpansion),
     seats: [interaction.user.id],
     waitlist: [],
+    ...initialTeaching(interaction.user.id, teachingLevel),
     createdAt: new Date().toISOString(),
     createdBy: interaction.user.id,
   };
@@ -1798,7 +2149,7 @@ async function postBGGGame(
   const msg = await channel.send({
     embeds: [await buildGameEmbed(game, {})],
     files: [buildBggAttachment()],
-    components: [buildGameButtons(id, game.seats.length >= game.maxPlayers)],
+    components: buildGameButtons(id, game.seats.length >= game.maxPlayers),
   });
 
   game.messageId = msg.id;
@@ -1880,7 +2231,7 @@ export async function handleGameTagSelect(
       await cardMsg.edit({
         embeds: [await buildGameEmbed(game, {})],
         files: [buildBggAttachment()],
-        components: [buildGameButtons(gameId, game.seats.length >= game.maxPlayers)],
+        components: buildGameButtons(gameId, game.seats.length >= game.maxPlayers),
       });
     } catch {
       /* card may have been deleted */
@@ -1928,13 +2279,18 @@ function parseRange(
 }
 
 async function resolveNames(
-  interaction: ButtonInteraction,
+  interaction: ButtonInteraction | ModalSubmitInteraction,
   userIds: string[],
 ): Promise<Record<string, string>> {
   const nameMap: Record<string, string> = {};
   if (!interaction.guild) return nameMap;
+  // Guest pseudo-IDs are never real Discord members — fetching one would
+  // just throw and get silently swallowed below anyway, but filtering first
+  // avoids the wasted request and keeps the intent explicit. Guest display
+  // names are resolved separately, in gameEmbeds.ts's getName.
+  const realIds = userIds.filter((id) => !isGuestSeatId(id));
   await Promise.all(
-    userIds.map(async (id) => {
+    realIds.map(async (id) => {
       try {
         const member = await interaction.guild!.members.fetch(id);
         nameMap[id] = member.displayName;

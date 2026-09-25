@@ -483,6 +483,83 @@ describe('reconcileRequestCopies', () => {
     expect(stored?.pendingAsks).toEqual([expect.objectContaining({ ownerId: 'alice' })]);
   });
 
+  describe('choosing which owner to ask (issue #101)', () => {
+    async function suggest(eventId: string, title: string, createdBy: string) {
+      const { upsertGame } = await import('../src/utils/gameStorage');
+      await upsertGame({
+        id: `g-${title}`, eventId, channelId: 'c', messageId: 'm', guildId: 'g1', bggId: '', title, bggLink: '',
+        minPlayers: 1, maxPlayers: 4, suggestedPlayers: null, minPlaytime: 30, maxPlaytime: 60,
+        suggestedStartTime: null, expansions: [], seats: [createdBy], waitlist: [],
+        createdAt: new Date().toISOString(), createdBy,
+      } as any);
+    }
+
+    it('spreads a lock-time batch of requests across owners instead of asking the first owner for everything', async () => {
+      const titles = ['Wingspan', 'Catan', 'Azul', 'Root'];
+      for (const t of titles) {
+        await addGame('g1', 'alice', t);
+        await addGame('g1', 'bob', t);
+      }
+      const requests = [];
+      for (const t of titles) requests.push(await addRequest('event-1', t, 'requester'));
+
+      const { client, sentTo } = makeDmClient();
+      const rsvps = { yes: ['alice', 'bob'], maybe: [] };
+      // Mirrors lockAndScheduleEvent's loop: each request reconciled in turn,
+      // with nothing confirmed yet.
+      for (const r of requests) await reconcileRequestCopies(client, 'g1', rsvps, (await getRequestById((r as any).id))!, 'Saturday');
+
+      expect(sentTo).toHaveLength(4);
+      expect(sentTo.filter((id) => id === 'alice')).toHaveLength(2);
+      expect(sentTo.filter((id) => id === 'bob')).toHaveLength(2);
+    });
+
+    it('asks the owner who suggested the game ahead of fairness', async () => {
+      await addGame('g1', 'alice', 'Wingspan');
+      await addGame('g1', 'bob', 'Wingspan');
+      await suggest('event-1', 'Wingspan', 'bob');
+      const req = await addRequest('event-1', 'Wingspan', 'requester');
+
+      const { client, sentTo } = makeDmClient();
+      await reconcileRequestCopies(client, 'g1', { yes: ['alice', 'bob'], maybe: [] }, (await getRequestById((req as any).id))!, 'Saturday');
+
+      expect(sentTo).toEqual(['bob']);
+    });
+
+    it('ignores a suggester who does not own the game or is not attending', async () => {
+      await addGame('g1', 'alice', 'Wingspan');
+      await suggest('event-1', 'Wingspan', 'carol'); // suggested it, but owns no copy
+      const req = await addRequest('event-1', 'Wingspan', 'requester');
+
+      const { client, sentTo } = makeDmClient();
+      await reconcileRequestCopies(client, 'g1', { yes: ['alice', 'carol'], maybe: [] }, (await getRequestById((req as any).id))!, 'Saturday');
+
+      expect(sentTo).toEqual(['alice']);
+    });
+
+    it('still honors an explicit copy-select owner over the suggester', async () => {
+      await addGame('g1', 'alice', 'Wingspan');
+      await addGame('g1', 'bob', 'Wingspan');
+      await suggest('event-1', 'Wingspan', 'bob');
+      const req = await addRequest('event-1', 'Wingspan', 'requester', 'alice');
+
+      const { client, sentTo } = makeDmClient();
+      await reconcileRequestCopies(client, 'g1', { yes: ['alice', 'bob'], maybe: [] }, (await getRequestById((req as any).id))!, 'Saturday');
+
+      expect(sentTo).toEqual(['alice']);
+    });
+
+    it('asks only one owner per copy even when several own the game', async () => {
+      for (const o of ['alice', 'bob', 'carol']) await addGame('g1', o, 'Wingspan');
+      const req = await addRequest('event-1', 'Wingspan', 'requester');
+
+      const { client, sentTo } = makeDmClient();
+      await reconcileRequestCopies(client, 'g1', { yes: ['alice', 'bob', 'carol'], maybe: [] }, (await getRequestById((req as any).id))!, 'Saturday');
+
+      expect(sentTo).toHaveLength(1);
+    });
+  });
+
   it('does nothing when pending+confirmed already matches copiesNeeded', async () => {
     await addGame('g1', 'alice', 'Wingspan');
     const req = await addRequest('event-1', 'Wingspan', 'requester');

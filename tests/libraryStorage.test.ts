@@ -552,6 +552,15 @@ describe('libraryStorage', () => {
       expect(chosen).toBe('bob');
     });
 
+    it('counts still-pending asks as load, not just confirmations', async () => {
+      await addGame('guild-1', 'alice', 'Catan');
+      await addGame('guild-1', 'bob', 'Wingspan');
+      const catan = await addRequest('event1', 'Catan', 'user1');
+      await addPendingAsk((catan as any).id, 'alice', 'dm-c', 'dm-m');
+      // alice has one outstanding ask and nobody has confirmed anything yet.
+      expect(await pickPreferredOwner('event1', ['alice', 'bob'])).toBe('bob');
+    });
+
     it('excludes ids passed in excludeIds', async () => {
       const chosen = await pickPreferredOwner('event1', ['alice', 'bob'], ['alice']);
       expect(chosen).toBe('bob');

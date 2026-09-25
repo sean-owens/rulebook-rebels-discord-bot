@@ -387,11 +387,14 @@ export async function resolveAttendingOwnerIds(
   });
 }
 
-// Picks whichever eligible owner currently has the fewest confirmed brings
-// for this event — load-balances repeat asks across a group rather than
-// always landing on the same generous owner. excludeIds filters out anyone
-// already asked, confirmed, or declined for the request being resolved.
-// Returns undefined if every eligible owner has already been tried.
+// Picks whichever eligible owner currently carries the lightest load for this
+// event — load-balances asks across a group rather than always landing on the
+// same owner. Load counts both confirmed brings AND still-pending asks: at
+// lock time nothing has been confirmed yet, so counting confirmations alone
+// left every owner at 0 and the first-listed owner was asked for every game.
+// excludeIds filters out anyone already asked, confirmed, or declined for the
+// request being resolved. Returns undefined if every eligible owner has
+// already been tried.
 export async function pickPreferredOwner(
   eventId: string,
   attendingOwnerIds: string[],
@@ -402,9 +405,9 @@ export async function pickPreferredOwner(
   const requests = await getRequestsForEvent(eventId);
   const bringCounts = new Map<string, number>(eligible.map((id) => [id, 0]));
   for (const req of requests) {
-    for (const c of req.confirmations) {
-      if (bringCounts.has(c.ownerId)) {
-        bringCounts.set(c.ownerId, (bringCounts.get(c.ownerId) ?? 0) + 1);
+    for (const ownerId of [...req.confirmations.map((c) => c.ownerId), ...req.pendingAsks.map((a) => a.ownerId)]) {
+      if (bringCounts.has(ownerId)) {
+        bringCounts.set(ownerId, (bringCounts.get(ownerId) ?? 0) + 1);
       }
     }
   }

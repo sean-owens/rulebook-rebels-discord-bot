@@ -1,6 +1,13 @@
 import { Client, EmbedBuilder, TextChannel } from 'discord.js';
 import { getBGGGame, weightTag, BGGGame } from './bgg';
-import { getTopRankedGames, editDistanceAtMost } from './bggCatalog';
+import {
+  getTopRankedGames,
+  editDistanceAtMost,
+  searchCatalog,
+  isCatalogLoaded,
+  getCatalogEntryById,
+  BGGCatalogEntry,
+} from './bggCatalog';
 import { buildBggAttachment } from './gameEmbeds';
 import { getGuildConfig, getGuildIdsWithConfig, updateGuildConfig, GuildConfig } from './config';
 import { pinWithRetry } from './discordPin';
@@ -14,6 +21,7 @@ import {
   createWeeklyChallenge,
   recordHintPosted,
   revealChallenge,
+  recordCorrectGuess,
   getRecentGameIds,
   getLeaderboard,
   updateChallengeChannel,
@@ -163,31 +171,115 @@ export function generateClues(game: BGGGame): [string, string, string] {
 
 const LEADING_ARTICLES = /^(the|a|an)\s+/;
 
-// Lowercases, drops a colon/parenthetical subtitle (so "Terraforming Mars:
-// Ares Expedition" and "Terraforming Mars" normalize the same — a deliberate
-// forgiveness call, see isCorrectGuess), strips punctuation, and drops a
-// leading article.
-export function normalizeGuess(text: string): string {
+// Lowercases, drops apostrophes entirely (so "Captain's" -> "captains", one
+// word rather than two), replaces remaining punctuation with spaces,
+// collapses whitespace, and drops a leading article.
+function cleanWords(text: string): string {
   return text
     .toLowerCase()
-    .split(/[:(]/)[0]
+    .replace(/['’]/g, '')
     .replace(/[^a-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .replace(LEADING_ARTICLES, '');
 }
 
-// Exact match after normalization, or a typo-tolerant fuzzy match bounded to
-// ~15% of the title's length (min 1, max 6 edits) — forgiving of small typos
-// without accepting a genuinely different title.
-export function isCorrectGuess(guess: string, title: string): boolean {
-  const normGuess = normalizeGuess(guess);
-  const normTitle = normalizeGuess(title);
-  if (!normGuess || !normTitle) return false;
-  if (normGuess === normTitle) return true;
+// Lowercases, drops a colon/parenthetical subtitle (so "Terraforming Mars:
+// Ares Expedition" and "Terraforming Mars" normalize the same — a deliberate
+// forgiveness call, see isCorrectGuess), strips punctuation, and drops a
+// leading article.
+export function normalizeGuess(text: string): string {
+  return cleanWords(text.split(/[:(]/)[0]);
+}
 
-  const maxDist = Math.min(6, Math.max(1, Math.floor(normTitle.length * 0.15)));
-  return editDistanceAtMost(normGuess, normTitle, maxDist);
+// Splits a title into its normalized base and (optional) subtitle, e.g.
+// "Star Trek: Captain's Chair" -> { base: "star trek", subtitle: "captains chair" }.
+function splitTitle(title: string): { base: string; subtitle: string } {
+  const [rawBase, ...rest] = title.split(/[:(]/);
+  const rawSubtitle = rest.join(' ').replace(/\)/g, '');
+  return { base: cleanWords(rawBase), subtitle: cleanWords(rawSubtitle) };
+}
+
+// Alphabetizes a normalized string's words so word order stops mattering —
+// "captains chair star trek" and "star trek captains chair" both collapse
+// to the same canonical form. Doesn't touch spelling, so it composes with
+// the fuzzy edit-distance check below rather than replacing it.
+function sortedWords(normalized: string): string {
+  return normalized.split(' ').filter(Boolean).sort().join(' ');
+}
+
+// Exact match, or a typo-tolerant fuzzy match bounded to ~15% of the
+// target's length (min 1, max 6 edits) — forgiving of small typos without
+// accepting a genuinely different title.
+function fuzzyMatches(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const maxDist = Math.min(6, Math.max(1, Math.floor(b.length * 0.15)));
+  return editDistanceAtMost(a, b, maxDist);
+}
+
+function candidateMatches(normGuess: string, candidate: string): boolean {
+  return fuzzyMatches(normGuess, candidate) || fuzzyMatches(sortedWords(normGuess), sortedWords(candidate));
+}
+
+export type GuessMatchTier = 'full' | 'subtitle' | 'base' | 'none';
+
+// Classifies a guess against the title's base, subtitle, and full (base +
+// subtitle) forms — so a guess can include or omit the subtitle — trying
+// both each candidate's natural word order and a word-order-independent
+// form, so "captains chair star trek" matches "Star Trek: Captain's Chair"
+// as readily as "star trek captains chair" does. See cleanWords/fuzzyMatches
+// for the punctuation/typo forgiveness layered underneath.
+//
+// The tier matters beyond pass/fail: a 'base'-only match (the subtitle was
+// never mentioned) is the one case that can be genuinely ambiguous — see
+// findDisambiguationCandidates below and messageCreate.ts's use of this.
+export function classifyGuessMatch(guess: string, title: string): GuessMatchTier {
+  const normGuess = cleanWords(guess);
+  if (!normGuess) return 'none';
+
+  const { base, subtitle } = splitTitle(title);
+  const full = subtitle ? `${base} ${subtitle}` : base;
+
+  if (candidateMatches(normGuess, full)) return 'full';
+  if (subtitle && candidateMatches(normGuess, subtitle)) return 'subtitle';
+  if (candidateMatches(normGuess, base)) return 'base';
+  return 'none';
+}
+
+export function isCorrectGuess(guess: string, title: string): boolean {
+  return classifyGuessMatch(guess, title) !== 'none';
+}
+
+// Other catalog entries whose own base title (see splitTitle) is a match for
+// the guess itself — i.e. other games this guess could equally have meant.
+// Only meaningful for a 'base'-tier guess (see classifyGuessMatch): a guess
+// that already named the subtitle has already disambiguated itself. Returns
+// an empty/single-element array when the guess isn't actually ambiguous (no
+// catalog loaded, or the current answer is the only game with that base) —
+// callers should only treat 2+ results as needing a clarification prompt.
+// Deliberately guarantees the real answer's entry is included whenever the
+// catalog knows about it at all, even on the off chance the base-text search
+// itself somehow missed it, so the correct option is always one of the
+// choices offered.
+export function findDisambiguationCandidates(guess: string, correctBggId: string, limit = 25): BGGCatalogEntry[] {
+  if (!isCatalogLoaded()) return [];
+
+  const guessBase = splitTitle(guess).base;
+  if (!guessBase) return [];
+
+  const results = searchCatalog(guessBase, 50, { skipExact: true }).filter((e) => !e.isExpansion);
+  const matches = results.filter((e) => {
+    const { base } = splitTitle(e.name);
+    return candidateMatches(base, guessBase) || candidateMatches(sortedWords(base), sortedWords(guessBase));
+  });
+
+  const answerEntry = getCatalogEntryById(correctBggId);
+  const withAnswer = answerEntry && !matches.some((e) => e.id === correctBggId) ? [...matches, answerEntry] : matches;
+
+  const deduped = [...new Map(withAnswer.map((e) => [e.id, e] as const)).values()];
+  deduped.sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity));
+  return deduped.slice(0, limit);
 }
 
 // Shared by /challenge leaderboard (commands/boardgamechallenge.ts) and the
@@ -371,6 +463,46 @@ export async function updateChallengeLeaderboardPin(client: Client, guildId: str
   } catch (err) {
     console.warn(`[BoardGameChallenge] Failed to update leaderboard pin for guild ${guildId}:`, err);
   }
+}
+
+// Scores a confirmed-correct guess and runs the same public-announce/private-DM/
+// leaderboard-pin sequence regardless of how the guess was confirmed — a plain
+// message match (messageCreate.ts) or a disambiguation-dropdown pick
+// (handleChallengeDisambiguationSelect in commands/boardgamechallenge.ts).
+// Returns undefined (having done nothing further) on the race-loss path where
+// recordCorrectGuess reports this user was already scored by a concurrent event.
+export async function awardCorrectGuess(
+  client: Client,
+  guildId: string,
+  challenge: WeeklyChallenge,
+  userId: string,
+  channel: TextChannel,
+): Promise<{ points: number; totalPoints: number } | undefined> {
+  // Guesses are only accepted once hint 1 has posted, so this is never 0.
+  const result = await recordCorrectGuess(guildId, challenge.id, userId, challenge.hintsPostedCount as 1 | 2 | 3);
+  if (!result) return undefined;
+
+  // No visible trace of a correct guess should linger in-channel before the
+  // reveal — post an answer-free acknowledgement instead.
+  await channel
+    .send(`🎉 <@${userId}> guessed it! (+${result.points} points)`)
+    .catch((err: unknown) =>
+      console.warn(`[BoardGameChallenge] Failed to post correct-guess announcement in guild ${guildId}:`, err),
+    );
+
+  try {
+    const user = await client.users.fetch(userId);
+    await user.send(
+      `🎉 Correct! **${challenge.title}** was this cycle's board game challenge — you earned **${result.points} points** ` +
+        `(guessed after hint ${challenge.hintsPostedCount}/3). Your running total is now **${result.totalPoints} points**. ` +
+        "Keep it to yourself until the reveal!",
+    );
+  } catch (err) {
+    console.warn(`[BoardGameChallenge] Failed to DM ${userId} their guess result:`, err);
+  }
+
+  await updateChallengeLeaderboardPin(client, guildId);
+  return result;
 }
 
 async function startNewChallenge(

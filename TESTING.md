@@ -97,7 +97,16 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.3a `/game suggest`
 
-**What it does:** Suggests a game for the event (or, from inside a private room, for that room — see below). Checks the group library first (exact match → partial match → BGG search). Prompts to add tags if not already tagged.
+**What it does:** Suggests a game for the event (or, from inside a private room, for that room — see below). Checks the group library first (exact match → partial match → BGG search). Every path (library match, BGG result, manual entry) ends with a required "how well do you know it?" teaching prompt before the card is posted (see 1.3a), then prompts to add tags if not already tagged.
+
+#### Teaching prompt (all suggest paths)
+- [ ] Suggest a game by any path (library exact match, partial-match dropdown, BGG result, manual entry) — confirm a private "Last step" prompt with **🎓 I can teach it / 🙋 I can answer questions / 🌱 I'm new to it** appears *before* the card is posted, and nothing is posted yet
+- [ ] Pick **I can teach it** — confirm the card posts with "🎓 Can teach: @you" in its Teaching field
+- [ ] Pick **I can answer questions** — confirm the card shows "🙋 Can answer questions: @you" and the "⚠️ Nobody has said they can teach this yet" warning
+- [ ] Pick **I'm new to it** — confirm the card shows only the "⚠️ Nobody has said they can teach this yet" warning
+- [ ] Have someone else tap a button on *your* prompt — confirm they get "This isn't your suggestion." and the prompt keeps waiting
+- [ ] Leave the prompt unanswered for 5 minutes — confirm it changes to "Timed out — ... was not added" and no card is posted
+- [ ] Trigger a duplicate-game, greeter-restriction, or owner-not-attending error — confirm it shows *before* the teaching prompt (you're never asked about a game that can't be added)
 
 #### From a private room
 - [ ] Run `/game suggest title:Wingspan` from inside a `/room`-created private room channel (1.8a) — confirm it posts the game card directly in the room, with no event picker
@@ -194,6 +203,37 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Dropping below min players after the second owner already confirmed — confirm the pin reverts to 1 copy needed but the existing confirmation is left alone (a harmless extra confirmed copy), not retracted
 - [ ] With a full game and at least one person on the waitlist, have a seated player click **Leave** — confirm the first waitlisted person is moved into the freed seat, removed from the waitlist list, and (if their DMs are open) receives a DM saying a seat opened up
 - [ ] Do the same when promoting the waitlist below the minimum player count drops it back below 2 groups — confirm the request pin reverts to 1 copy needed
+
+### 1.3e1 Game Card Buttons — I Can Teach
+
+**What it does:** Lets a seated player mark themselves as able to teach the game. Tapping **🎓 I Can Teach** toggles you on the card's Teaching field (tap again to remove yourself); it also moves you off the "can answer questions" list so you aren't listed twice. You must be seated in the game. Leaving the game removes you from the teacher/question lists. Games suggested before this feature show no Teaching field at all. When the lineup locks (4.7), the event host is DMed a list of games that have players seated but nobody who can teach them.
+
+- [ ] As a seated player, tap **🎓 I Can Teach** — confirm you appear under "🎓 Can teach" and the "⚠️ Nobody has said they can teach this yet" warning disappears (if you were the first)
+- [ ] Tap it again — confirm you're removed and the warning returns if you were the only teacher
+- [ ] As a player who is **not** seated in the game, tap it — confirm "Join the game first..." and nothing changes
+- [ ] As a teacher, tap **Leave** — confirm you're no longer listed under "Can teach"
+- [ ] As someone who chose "I can answer questions" at suggestion time, tap **I Can Teach** — confirm you move to "Can teach" and no longer appear under "Can answer questions"
+- [ ] Confirm the button row shows Join / Leave / Bring a Guest / I Can Teach, and (when full) the waitlist row still appears beneath
+
+### 1.3e2 Game Card Buttons — Bring a Guest
+
+**What it does:** Lets a player reserve a seat for someone without Discord (e.g. a family member) alongside their own. Tap **➕ Bring a Guest** — a modal asks for an optional guest name. If you're not seated yet, you're seated first (if there's room) and the guest is placed independently of that (seated if room remains, else waitlisted on its own — never an all-or-nothing pair). If you're already seated, only the guest is placed. There's no limit on how many guests one player can bring — a second (or third) guest is labeled "Player's Guest 2", "Guest 3", etc. Submitting a guest name that matches one you've already added to this game doesn't silently create a duplicate — you're asked to confirm it's really a different person first. Leaving the game (or the waitlist) removes every guest you reserved on it too, whichever list each is in.
+
+- [ ] Tap **Bring a Guest** while not yet seated, with room for both — confirm you're seated, the guest is seated too, and the guest's name appears on the card as "Player's Guest (Name)"
+- [ ] Do the same with only one seat open — confirm you're seated but your guest lands on the waitlist instead
+- [ ] Do the same with the game already full — confirm both you and your guest land on the waitlist as separate entries
+- [ ] Tap **Bring a Guest** while already seated — confirm only the guest is placed (your own seat is untouched)
+- [ ] Bring a second, differently-named guest — confirm both appear, numbered ("Player's Guest 1" / "Player's Guest 2")
+- [ ] Submit a guest name matching one you already added to this game — confirm a confirmation prompt appears instead of a second guest being silently created
+- [ ] Confirm that prompt — confirm the second same-named guest is now added
+- [ ] Cancel that prompt — confirm nothing was added
+- [ ] Leave a blank guest name — confirm it renders as "Player's Guest" with no parenthetical
+- [ ] Leave the game while you have a seated guest — confirm both you and your guest are removed, and any freed seats get backfilled from the waitlist (more than one person/guest can be promoted in a single Leave if more than one seat frees up at once)
+- [ ] Leave the waitlist while your guest is also waitlisted — confirm your guest is removed from the waitlist too
+- [ ] Have someone else leave in a way that promotes your waitlisted guest into a seat — confirm the DM about the freed seat goes to you (the owner), not an attempt to message the guest
+- [ ] Try this on a locked event — confirm the same lock message as Join/Leave
+- [ ] As a greeter on a non-Light game, try to bring a guest — confirm the whole flow is blocked the same way Join is, with no guest added either
+- [ ] Run `/game bgstats` (1.3g) on a game with a guest — confirm the guest does not appear in the BG Stats roster or the "Players" field (a guest has no BGG/BG Stats account)
 
 ### 1.3f Bring Confirm / Cancel
 
@@ -296,10 +336,15 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run `/library mine` with no games — confirm "You haven't added any games" message
 - [ ] With another member's library linked to you as a delegate (1.4n), run `/library mine` — confirm their games appear alongside your own, each marked `*(shared from <@ownerId>)*`
 - [ ] With enough games (yours plus any linked delegates') to exceed one page:
-  - [ ] Confirm **← Previous** and **Next →** buttons appear, with a "Page X of Y" indicator between them
+  - [ ] Confirm **← Previous** and **Next →** buttons appear, with a blue **Go to… (X/Y)** button between them showing the current page
   - [ ] **← Previous** is disabled on the first page
   - [ ] Click **Next →** — confirm page 2 is shown with different games
   - [ ] **Next →** is disabled on the last page
+  - [ ] Click **Go to… (X/Y)** — confirm a small modal opens asking for a page number or game name
+  - [ ] Type a page number (e.g. 12) and submit — confirm that page is shown and Previous/Next continue from it
+  - [ ] Type the start of a game name (e.g. "wing") — confirm the page containing the first game whose name starts with that text is shown (a name that only appears mid-title, like "duel" for "Wonders Duel", also works when nothing starts with it)
+  - [ ] Type a page number out of range (0 or past the last page) or a name that isn't on the list — confirm a private error ("Pick a page between 1 and N" / "No game matching …") and the list stays on the same page
+  - [ ] Confirm the Go to… button is present (and works) on the first and last page too
   - [ ] Confirm no error occurs regardless of how large the combined list is (regression: this previously crashed once the list exceeded Discord's embed description limit)
 
 ### 1.4d `/library list`
@@ -315,6 +360,11 @@ All `/game` commands should be used inside an active event channel unless otherw
   - [ ] **← Previous** is disabled on the first page
   - [ ] Click **Next →** — confirm page 2 is shown
   - [ ] **Next →** is disabled on the last page
+  - [ ] Click **Go to… (X/Y)** — confirm a small modal opens asking for a page number or game name
+  - [ ] Type a page number (e.g. 12) and submit — confirm that page is shown and Previous/Next continue from it
+  - [ ] Type the start of a game name (e.g. "wing") — confirm the page containing the first game whose name starts with that text is shown (a name that only appears mid-title, like "duel" for "Wonders Duel", also works when nothing starts with it)
+  - [ ] Type a page number out of range (0 or past the last page) or a name that isn't on the list — confirm a private error ("Pick a page between 1 and N" / "No game matching …") and the list stays on the same page
+  - [ ] Confirm the Go to… button is present (and works) on the first and last page too
 
 ### 1.4e `/library view`
 
@@ -348,7 +398,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.4h `/library request`
 
-**What it does:** Requests a specific game be brought to an event. No "please bring this" DM goes out yet — asking is deferred until the event's lineup locks (4.7), so the bot can pick fairly from each owner's *final* confirmed-brings count instead of an early, mostly-arbitrary snapshot. At lock, the request is asked of the owner the copy-select assigned it to (an explicit pick), or — when no copy-select is shown, or **Bot decides** was selected — whichever attending owner currently has the fewest confirmed brings for that event, with "🎲 ... ✅ Confirm bringing" and "❌ Can't bring it" buttons. Confirming behaves the same as `/library bring game:<name>`; declining cascades the same DM to the next eligible attending owner (see "Declining via the DM button" below). If the waitlist for a suggested game grows enough to need a second copy (1.3e/2.3e/3.3e), that just updates how many owners get asked at lock — it doesn't trigger an ask itself. A request made *after* the lineup is already locked has no future lock to wait for, so it's asked immediately instead.
+**What it does:** Requests a specific game be brought to an event. No "please bring this" DM goes out yet — asking is deferred until the event's lineup locks (4.7), so the bot can pick fairly from each owner's *final* confirmed-brings count instead of an early, mostly-arbitrary snapshot. At lock, the request is asked of the owner the copy-select assigned it to (an explicit pick), or — when no copy-select is shown, or **Bot decides** was selected — the owner who suggested the game (if they own a copy and are attending), otherwise whichever attending owner currently has the fewest confirmed-or-pending asks for that event, with "🎲 ... ✅ Confirm bringing" and "❌ Can't bring it" buttons. Confirming behaves the same as `/library bring game:<name>`; declining cascades the same DM to the next eligible attending owner (see "Declining via the DM button" below). If the waitlist for a suggested game grows enough to need a second copy (1.3e/2.3e/3.3e), that just updates how many owners get asked at lock — it doesn't trigger an ask itself. A request made *after* the lineup is already locked has no future lock to wait for, so it's asked immediately instead.
 
 **Prerequisites:** an active event must exist, and the game being requested must already be in the library, owned by someone who has RSVP'd (see 1.4a/2.4a/3.4a to add a game first).
 
@@ -360,13 +410,16 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] The literal owner has NOT RSVP'd, but a member they've linked as a delegate (1.4n) has RSVP'd yes/maybe — confirm the request still succeeds instead of hitting "None of the owners are attending"
 - [ ] On an event whose lineup hasn't locked yet, confirm no DM is sent to anyone, and the reply notes "An owner will be asked to bring it once the lineup locks"
 - [ ] Force the lineup to lock (4.7), then confirm the assigned owner receives a DM with a "✅ Confirm bringing" button for the requested game (include any owned expansions in the DM text)
-- [ ] With 2+ attending owners and no expansion copy-select shown, confirm the DM (once sent, at lock) goes to whichever owner currently has the fewest confirmed brings for that event, not just the first owner alphabetically/by id
+- [ ] With 2+ attending owners and no expansion copy-select shown, confirm the DM (once sent, at lock) goes to whichever owner currently has the fewest confirmed-or-pending asks for that event (or the game's suggester, if they own it), not just the first owner alphabetically/by id
+- [ ] Request 4 different games that the same two attending owners each own (and neither suggested) — at lock, confirm the four "please bring" DMs are split evenly between the two owners (2 each), not all sent to one, and that no game's DM goes to both owners
+- [ ] Have one owner suggest (`/game suggest`) a game that a second attending owner also owns, then request it — at lock, confirm only the suggester is asked, not the other owner
+- [ ] Pick a specific owner in the copy-select for a game their co-owner suggested — confirm the copy-select owner is the one asked (an explicit "specialized copy" pick beats the suggester)
 - [ ] Request a game on an event whose lineup is **already locked** — confirm the DM goes out immediately (no deferral) since there's no future lock left to wait for
 
 #### Request with expansion copy select
 - [ ] Request a game where at least one attending owner has expansions — confirm "Which copy would you like?" select appears
 - [ ] Select a specific owner's copy — confirm announcement includes "— bringing: @owner" immediately, but (pre-lock) that owner doesn't receive the DM until the lineup locks
-- [ ] Select **Bot decides** — confirm no owner is chosen or announced yet (no "— bringing: @owner" in the reply); once the lineup locks, confirm the bot then assigns the owner with fewest confirmed brings and DMs them
+- [ ] Select **Bot decides** — confirm no owner is chosen or announced yet (no "— bringing: @owner" in the reply); once the lineup locks, confirm the bot then assigns the owner with the fewest confirmed-or-pending asks (or the suggester, if they own it) and DMs them
 
 #### Confirming via the DM button
 - [ ] Tap "✅ Confirm bringing" in the DM — confirm it behaves the same as `/library bring game:<name>` (message edits to show confirmed, ✅ appears next to the game in the event's request pin)
@@ -670,6 +723,25 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run on a sold or closed listing — confirm "Only active or pending listings can be edited" and no modal opens
 - [ ] Confirm the autocomplete on `id` only offers your own active/pending listings (same filter as `close`)
 
+### 1.7o `/marketplace import` and `/marketplace template`
+
+**What it does:** Posts several listings at once from a CSV file. `/marketplace template` sends a sample CSV (columns: `type` sell/trade (blank = sell), `item`, `condition`, `price`, `offers_allowed`, `looking_for`, `notes`, `bgg_id`). `/marketplace import file:<csv>` validates the file and shows an ephemeral **preview** — each row with its BGG match (✅ exact, ⚠️ best guess, ➖ none = custom item), plus a list of rows with problems — and nothing is created until you tap **✅ Post these listings**. Matching uses the local BGG catalog only (no live BGG calls), so imported listings have no thumbnail/expansion bundling. A `bgg_id` value overrides name matching. Limits: 25 rows, 100 KB, `.csv` only. An item you already have an active/pending listing for (same type and name), or a repeat within the file, is skipped.
+
+- [ ] Run `/marketplace template` — confirm an ephemeral reply with a downloadable `marketplace-import-template.csv` (header + a sell, a firm-price sell, and a trade example) and an explanation of the columns
+- [ ] Fill the template with 3 valid rows (including one trade) and run `/marketplace import` — confirm the preview lists all 3 with BGG match indicators and shows "3 listings ready"; confirm **no listing exists yet** (`/marketplace my` is unchanged)
+- [ ] Tap **Post these listings** — confirm 3 listings are created and posted to the marketplace channel, with the right condition/price/"Open to Offers" vs "Firm Price"/looking-for/notes, and the summary reply says "Created 3 listings"
+- [ ] Use an item name that only partially matches a BGG game (e.g. "Gloom") — confirm the preview flags "⚠️ Best-guess BGG match" naming the game; add the correct `bgg_id` and re-import — confirm it now shows ✅
+- [ ] Use an item that isn't on BGG — confirm the preview says "No BGG match — posts as a custom item" and it posts fine without a BGG link
+- [ ] Add rows with problems (missing item, invalid condition like "mint", price "abc", `offers_allowed` = maybe, a firm-price row with no price, non-numeric `bgg_id`, unknown `type`) — confirm each is listed as "❌ Line N: ..." with the correct line number, valid rows still import, and the bad ones are not created
+- [ ] Use a `bgg_id` that doesn't exist — confirm that row is reported as not in the catalog and skipped
+- [ ] Import an item you already have an active listing for — confirm it's shown as "⏭️ Skipped" and not duplicated; repeat the same item twice in one file — confirm the second is skipped
+- [ ] Tap **Cancel** — confirm "Import cancelled — nothing was posted." and no listings exist; tapping **Post** on an old preview afterward says the preview expired
+- [ ] Tap **Post these listings** twice quickly (or on an already-used preview) — confirm listings are only created once
+- [ ] As a different user, tap Post or Cancel on someone else's preview — confirm "This isn't your import." and the original user can still confirm
+- [ ] Upload a non-`.csv` file, an oversized file (>100 KB), an empty file, a file missing the `item` or `condition` column, a header-only file, and a file with 26 rows — confirm each gets a clear rejection message and no preview
+- [ ] With no marketplace channel configured (`/admin marketplace config`), import — confirm the preview footer warns nothing will be posted, and after confirming the summary notes the listings were saved but couldn't be posted
+- [ ] Confirm the import appears in the transaction log (1.7k) as `listing_created` entries with `source=csv_import`
+
 ## 1.8 `/room` — Private Rooms
 
 ### 1.8a `/room create`
@@ -834,6 +906,17 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Tap "🗑️ Remove Mine" having added exactly one item — confirm it's removed directly, same as `/snacks remove`
 - [ ] Tap "🗑️ Remove Mine" having added more than one item — confirm a select menu lets you pick which one to remove
 
+### 1.11d Lock-time snack reminder
+
+**What it does:** When an event's lineup locks (see 4.7), the bot DMs every member who has snacks on that event's snack list a reminder of exactly what *they* signed up to bring, with a link to the event channel and a note that `/snacks remove` takes something off. It goes out right after the "please bring this game" asks. Members who RSVP'd "can't go" are skipped, and a member with DMs disabled is skipped without blocking anyone else or the lock itself. Private rooms have no lock, so they get no reminder.
+
+- [ ] Before the lineup locks, have two members add snacks (one adds two items) via `/snacks add` — then lock the event (wait for the lock time, or use the configured lock window) and confirm each member receives one DM listing only their own snacks (the two-item member sees both, in the order added), with the event channel linked
+- [ ] Confirm a member who is also being asked to bring a game gets both the "please bring this game" DM and the snack reminder
+- [ ] Have a member with a snack RSVP "can't go" before the lock — confirm they get no reminder
+- [ ] Remove a snack with `/snacks remove` before the lock — confirm the reminder no longer lists it (and that a member who removed all their snacks gets no DM)
+- [ ] Lock an event with no snack list at all — confirm no snack DMs are sent and the lock completes normally
+- [ ] With one snack-holder's DMs disabled, confirm the other member still gets their reminder and the schedule is still posted
+
 ## 1.12 `/challenge` — "Guess the Board Game"
 
 **Prerequisites:** an admin must run `/admin challenge config` (3.9s) to set a channel and turn the feature on — see 4.9 for the full automated hint/reveal flow, and 3.9s for the `frequency` setting (daily/weekly/bi-weekly) that governs how often a new challenge cycle starts. No permission differences between member/host/admin, so this section isn't mirrored into Parts 2/3.
@@ -859,11 +942,19 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.12c Guessing (plain messages in the configured channel)
 
-**What it does:** Reply with your guess as a normal message in the configured channel. A guess is matched against the game's title after normalizing case/punctuation/leading articles and a colon/parenthetical subtitle, with typo tolerance for small misspellings. A correct guess is deleted immediately (so the answer never sits visible for others to copy), a public "🎉 \<user\> guessed it! (+N points)" message posts in the channel so the win is obviously visible (without revealing the title), the guesser is separately DMed their exact points/running total, and the pinned leaderboard message updates immediately to reflect it (see 4.9's live-updating leaderboard pin note); an incorrect guess is left in place with a ❌ reaction. Points are 100 (guessed after hint 1), 80 (after hint 2), or 50 (after hint 3) — everyone who guesses correctly scores, not just the first person, and each person can only score once per cycle.
+**What it does:** Reply with your guess as a normal message in the configured channel. A guess is matched against the game's title after normalizing case/punctuation (apostrophes are dropped entirely, e.g. "Captain's" → "captains") and leading articles, with typo tolerance for small misspellings. The guess can include or omit a colon/parenthetical subtitle on either side — matching against the base title alone, the subtitle alone, or the two combined — and word order doesn't matter (e.g. for "Star Trek: Captain's Chair", "captains chair", "star trek captains chair", and "captains chair star trek" are all accepted, as is a squashed-together variant like "ThunderRoad Vendetta" for "Thunder Road: Vendetta"). A correct guess is deleted immediately (so the answer never sits visible for others to copy), a public "🎉 \<user\> guessed it! (+N points)" message posts in the channel so the win is obviously visible (without revealing the title), the guesser is separately DMed their exact points/running total, and the pinned leaderboard message updates immediately to reflect it (see 4.9's live-updating leaderboard pin note); an incorrect guess is left in place with a ❌ reaction. **Ambiguous base-only guesses:** if the guess only matches the title's base (no subtitle) *and* the BGG catalog has other games sharing that same base (e.g. "Ticket to Ride" for "Ticket to Ride: Europe", or "Star Wars" for "Star Wars: A Queen's Gambit"), the bot doesn't score it right away — it replies with a "which game did you mean?" dropdown listing those games (best-ranked first, max 25). Only the person who guessed can use the dropdown (anyone else clicking gets a private "This isn't your guess to answer."). Picking the right game scores exactly like a normal correct guess; picking a wrong one replaces the prompt with "❌ Not quite — try guessing again in the channel!" and they can keep guessing. If the catalog has no other game with that base, a base-only guess is still accepted instantly. Points are 100 (guessed after hint 1), 80 (after hint 2), or 50 (after hint 3) — everyone who guesses correctly scores, not just the first person, and each person can only score once per cycle.
 
 - [ ] Post an obviously wrong guess after hint 1 — confirm it's reacted with ❌ and stays visible, and the pinned leaderboard is untouched
 - [ ] Post the exact title (any case/punctuation) — confirm the message is deleted, a public "guessed it! (+100 points)" message posts in the channel (without the title), you're DMed your points and running total, and the pinned leaderboard message updates to show it (without needing a new correct guess or the reveal)
 - [ ] Post a close typo of the title — confirm it's still accepted as correct
+- [ ] For a game with a colon subtitle (e.g. "Thunder Road: Vendetta"), post just the base title with no subtitle — confirm it's accepted instantly if no other BGG game shares that base, otherwise confirm the "which game did you mean?" dropdown appears (see next bullets)
+- [ ] When the dropdown appears (e.g. guessing "Ticket to Ride" when the answer is "Ticket to Ride: Europe"), confirm the list includes the real answer and other same-base games (no expansions), and nothing has been scored yet
+- [ ] Pick the correct game from the dropdown — confirm the prompt changes to "✅ Correct!", a public "guessed it!" message posts (without the title), you're DMed your points, and the pinned leaderboard updates
+- [ ] Pick a wrong game from the dropdown — confirm "❌ Not quite — try guessing again in the channel!", no points awarded, and you can post another guess
+- [ ] As a different person, try the dropdown that was sent for someone else's guess — confirm a private "This isn't your guess to answer." and nothing is scored
+- [ ] Guess a title including the subtitle (e.g. "ticket to ride europe") — confirm it's scored immediately with no dropdown
+- [ ] For the same game, post the base and subtitle together with the words reordered (e.g. "vendetta thunder road") — confirm it's still accepted
+- [ ] For a game with a possessive in the subtitle (e.g. "Star Trek: Captain's Chair"), post just the subtitle without the apostrophe (e.g. "captains chair") — confirm it's accepted
 - [ ] As a second person, post the correct title after the same hint — confirm they're also scored (both scored, not just the first), each getting their own public announcement, and both show up on the (single, same) pinned leaderboard message
 - [ ] As someone who already guessed correctly this cycle, post the correct title again — confirm nothing happens (no double DM, no double announcement, no double points, no extra pin update)
 - [ ] Post a guess in any other channel — confirm the bot ignores it entirely (no reaction, no deletion, no announcement, no pin update)
@@ -917,7 +1008,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.3a `/game suggest`
 
-**What it does:** Suggests a game for the event (or, from inside a private room, for that room — see below). Checks the group library first (exact match → partial match → BGG search). Prompts to add tags if not already tagged.
+**What it does:** Suggests a game for the event (or, from inside a private room, for that room — see below). Checks the group library first (exact match → partial match → BGG search). Every path (library match, BGG result, manual entry) ends with a required "how well do you know it?" teaching prompt before the card is posted (see 1.3a), then prompts to add tags if not already tagged.
 
 #### From a private room
 - [ ] Run `/game suggest title:Wingspan` from inside a `/room`-created private room channel (1.8a) — confirm it posts the game card directly in the room, with no event picker
@@ -1015,6 +1106,14 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] With a full game and at least one person on the waitlist, have a seated player click **Leave** — confirm the first waitlisted person is moved into the freed seat, removed from the waitlist list, and (if their DMs are open) receives a DM saying a seat opened up
 - [ ] Do the same when promoting the waitlist below the minimum player count drops it back below 2 groups — confirm the request pin reverts to 1 copy needed
 
+### 2.3e1 Game Card Buttons — I Can Teach
+
+No permission differences from a regular member (see 1.3e1 for the full checklist) — confirm the **🎓 I Can Teach** button behaves the same for this role.
+
+### 2.3e2 Game Card Buttons — Bring a Guest
+
+No permission differences from a regular member (see 1.3e2 for the full checklist) — confirm a Host can tap **➕ Bring a Guest** and it behaves exactly the same.
+
 ### 2.3f Bring Confirm / Cancel
 
 **What it does:** After adding a game via BGG or manual entry, the bot asks if you're bringing the game. Confirming adds it to your library.
@@ -1080,10 +1179,15 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run `/library mine` with no games — confirm "You haven't added any games" message
 - [ ] With another member's library linked to you as a delegate (2.4n), run `/library mine` — confirm their games appear alongside your own, each marked `*(shared from <@ownerId>)*`
 - [ ] With enough games (yours plus any linked delegates') to exceed one page:
-  - [ ] Confirm **← Previous** and **Next →** buttons appear, with a "Page X of Y" indicator between them
+  - [ ] Confirm **← Previous** and **Next →** buttons appear, with a blue **Go to… (X/Y)** button between them showing the current page
   - [ ] **← Previous** is disabled on the first page
   - [ ] Click **Next →** — confirm page 2 is shown with different games
   - [ ] **Next →** is disabled on the last page
+  - [ ] Click **Go to… (X/Y)** — confirm a small modal opens asking for a page number or game name
+  - [ ] Type a page number (e.g. 12) and submit — confirm that page is shown and Previous/Next continue from it
+  - [ ] Type the start of a game name (e.g. "wing") — confirm the page containing the first game whose name starts with that text is shown (a name that only appears mid-title, like "duel" for "Wonders Duel", also works when nothing starts with it)
+  - [ ] Type a page number out of range (0 or past the last page) or a name that isn't on the list — confirm a private error ("Pick a page between 1 and N" / "No game matching …") and the list stays on the same page
+  - [ ] Confirm the Go to… button is present (and works) on the first and last page too
   - [ ] Confirm no error occurs regardless of how large the combined list is (regression: this previously crashed once the list exceeded Discord's embed description limit)
 
 ### 2.4d `/library list`
@@ -1099,6 +1203,11 @@ All `/game` commands should be used inside an active event channel unless otherw
   - [ ] **← Previous** is disabled on the first page
   - [ ] Click **Next →** — confirm page 2 is shown
   - [ ] **Next →** is disabled on the last page
+  - [ ] Click **Go to… (X/Y)** — confirm a small modal opens asking for a page number or game name
+  - [ ] Type a page number (e.g. 12) and submit — confirm that page is shown and Previous/Next continue from it
+  - [ ] Type the start of a game name (e.g. "wing") — confirm the page containing the first game whose name starts with that text is shown (a name that only appears mid-title, like "duel" for "Wonders Duel", also works when nothing starts with it)
+  - [ ] Type a page number out of range (0 or past the last page) or a name that isn't on the list — confirm a private error ("Pick a page between 1 and N" / "No game matching …") and the list stays on the same page
+  - [ ] Confirm the Go to… button is present (and works) on the first and last page too
 
 ### 2.4e `/library view`
 
@@ -1132,7 +1241,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 2.4h `/library request`
 
-**What it does:** Requests a specific game be brought to an event. No "please bring this" DM goes out yet — asking is deferred until the event's lineup locks (4.7), so the bot can pick fairly from each owner's *final* confirmed-brings count instead of an early, mostly-arbitrary snapshot. At lock, the request is asked of the owner the copy-select assigned it to (an explicit pick), or — when no copy-select is shown, or **Bot decides** was selected — whichever attending owner currently has the fewest confirmed brings for that event, with "🎲 ... ✅ Confirm bringing" and "❌ Can't bring it" buttons. Confirming behaves the same as `/library bring game:<name>`; declining cascades the same DM to the next eligible attending owner (see "Declining via the DM button" below). If the waitlist for a suggested game grows enough to need a second copy (1.3e/2.3e/3.3e), that just updates how many owners get asked at lock — it doesn't trigger an ask itself. A request made *after* the lineup is already locked has no future lock to wait for, so it's asked immediately instead.
+**What it does:** Requests a specific game be brought to an event. No "please bring this" DM goes out yet — asking is deferred until the event's lineup locks (4.7), so the bot can pick fairly from each owner's *final* confirmed-brings count instead of an early, mostly-arbitrary snapshot. At lock, the request is asked of the owner the copy-select assigned it to (an explicit pick), or — when no copy-select is shown, or **Bot decides** was selected — the owner who suggested the game (if they own a copy and are attending), otherwise whichever attending owner currently has the fewest confirmed-or-pending asks for that event, with "🎲 ... ✅ Confirm bringing" and "❌ Can't bring it" buttons. Confirming behaves the same as `/library bring game:<name>`; declining cascades the same DM to the next eligible attending owner (see "Declining via the DM button" below). If the waitlist for a suggested game grows enough to need a second copy (1.3e/2.3e/3.3e), that just updates how many owners get asked at lock — it doesn't trigger an ask itself. A request made *after* the lineup is already locked has no future lock to wait for, so it's asked immediately instead.
 
 **Prerequisites:** an active event must exist, and the game being requested must already be in the library, owned by someone who has RSVP'd (see 1.4a/2.4a/3.4a to add a game first).
 
@@ -1144,13 +1253,16 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] The literal owner has NOT RSVP'd, but a member they've linked as a delegate (2.4n) has RSVP'd yes/maybe — confirm the request still succeeds instead of hitting "None of the owners are attending"
 - [ ] On an event whose lineup hasn't locked yet, confirm no DM is sent to anyone, and the reply notes "An owner will be asked to bring it once the lineup locks"
 - [ ] Force the lineup to lock (4.7), then confirm the assigned owner receives a DM with a "✅ Confirm bringing" button for the requested game (include any owned expansions in the DM text)
-- [ ] With 2+ attending owners and no expansion copy-select shown, confirm the DM (once sent, at lock) goes to whichever owner currently has the fewest confirmed brings for that event, not just the first owner alphabetically/by id
+- [ ] With 2+ attending owners and no expansion copy-select shown, confirm the DM (once sent, at lock) goes to whichever owner currently has the fewest confirmed-or-pending asks for that event (or the game's suggester, if they own it), not just the first owner alphabetically/by id
+- [ ] Request 4 different games that the same two attending owners each own (and neither suggested) — at lock, confirm the four "please bring" DMs are split evenly between the two owners (2 each), not all sent to one, and that no game's DM goes to both owners
+- [ ] Have one owner suggest (`/game suggest`) a game that a second attending owner also owns, then request it — at lock, confirm only the suggester is asked, not the other owner
+- [ ] Pick a specific owner in the copy-select for a game their co-owner suggested — confirm the copy-select owner is the one asked (an explicit "specialized copy" pick beats the suggester)
 - [ ] Request a game on an event whose lineup is **already locked** — confirm the DM goes out immediately (no deferral) since there's no future lock left to wait for
 
 #### Request with expansion copy select
 - [ ] Request a game where at least one attending owner has expansions — confirm "Which copy would you like?" select appears
 - [ ] Select a specific owner's copy — confirm announcement includes "— bringing: @owner" immediately, but (pre-lock) that owner doesn't receive the DM until the lineup locks
-- [ ] Select **Bot decides** — confirm no owner is chosen or announced yet (no "— bringing: @owner" in the reply); once the lineup locks, confirm the bot then assigns the owner with fewest confirmed brings and DMs them
+- [ ] Select **Bot decides** — confirm no owner is chosen or announced yet (no "— bringing: @owner" in the reply); once the lineup locks, confirm the bot then assigns the owner with the fewest confirmed-or-pending asks (or the suggester, if they own it) and DMs them
 
 #### Confirming via the DM button
 - [ ] Tap "✅ Confirm bringing" in the DM — confirm it behaves the same as `/library bring game:<name>` (message edits to show confirmed, ✅ appears next to the game in the event's request pin)
@@ -1439,6 +1551,10 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] 👑 Run as a different user on someone else's listing (Host, not the owner) — confirm "You can only edit your own listings" — Host does not grant an override here, unlike `close`
 - [ ] Run on a sold or closed listing — confirm "Only active or pending listings can be edited" and no modal opens
 
+### 2.7o `/marketplace import` and `/marketplace template`
+
+No permission differences from a regular member (see 1.7o for the full checklist) — confirm a Host can run `/marketplace template` and `/marketplace import` and that the preview/confirm flow behaves exactly the same.
+
 ## 2.8 `/host` — Host Commands
 
 **What it does:** Provides elevated event and moderation commands to members with the Host role (or Manage Events permission). Non-hosts should not see these commands in the Discord command picker.
@@ -1551,6 +1667,31 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Remove another user's request — confirm it disappears from the request pin
 - [ ] Run with no requests — confirm "No games have been requested for this event"
 - [ ] Run from outside an event channel — confirm event picker appears; selecting an event shows all requests
+
+### 2.8i `/host challenge points`
+
+**What it does:** Adds or subtracts a set number of points from one user's board game challenge leaderboard total — `amount` positive to add, negative to subtract. Works even for a user who's never guessed correctly (their total starts at 0). A subtraction that would go below 0 is clamped at 0, with a note in the reply that it was clamped. Updates the pinned leaderboard message (4.9) immediately.
+
+- [ ] With a user already on the leaderboard, run `/host challenge points user:<them> amount:50` — confirm a success message with their new total, and the pinned leaderboard message reflects it
+- [ ] Run `/host challenge points user:<them> amount:-30` — confirm their total decreases by 30, no clamp note
+- [ ] Run a subtraction larger than their current total (e.g. they have 20, subtract 50) — confirm their total shows as 0 and the reply includes a note that it was clamped
+- [ ] Run for a user with no leaderboard entry yet, with a positive amount — confirm they now appear on `/challenge leaderboard` with that total
+- [ ] Run with `amount:0` — confirm "Amount must be non-zero" and nothing changes
+
+### 2.8j `/host event repost`
+
+**What it does:** Replaces one of the event channel's pinned, edit-in-place messages with a fresh, up-to-date copy at the bottom of the channel — for when the original has scrolled far up or become hard to find. Run inside an active event channel and choose **Game lineup**, **Games to bring**, **Snacks list**, **Quick Actions buttons**, or **All of the above**. The old message is deleted, the new one is posted and pinned, and it keeps updating in place from then on. Only the person running it sees the confirmation.
+
+- [ ] Add a few games and let the lineup scroll up the channel, then run `/host event repost item:Game lineup` — confirm a new "Game Lineup" message appears at the bottom with the current games, it is pinned, the old one is gone, and the ephemeral reply says "Reposted: Game lineup"
+- [ ] Suggest another game afterward — confirm the **new** message updates in place (no second lineup message appears)
+- [ ] Repeat for **Games to bring** (with at least one request) and **Quick Actions buttons** — confirm each is reposted, pinned, and its buttons still work
+- [ ] With a snack list started (`/snacks add`), repost **Snacks list** — confirm the reposted list shows the current snacks; add another snack and confirm the new message updates in place
+- [ ] Repost **Snacks list** when nobody has added a snack yet — confirm the reply says there was nothing to repost and nothing is posted
+- [ ] Choose **All of the above** — confirm lineup, games to bring, and Quick Actions are reposted (and the snack list too if one exists), with a summary of anything skipped
+- [ ] Manually delete the pinned lineup message first, then repost it — confirm it still works (no error) and a fresh pinned message appears
+- [ ] Run outside an event channel (e.g. a general channel or a private room) — confirm "Run this inside an active event channel" and nothing is posted
+- [ ] Run in an archived or cancelled event's channel — confirm the same "active event channel" message
+- [ ] 👑 Attempt as a regular member (no Manage Events) — confirm the command isn't available / is refused ("Only hosts and admins can repost event lists")
 
 ## 2.9 `/room` — Private Rooms
 
@@ -1704,7 +1845,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.3a `/game suggest`
 
-**What it does:** Suggests a game for the event (or, from inside a private room, for that room — see below). Checks the group library first (exact match → partial match → BGG search). Prompts to add tags if not already tagged.
+**What it does:** Suggests a game for the event (or, from inside a private room, for that room — see below). Checks the group library first (exact match → partial match → BGG search). Every path (library match, BGG result, manual entry) ends with a required "how well do you know it?" teaching prompt before the card is posted (see 1.3a), then prompts to add tags if not already tagged.
 
 #### From a private room
 - [ ] Run `/game suggest title:Wingspan` from inside a `/room`-created private room channel (1.8a) — confirm it posts the game card directly in the room, with no event picker
@@ -1802,6 +1943,14 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] With a full game and at least one person on the waitlist, have a seated player click **Leave** — confirm the first waitlisted person is moved into the freed seat, removed from the waitlist list, and (if their DMs are open) receives a DM saying a seat opened up
 - [ ] Do the same when promoting the waitlist below the minimum player count drops it back below 2 groups — confirm the request pin reverts to 1 copy needed
 
+### 3.3e1 Game Card Buttons — I Can Teach
+
+No permission differences from a regular member (see 1.3e1 for the full checklist) — confirm the **🎓 I Can Teach** button behaves the same for this role.
+
+### 3.3e2 Game Card Buttons — Bring a Guest
+
+No permission differences from a regular member (see 1.3e2 for the full checklist) — confirm an Admin can tap **➕ Bring a Guest** and it behaves exactly the same.
+
 ### 3.3f Bring Confirm / Cancel
 
 **What it does:** After adding a game via BGG or manual entry, the bot asks if you're bringing the game. Confirming adds it to your library.
@@ -1867,10 +2016,15 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Run `/library mine` with no games — confirm "You haven't added any games" message
 - [ ] With another member's library linked to you as a delegate (3.4n), run `/library mine` — confirm their games appear alongside your own, each marked `*(shared from <@ownerId>)*`
 - [ ] With enough games (yours plus any linked delegates') to exceed one page:
-  - [ ] Confirm **← Previous** and **Next →** buttons appear, with a "Page X of Y" indicator between them
+  - [ ] Confirm **← Previous** and **Next →** buttons appear, with a blue **Go to… (X/Y)** button between them showing the current page
   - [ ] **← Previous** is disabled on the first page
   - [ ] Click **Next →** — confirm page 2 is shown with different games
   - [ ] **Next →** is disabled on the last page
+  - [ ] Click **Go to… (X/Y)** — confirm a small modal opens asking for a page number or game name
+  - [ ] Type a page number (e.g. 12) and submit — confirm that page is shown and Previous/Next continue from it
+  - [ ] Type the start of a game name (e.g. "wing") — confirm the page containing the first game whose name starts with that text is shown (a name that only appears mid-title, like "duel" for "Wonders Duel", also works when nothing starts with it)
+  - [ ] Type a page number out of range (0 or past the last page) or a name that isn't on the list — confirm a private error ("Pick a page between 1 and N" / "No game matching …") and the list stays on the same page
+  - [ ] Confirm the Go to… button is present (and works) on the first and last page too
   - [ ] Confirm no error occurs regardless of how large the combined list is (regression: this previously crashed once the list exceeded Discord's embed description limit)
 
 ### 3.4d `/library list`
@@ -1886,6 +2040,11 @@ All `/game` commands should be used inside an active event channel unless otherw
   - [ ] **← Previous** is disabled on the first page
   - [ ] Click **Next →** — confirm page 2 is shown
   - [ ] **Next →** is disabled on the last page
+  - [ ] Click **Go to… (X/Y)** — confirm a small modal opens asking for a page number or game name
+  - [ ] Type a page number (e.g. 12) and submit — confirm that page is shown and Previous/Next continue from it
+  - [ ] Type the start of a game name (e.g. "wing") — confirm the page containing the first game whose name starts with that text is shown (a name that only appears mid-title, like "duel" for "Wonders Duel", also works when nothing starts with it)
+  - [ ] Type a page number out of range (0 or past the last page) or a name that isn't on the list — confirm a private error ("Pick a page between 1 and N" / "No game matching …") and the list stays on the same page
+  - [ ] Confirm the Go to… button is present (and works) on the first and last page too
 
 ### 3.4e `/library view`
 
@@ -1919,7 +2078,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 3.4h `/library request`
 
-**What it does:** Requests a specific game be brought to an event. No "please bring this" DM goes out yet — asking is deferred until the event's lineup locks (4.7), so the bot can pick fairly from each owner's *final* confirmed-brings count instead of an early, mostly-arbitrary snapshot. At lock, the request is asked of the owner the copy-select assigned it to (an explicit pick), or — when no copy-select is shown, or **Bot decides** was selected — whichever attending owner currently has the fewest confirmed brings for that event, with "🎲 ... ✅ Confirm bringing" and "❌ Can't bring it" buttons. Confirming behaves the same as `/library bring game:<name>`; declining cascades the same DM to the next eligible attending owner (see "Declining via the DM button" below). If the waitlist for a suggested game grows enough to need a second copy (1.3e/2.3e/3.3e), that just updates how many owners get asked at lock — it doesn't trigger an ask itself. A request made *after* the lineup is already locked has no future lock to wait for, so it's asked immediately instead.
+**What it does:** Requests a specific game be brought to an event. No "please bring this" DM goes out yet — asking is deferred until the event's lineup locks (4.7), so the bot can pick fairly from each owner's *final* confirmed-brings count instead of an early, mostly-arbitrary snapshot. At lock, the request is asked of the owner the copy-select assigned it to (an explicit pick), or — when no copy-select is shown, or **Bot decides** was selected — the owner who suggested the game (if they own a copy and are attending), otherwise whichever attending owner currently has the fewest confirmed-or-pending asks for that event, with "🎲 ... ✅ Confirm bringing" and "❌ Can't bring it" buttons. Confirming behaves the same as `/library bring game:<name>`; declining cascades the same DM to the next eligible attending owner (see "Declining via the DM button" below). If the waitlist for a suggested game grows enough to need a second copy (1.3e/2.3e/3.3e), that just updates how many owners get asked at lock — it doesn't trigger an ask itself. A request made *after* the lineup is already locked has no future lock to wait for, so it's asked immediately instead.
 
 **Prerequisites:** an active event must exist, and the game being requested must already be in the library, owned by someone who has RSVP'd (see 1.4a/2.4a/3.4a to add a game first).
 
@@ -1931,13 +2090,16 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] The literal owner has NOT RSVP'd, but a member they've linked as a delegate (3.4n) has RSVP'd yes/maybe — confirm the request still succeeds instead of hitting "None of the owners are attending"
 - [ ] On an event whose lineup hasn't locked yet, confirm no DM is sent to anyone, and the reply notes "An owner will be asked to bring it once the lineup locks"
 - [ ] Force the lineup to lock (4.7), then confirm the assigned owner receives a DM with a "✅ Confirm bringing" button for the requested game (include any owned expansions in the DM text)
-- [ ] With 2+ attending owners and no expansion copy-select shown, confirm the DM (once sent, at lock) goes to whichever owner currently has the fewest confirmed brings for that event, not just the first owner alphabetically/by id
+- [ ] With 2+ attending owners and no expansion copy-select shown, confirm the DM (once sent, at lock) goes to whichever owner currently has the fewest confirmed-or-pending asks for that event (or the game's suggester, if they own it), not just the first owner alphabetically/by id
+- [ ] Request 4 different games that the same two attending owners each own (and neither suggested) — at lock, confirm the four "please bring" DMs are split evenly between the two owners (2 each), not all sent to one, and that no game's DM goes to both owners
+- [ ] Have one owner suggest (`/game suggest`) a game that a second attending owner also owns, then request it — at lock, confirm only the suggester is asked, not the other owner
+- [ ] Pick a specific owner in the copy-select for a game their co-owner suggested — confirm the copy-select owner is the one asked (an explicit "specialized copy" pick beats the suggester)
 - [ ] Request a game on an event whose lineup is **already locked** — confirm the DM goes out immediately (no deferral) since there's no future lock left to wait for
 
 #### Request with expansion copy select
 - [ ] Request a game where at least one attending owner has expansions — confirm "Which copy would you like?" select appears
 - [ ] Select a specific owner's copy — confirm announcement includes "— bringing: @owner" immediately, but (pre-lock) that owner doesn't receive the DM until the lineup locks
-- [ ] Select **Bot decides** — confirm no owner is chosen or announced yet (no "— bringing: @owner" in the reply); once the lineup locks, confirm the bot then assigns the owner with fewest confirmed brings and DMs them
+- [ ] Select **Bot decides** — confirm no owner is chosen or announced yet (no "— bringing: @owner" in the reply); once the lineup locks, confirm the bot then assigns the owner with the fewest confirmed-or-pending asks (or the suggester, if they own it) and DMs them
 
 #### Confirming via the DM button
 - [ ] Tap "✅ Confirm bringing" in the DM — confirm it behaves the same as `/library bring game:<name>` (message edits to show confirmed, ✅ appears next to the game in the event's request pin)
@@ -2294,6 +2456,20 @@ See 2.8f for the full checklist — this Admin-tier pass just confirms Admins re
 - [ ] Run with no requests — confirm "No games have been requested for this event"
 - [ ] Run from outside an event channel — confirm event picker appears; selecting an event shows all requests
 
+### 3.8i `/host challenge points`
+
+**What it does:** Adds or subtracts a set number of points from one user's board game challenge leaderboard total — `amount` positive to add, negative to subtract. Works even for a user who's never guessed correctly (their total starts at 0). A subtraction that would go below 0 is clamped at 0, with a note in the reply that it was clamped. Updates the pinned leaderboard message (4.9) immediately.
+
+- [ ] With a user already on the leaderboard, run `/host challenge points user:<them> amount:50` — confirm a success message with their new total, and the pinned leaderboard message reflects it
+- [ ] Run `/host challenge points user:<them> amount:-30` — confirm their total decreases by 30, no clamp note
+- [ ] Run a subtraction larger than their current total (e.g. they have 20, subtract 50) — confirm their total shows as 0 and the reply includes a note that it was clamped
+- [ ] Run for a user with no leaderboard entry yet, with a positive amount — confirm they now appear on `/challenge leaderboard` with that total
+- [ ] Run with `amount:0` — confirm "Amount must be non-zero" and nothing changes
+
+### 3.8j `/host event repost`
+
+See 2.8j for the full checklist — this Admin-tier pass just confirms Admins retain the same access Hosts have: run `/host event repost item:All of the above` in an active event channel and confirm the lineup, games to bring, and Quick Actions messages are reposted and pinned.
+
 ## 3.9 `/admin` — Admin Commands
 
 **What it does:** Provides server configuration commands to members with the Admin role (or Manage Guild permission). Non-admins should not see these commands in the Discord command picker.
@@ -2359,6 +2535,7 @@ See 2.8f for the full checklist — this Admin-tier pass just confirms Admins re
 - [ ] Run `/admin library syncall` (no `force` option) with a small library — confirm all games with a BGG ID are refreshed and a summary count is shown, including overwriting a game that already had different manually-set data
 - [ ] Run `/admin library syncall force:False` — confirm only games missing BGG data are queried/updated, and an already fully-enriched game's existing data is left unchanged
 - [ ] Run `/admin library syncall force:False` again immediately after — confirm the reply says nothing is missing BGG data and no BGG request is made
+- [ ] With a large library (or otherwise a sync that runs past 15 minutes), let `syncall` finish — confirm the "Sync complete — N updated, N failed." result arrives as a **DM** from the bot (with a note that the command ran longer than Discord allows for a reply) instead of being lost, and that the logs show no "Invalid Webhook Token" error. A sync that finishes within 15 minutes still replies ephemerally in the channel as before
 - [ ] Confirm games with no BGG ID are skipped and counted separately (not treated as failures)
 - [ ] Run with an empty library — confirm an appropriate "nothing to sync" message
 - [ ] Confirm the command does not time out or double-reply on a larger library (should defer/edit the reply while syncing)
@@ -2372,6 +2549,7 @@ See 2.8f for the full checklist — this Admin-tier pass just confirms Admins re
 - [ ] Run `/admin library backfilltop count:10` on a fresh cache — confirm it creates brand-new `game_info.json` entries (not just updates to existing ones) for top-ranked games nobody has personally added, and a summary count is shown
 - [ ] Run `/admin library backfilltop count:10` again immediately after (no `force`) — confirm it reports nothing to backfill and makes no BGG request, since all 10 are now fully cached
 - [ ] Run `/admin library backfilltop count:10 force:true` — confirm it re-fetches all 10 regardless of already being fully cached
+- [ ] For a backfill that runs past 15 minutes (e.g. `count:500` on a fresh cache), confirm the "Backfill complete" result is delivered by DM, same as `syncall` (3.9d)
 - [ ] Confirm a top-ranked game that's already in someone's library (and already fully enriched) is skipped under the default `force:false`, not double-counted or re-fetched
 - [ ] Confirm the command does not time out or double-reply for a larger `count` (should defer/edit the reply while backfilling, same as `syncall`)
 - [ ] After backfilling a small `count`, force `getBGGGame` to fail (or simulate a BGG outage) and let the weekly challenge's random pick land outside that backfilled set — confirm the challenge still degrades gracefully (per 4.9) rather than assuming backfilltop guarantees full coverage of every possible pick
@@ -2566,6 +2744,15 @@ Text channels have no forum tags and no thread is created for a listing — each
 - [ ] Run with an unparseable `start_date` (e.g. "whenever") — confirm a clear "Could not parse..." error and nothing is saved
 - [ ] Having already set a bi-weekly anchor, run `/admin challenge config` again changing only an unrelated setting (e.g. a schedule hour) — confirm the existing anchor is left untouched, not silently reset
 
+### 3.9t `/admin challenge reset-scores`
+
+**What it does:** Zeroes the board game challenge leaderboard for every user on the server — the same totals shown by `/challenge leaderboard` and the pinned leaderboard message. Requires `confirm:true`; without it, nothing is changed. Irreversible. Does not touch past challenges' own record of who guessed correctly each week (still shown on old reveal posts) — only the running point totals.
+
+- [ ] 👑 Run as non-admin — confirm "requires Manage Server permission"
+- [ ] Run with `confirm:false` (or omitted) — confirm "cancelled" and the leaderboard is unchanged
+- [ ] With at least one user on the leaderboard, run with `confirm:true` — confirm a success message, `/challenge leaderboard` now shows "No points on the board yet", and the pinned leaderboard message (4.9) updates to reflect the reset
+- [ ] Get a fresh correct guess after resetting — confirm scoring still works normally and the new total starts from 0, not the pre-reset value
+
 ## 3.10 `/room` — Private Rooms
 
 ### 3.10a `/room create`
@@ -2750,7 +2937,7 @@ If a game's start or end is projected to run past the event's configured end tim
 
 If the event has greeters set (`/host event greeters`, 2.8f), a "👋 Greeters" field listing them (`@mention`s, "and"-joined for two) appears as the very first field, ahead of the table breakdown. Events with no greeters set show no such field at all.
 
-Locking also cleans up and follows up on the "Games to Bring" request pin (`/library request`, 1.4h/2.4h/3.4h) — in this order, all before the public schedule embed is posted: (1) any request whose title matches a suggested game that ends up with zero seated players is dropped and the pin is refreshed, even if an owner had already confirmed bringing it via `/library bring` — nobody signed up to play it, so there's no reason to ask an owner to lug it over; if that request had a pending "please bring this" DM outstanding, that DM is edited to say it's no longer needed and its button removed; (2) every request still on the pin at this point gets asked, for real, for the first time — no "please bring this" DM goes out before lock (see 1.4h), so this is the actual first ask for nearly every request, not a reminder to someone already pending. The bot picks whichever attending owner currently has the fewest confirmed brings for the event (or an explicitly copy-selected owner, if the requester picked one), same fairness logic as an immediate post-lock request. A request already fully covered by a proactive `/library bring` confirmation before lock isn't asked at all. A request with no matching suggested game at all (e.g. something brought along just to teach or show off, never suggested as a game to play) is left alone by the drop step — it was never tied to the signup system in the first place — but is still asked at lock like any other request. A request whose game has no owner in the library at all is simply left unasked (nobody eligible).
+Locking also cleans up and follows up on the "Games to Bring" request pin (`/library request`, 1.4h/2.4h/3.4h) — in this order, all before the public schedule embed is posted: (1) any request whose title matches a suggested game that ends up with zero seated players is dropped and the pin is refreshed, even if an owner had already confirmed bringing it via `/library bring` — nobody signed up to play it, so there's no reason to ask an owner to lug it over; if that request had a pending "please bring this" DM outstanding, that DM is edited to say it's no longer needed and its button removed; (2) every request still on the pin at this point gets asked, for real, for the first time — no "please bring this" DM goes out before lock (see 1.4h), so this is the actual first ask for nearly every request, not a reminder to someone already pending. The bot picks the owner who suggested the game (if they own a copy and are attending), otherwise whichever attending owner currently has the fewest confirmed-or-pending asks for the event (or an explicitly copy-selected owner, if the requester picked one), same fairness logic as an immediate post-lock request. A request already fully covered by a proactive `/library bring` confirmation before lock isn't asked at all. A request with no matching suggested game at all (e.g. something brought along just to teach or show off, never suggested as a game to play) is left alone by the drop step — it was never tied to the signup system in the first place — but is still asked at lock like any other request. A request whose game has no owner in the library at all is simply left unasked (nobody eligible).
 
 **Prerequisites:**
 - `lock_hours_before_event` at its default (48h) or another non-zero value via `/admin event config` (3.9a) — this is on by default, so no setup is needed unless you want a different threshold.
@@ -2765,6 +2952,10 @@ Locking also cleans up and follows up on the "Games to Bring" request pin (`/lib
 - [ ] Confirm every game's line shows a real `(<t:...:t>–<t:...:t>)` start/end time, not just an estimated duration
 - [ ] Seat a game so its computed start or end lands off a quarter-hour (e.g. a table that naturally frees up at :07 or :52) — confirm the posted time is rounded **up** to the next :00/:15/:30/:45, never down and never to the nearest quarter
 - [ ] Confirm each table's line lists that game's seated players as `@mention`s, comma-separated, after the title/time
+- [ ] Leave one seated game with nobody able to teach it (suggester picked "I'm new to it", no 🎓 volunteers) and give another a teacher — at lock, confirm the event host receives a DM listing only the teacher-less game(s), and no DM is sent if every seated game has a teacher (or the only teacher-less games have no seated players)
+- [ ] With snacks on the event's snack list, confirm that at lock each member who signed up receives a DM reminding them of their own snacks (see 1.11d), sent alongside the game-bring asks and before the schedule is posted
+- [ ] With the host's DMs disabled, confirm the lock still completes normally (the DM failure is only logged)
+- [ ] Seat a game with a guest (via **Bring a Guest**, 1.3e2) before it locks — confirm the locked schedule embed shows the guest's display name (e.g. "Player's Guest (Name)"), not a broken `<@guest:...>` mention
 - [ ] Confirm two games sharing a seated player never overlap in time — the second one starts no earlier than the shared player's break clears after the first ends
 - [ ] With two tables free the whole time, seat a shared player in games at both — confirm the second game's line notes "⏳ waiting on `@mention` to finish an earlier game", naming the shared player, rather than silently showing a later time with no explanation
 - [ ] Confirm two games with no shared players can run fully concurrently on separate tables, both starting immediately, with no "waiting on" note on either
@@ -2817,7 +3008,7 @@ Locking also cleans up and follows up on the "Games to Bring" request pin (`/lib
 - [ ] Request a game that keeps at least one seated player through lock, alongside a zero-seat one — confirm only the zero-seat game's request is dropped; the other remains on the pin
 - [ ] Request a game that was never suggested via `/game suggest` at all (no matching `GameSuggestion`) — confirm it's left on the "Games to Bring" pin after lock, since it was never part of the signup system to begin with
 - [ ] Confirm locking an event with no zero-seat requests to drop doesn't touch or re-post the "Games to Bring" pin at all
-- [ ] Request a game that keeps its seated players through lock, and leave it unconfirmed via `/library bring` (1.4j) — confirm an owner (whichever attending owner has the fewest confirmed brings for the event) receives the "please bring this" DM with a "✅ Confirm bringing" button only once the event locks, not at request time
+- [ ] Request a game that keeps its seated players through lock, and leave it unconfirmed via `/library bring` (1.4j) — confirm an owner (the suggester if they own it, otherwise whichever attending owner has the fewest confirmed-or-pending asks for the event) receives the "please bring this" DM with a "✅ Confirm bringing" button only once the event locks, not at request time
 - [ ] Confirm an owner who already confirmed via `/library bring` (proactively, before lock) does **not** get asked at all
 - [ ] Confirm the zero-signup drop and the owner-asking pass happen before the "🔒 Lineup Locked" schedule embed is posted, not after
 - [ ] Request a game that ends up with zero seated players — since no DM is sent until lock, and the drop check runs first, its owner is never asked in the first place; there's no dangling DM to edit for a request created and dropped entirely within one lock cycle

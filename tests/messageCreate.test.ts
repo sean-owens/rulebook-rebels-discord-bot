@@ -6,17 +6,17 @@ vi.mock('../src/utils/config', () => ({
 }));
 
 const mockGetActiveChallenge = vi.fn();
-const mockRecordCorrectGuess = vi.fn();
 vi.mock('../src/utils/boardGameChallengeStorage', () => ({
   getActiveChallenge: (...args: unknown[]) => mockGetActiveChallenge(...args),
-  recordCorrectGuess: (...args: unknown[]) => mockRecordCorrectGuess(...args),
 }));
 
-const mockIsCorrectGuess = vi.fn();
-const mockUpdateChallengeLeaderboardPin = vi.fn();
+const mockClassify = vi.fn();
+const mockFindCandidates = vi.fn();
+const mockAward = vi.fn();
 vi.mock('../src/utils/boardGameChallenge', () => ({
-  isCorrectGuess: (...args: unknown[]) => mockIsCorrectGuess(...args),
-  updateChallengeLeaderboardPin: (...args: unknown[]) => mockUpdateChallengeLeaderboardPin(...args),
+  classifyGuessMatch: (...args: unknown[]) => mockClassify(...args),
+  findDisambiguationCandidates: (...args: unknown[]) => mockFindCandidates(...args),
+  awardCorrectGuess: (...args: unknown[]) => mockAward(...args),
 }));
 
 import { handleMessageCreate } from '../src/events/messageCreate';
@@ -30,6 +30,7 @@ function makeMessage(overrides: Record<string, unknown> = {}) {
     client: { user: { id: 'bot-1' } },
     content: 'Catan',
     react: vi.fn(async () => {}),
+    reply: vi.fn(async () => {}),
     delete: vi.fn(async () => {}),
     ...overrides,
   } as any;
@@ -39,6 +40,7 @@ const CHALLENGE = {
   id: 'guild-1-2026-08-24',
   guildId: 'guild-1',
   title: 'Catan',
+  bggId: '13',
   hintsPostedCount: 1,
   correctGuesses: [] as { userId: string }[],
 };
@@ -88,57 +90,84 @@ describe('handleMessageCreate', () => {
     });
     const message = makeMessage();
     await handleMessageCreate(message);
-    expect(mockIsCorrectGuess).not.toHaveBeenCalled();
+    expect(mockClassify).not.toHaveBeenCalled();
     expect(message.react).not.toHaveBeenCalled();
   });
 
   it('reacts with a cross on an incorrect guess and leaves the message', async () => {
-    mockIsCorrectGuess.mockReturnValue(false);
+    mockClassify.mockReturnValue('none');
     const message = makeMessage({ content: 'Wrong Game' });
 
     await handleMessageCreate(message);
 
     expect(message.react).toHaveBeenCalledWith('❌');
     expect(message.delete).not.toHaveBeenCalled();
-    expect(mockRecordCorrectGuess).not.toHaveBeenCalled();
+    expect(mockAward).not.toHaveBeenCalled();
   });
 
-  it('deletes the message, scores, and DMs the player on a correct guess', async () => {
-    mockIsCorrectGuess.mockReturnValue(true);
-    mockRecordCorrectGuess.mockResolvedValue({ points: 100, totalPoints: 250 });
+  it('awards the guess and deletes the message on a correct guess', async () => {
+    mockClassify.mockReturnValue('full');
+    mockAward.mockResolvedValue({ points: 100, totalPoints: 250 });
     const message = makeMessage({ content: 'Catan' });
 
     await handleMessageCreate(message);
 
-    expect(mockRecordCorrectGuess).toHaveBeenCalledWith('guild-1', CHALLENGE.id, 'user-1', 1);
+    expect(mockAward).toHaveBeenCalledWith(message.client, 'guild-1', CHALLENGE, 'user-1', message.channel);
     expect(message.delete).toHaveBeenCalled();
-    expect(message.channel.send).toHaveBeenCalledWith(expect.stringContaining('<@user-1>'));
-    expect(message.channel.send).toHaveBeenCalledWith(expect.stringContaining('+100 points'));
-    expect(message.author.send).toHaveBeenCalledWith(expect.stringContaining('100 points'));
-    expect(message.author.send).toHaveBeenCalledWith(expect.stringContaining('250 points'));
     expect(message.react).not.toHaveBeenCalled();
-    expect(mockUpdateChallengeLeaderboardPin).toHaveBeenCalledWith(message.client, 'guild-1');
   });
 
-  it('does not delete/DM/announce when recordCorrectGuess reports an already-scored race', async () => {
-    mockIsCorrectGuess.mockReturnValue(true);
-    mockRecordCorrectGuess.mockResolvedValue(undefined);
+  it('does not delete the message when awardCorrectGuess reports an already-scored race', async () => {
+    mockClassify.mockReturnValue('full');
+    mockAward.mockResolvedValue(undefined);
     const message = makeMessage({ content: 'Catan' });
 
     await handleMessageCreate(message);
 
     expect(message.delete).not.toHaveBeenCalled();
-    expect(message.channel.send).not.toHaveBeenCalled();
-    expect(message.author.send).not.toHaveBeenCalled();
-    expect(mockUpdateChallengeLeaderboardPin).not.toHaveBeenCalled();
   });
 
-  it('does not update the leaderboard pin on an incorrect guess', async () => {
-    mockIsCorrectGuess.mockReturnValue(false);
-    const message = makeMessage({ content: 'Wrong Game' });
+  describe('base-only guesses', () => {
+    it('sends a dropdown instead of scoring when 2+ catalog games share the base', async () => {
+      mockClassify.mockReturnValue('base');
+      mockFindCandidates.mockReturnValue([
+        { id: '13', name: 'Catan', year: 1995, isExpansion: false, rank: 1 },
+        { id: '14', name: 'Catan: Seafarers', year: 1997, isExpansion: false, rank: 2 },
+      ]);
+      const message = makeMessage({ content: 'Catan' });
 
-    await handleMessageCreate(message);
+      await handleMessageCreate(message);
 
-    expect(mockUpdateChallengeLeaderboardPin).not.toHaveBeenCalled();
+      expect(mockFindCandidates).toHaveBeenCalledWith('Catan', '13');
+      expect(message.reply).toHaveBeenCalledTimes(1);
+      const payload = message.reply.mock.calls[0][0];
+      expect(payload.components).toHaveLength(1);
+      const menu = payload.components[0].toJSON().components[0];
+      expect(menu.custom_id).toBe(`bgchallenge_disambig_${CHALLENGE.id}_user-1`);
+      expect(menu.options.map((o: any) => o.value)).toEqual(['13', '14']);
+      expect(mockAward).not.toHaveBeenCalled();
+      expect(message.react).not.toHaveBeenCalled();
+    });
+
+    it('scores immediately when the base is not shared by another game', async () => {
+      mockClassify.mockReturnValue('base');
+      mockFindCandidates.mockReturnValue([{ id: '13', name: 'Catan', year: 1995, isExpansion: false, rank: 1 }]);
+      mockAward.mockResolvedValue({ points: 100, totalPoints: 100 });
+      const message = makeMessage();
+
+      await handleMessageCreate(message);
+
+      expect(message.reply).not.toHaveBeenCalled();
+      expect(mockAward).toHaveBeenCalled();
+    });
+
+    it('does not look for candidates on a full/subtitle match', async () => {
+      mockClassify.mockReturnValue('subtitle');
+      mockAward.mockResolvedValue({ points: 100, totalPoints: 100 });
+
+      await handleMessageCreate(makeMessage());
+
+      expect(mockFindCandidates).not.toHaveBeenCalled();
+    });
   });
 });

@@ -221,3 +221,40 @@ export async function getLeaderboard(guildId: string): Promise<LeaderboardEntry[
     .map(([userId, points]) => ({ userId, points }))
     .sort((a, b) => b.points - a.points);
 }
+
+// Admin-only (see /admin challenge reset-scores): zeroes every user's
+// cumulative leaderboard total for the guild. Deliberately leaves past
+// challenges' own `correctGuesses` records untouched — those are a
+// historical log of who guessed what and when (already shown on past
+// reveal embeds), separate from the running leaderboard total this resets.
+export async function resetLeaderboard(guildId: string): Promise<void> {
+  const leaderboardStore = await loadLeaderboard();
+  delete leaderboardStore[guildId];
+  await saveLeaderboard(leaderboardStore);
+}
+
+export interface PointsAdjustment {
+  total: number;
+  // True when delta would have taken the user below 0 and got clamped —
+  // lets the caller tell a host their subtraction didn't fully "land"
+  // (e.g. subtracting 50 from a user who only had 30) instead of silently
+  // showing 0 with no explanation.
+  clamped: boolean;
+}
+
+// Host-only (see /host challenge points): adjusts one user's cumulative
+// leaderboard total by `delta` (positive to add, negative to subtract),
+// clamped at 0 — the leaderboard has no notion of negative points anywhere
+// else (getLeaderboard/buildLeaderboardEmbed both assume >= 0). Works even
+// for a user with no prior entry, so a host can award bonus points to
+// someone who's never guessed correctly.
+export async function adjustUserPoints(guildId: string, userId: string, delta: number): Promise<PointsAdjustment> {
+  const leaderboardStore = await loadLeaderboard();
+  const guildLeaderboard = leaderboardStore[guildId] ?? {};
+  const rawTotal = (guildLeaderboard[userId] ?? 0) + delta;
+  const total = Math.max(0, rawTotal);
+  guildLeaderboard[userId] = total;
+  leaderboardStore[guildId] = guildLeaderboard;
+  await saveLeaderboard(leaderboardStore);
+  return { total, clamped: rawTotal < 0 };
+}

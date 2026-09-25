@@ -29,7 +29,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
       {
         name: '🎲  /game',
         value: [
-          '`suggest` — Suggest a game to play at an event',
+          '`suggest` — Suggest a game to play at an event (you\'ll be asked how well you know it, so we can line up a teacher — others can tap 🎓 I Can Teach on the card)',
           '`list` — See the game lineup for an event (use inside an event channel)',
           '`cancel` — Remove a game suggestion — the suggester, the event host, or an admin can do this',
           '`bgstats` — Generate a "Log in BG Stats" button + QR code for one of this channel\'s suggested games',
@@ -73,6 +73,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         value: [
           '`post sell` — List an item for sale (BGG-assisted with expansion and price reference; custom items supported)',
           '`post trade` — List an item you want to trade away',
+          '`import` — Post several listings at once from a CSV file (preview first, nothing posts until you confirm)',
+          '`template` — Get a sample CSV to fill in for `import`',
           '`price` — Look up current BGG marketplace prices without creating a listing',
           '`conditions` — Show the condition grading scale (New → Acceptable)',
           '`browse` — Browse active listings (filter by sell or trade)',
@@ -108,7 +110,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         name: '🎲  /challenge — "Guess the Board Game"',
         value: [
           '`leaderboard` — See who has the most challenge points',
-          '`status` — See this cycle\'s hints so far, and when the next one posts. Reply with your guess in the configured channel — the schedule (daily, weekly, or bi-weekly) and hint/reveal times are set per-server via `/admin challenge config`',
+          '`status` — See this cycle\'s hints so far, and when the next one posts. Reply with your guess in the configured channel (if it could match several games, the bot asks which you meant) — the schedule (daily, weekly, or bi-weekly) and hint/reveal times are set per-server via `/admin challenge config`',
         ].join('\n'),
       },
       ...(isHost
@@ -121,9 +123,11 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
                 '`/host event cancel` — Cancel a game night',
                 '`/host event privacy` — Open or restrict one event\'s channel, overriding the server default',
                 '`/host event greeters` — Set, view, remove one, or clear all of this event\'s greeters — restricted to Light games, never seated together',
+                '`/host event repost` — Repost the lineup, requests, snacks or Quick Actions as a fresh pinned message',
                 '`/host event archive` — Archive past event channels',
                 '`/host game cancel` — Remove any game from the event lineup',
                 '`/host library unrequest` — Remove any game request from an event',
+                '`/host challenge points` — Add or subtract board game challenge points for a user',
               ].join('\n'),
             },
           ]
@@ -147,16 +151,22 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
               ].join('\n'),
             },
             {
-              name: '🔧  /admin — Welcome, marketplace & rooms',
+              name: '🔧  /admin — Welcome & marketplace',
               value: [
                 '`/admin welcome config` — Configure the welcome message/channel and the public new-member announcement channel',
                 '`/admin welcome test` — Preview the welcome message',
                 '`/admin welcome greet` — Manually send the welcome message to a member',
                 '`/admin marketplace config` — Set the marketplace channel (Forum or Text) and negotiation mode',
                 '`/admin marketplace purge` — Delete old/closed marketplace listings',
+              ].join('\n'),
+            },
+            {
+              name: '🔧  /admin — Rooms, challenge & usage',
+              value: [
                 '`/admin room config` — Set the Discord category used for /room private channels',
                 '`/admin general config` — Set the channel for the general chat "Quick Actions" button hub',
                 '`/admin challenge config` — Set the channel, frequency (daily/weekly/bi-weekly), on/off state, hint/reveal schedule, and whether old posts get cleaned up when a new cycle starts, for the board game challenge',
+                '`/admin challenge reset-scores` — Reset the board game challenge leaderboard for everyone (requires confirm:true)',
                 '`/admin usage` — Show which commands are used on this server, and how often',
                 '`/admin bgstats` — Show BG Stats link open counts for the most recently locked event',
               ].join('\n'),

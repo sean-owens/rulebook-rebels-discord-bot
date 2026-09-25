@@ -73,6 +73,8 @@ import {
 import { getBggAccount } from '../utils/bggAccountStorage';
 import { mergeUserCollection, UserCollectionEntry } from '../utils/userCollectionStorage';
 import { GENRE_TAG_DEFINITIONS } from '../utils/tagDefinitions';
+import { resolveJumpTarget } from '../utils/pageJump';
+import { sendLongRunningResult } from '../utils/longRunningReply';
 
 const HEADER_PATTERNS = new Set(['game', 'name', 'game name', 'title', 'board game', 'boardgame']);
 
@@ -974,9 +976,8 @@ function buildListButtons(pageIdx: number, totalPages: number): ActionRowBuilder
         .setDisabled(pageIdx === 0),
       new ButtonBuilder()
         .setCustomId('library_list_page')
-        .setLabel(`Page ${pageIdx + 1} of ${totalPages}`)
-        .setStyle(ButtonStyle.Secondary)
-        .setDisabled(true),
+        .setLabel(`Go to… (${pageIdx + 1}/${totalPages})`)
+        .setStyle(ButtonStyle.Primary),
       new ButtonBuilder()
         .setCustomId('library_list_next')
         .setLabel('Next →')
@@ -1066,6 +1067,59 @@ export async function handleLibraryListNav(
   await interaction.update({
     embeds: [buildListEmbed(session.pages, newPage, session.totalGames, session.ownerCount)],
     components: buildListButtons(newPage, session.pages.length),
+  });
+}
+
+function buildJumpModal(customId: string, totalPages: number): ModalBuilder {
+  return new ModalBuilder()
+    .setCustomId(customId)
+    .setTitle('Go to…')
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('target')
+          .setLabel(`Page number (1-${totalPages}) or game name`.slice(0, 45))
+          .setPlaceholder('e.g. 12, or "wing" to find Wingspan')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setMaxLength(50),
+      ),
+    );
+}
+
+export async function handleLibraryListJumpButton(interaction: ButtonInteraction): Promise<void> {
+  const session = listSessions.get(interaction.user.id);
+  if (!session) {
+    await interaction.update({
+      content: 'This list has expired — run `/library list` again.',
+      embeds: [],
+      components: [],
+    });
+    return;
+  }
+  await interaction.showModal(buildJumpModal('library_list_jump_modal', session.pages.length));
+}
+
+export async function handleLibraryListJumpModal(interaction: ModalSubmitInteraction): Promise<void> {
+  const session = listSessions.get(interaction.user.id);
+  if (!session || !interaction.isFromMessage()) {
+    await interaction.reply({
+      content: 'This list has expired — run `/library list` again.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const target = resolveJumpTarget(interaction.fields.getTextInputValue('target'), session.pages);
+  if ('error' in target) {
+    await interaction.reply({ content: target.error, flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  session.pageIndex = target.pageIndex;
+  await interaction.update({
+    embeds: [buildListEmbed(session.pages, target.pageIndex, session.totalGames, session.ownerCount)],
+    components: buildListButtons(target.pageIndex, session.pages.length),
   });
 }
 
@@ -1200,10 +1254,10 @@ export async function handleSyncAll(interaction: ChatInputCommandInteraction): P
     }
   }
 
-  await interaction.followUp({
-    content: `${force ? 'Sync' : 'Enrich'} complete — **${updated}** updated, **${failed}** failed.`,
-    flags: MessageFlags.Ephemeral,
-  });
+  await sendLongRunningResult(
+    interaction,
+    `${force ? 'Sync' : 'Enrich'} complete — **${updated}** updated, **${failed}** failed.`,
+  );
 }
 
 // Pre-warms game_info.json with full BGG details for BGG's top-ranked pool —
@@ -1272,10 +1326,7 @@ export async function handleBackfillTopRanked(interaction: ChatInputCommandInter
     }
   }
 
-  await interaction.followUp({
-    content: `Backfill complete — **${updated}** updated, **${failed}** failed.`,
-    flags: MessageFlags.Ephemeral,
-  });
+  await sendLongRunningResult(interaction, `Backfill complete — **${updated}** updated, **${failed}** failed.`);
 }
 
 export async function enrichFromBGG(canonical: string, force = false): Promise<void> {
@@ -1553,9 +1604,8 @@ function buildMineButtons(pageIdx: number, totalPages: number): ActionRowBuilder
         .setDisabled(pageIdx === 0),
       new ButtonBuilder()
         .setCustomId('library_mine_page')
-        .setLabel(`Page ${pageIdx + 1} of ${totalPages}`)
-        .setStyle(ButtonStyle.Secondary)
-        .setDisabled(true),
+        .setLabel(`Go to… (${pageIdx + 1}/${totalPages})`)
+        .setStyle(ButtonStyle.Primary),
       new ButtonBuilder()
         .setCustomId('library_mine_next')
         .setLabel('Next →')
@@ -1625,6 +1675,42 @@ export async function handleLibraryMineNav(
   await interaction.update({
     embeds: [buildMineEmbed(session.pages, newPage, session.totalGames)],
     components: buildMineButtons(newPage, session.pages.length),
+  });
+}
+
+export async function handleLibraryMineJumpButton(interaction: ButtonInteraction): Promise<void> {
+  const session = mineSessions.get(interaction.user.id);
+  if (!session) {
+    await interaction.update({
+      content: 'This list has expired — run `/library mine` again.',
+      embeds: [],
+      components: [],
+    });
+    return;
+  }
+  await interaction.showModal(buildJumpModal('library_mine_jump_modal', session.pages.length));
+}
+
+export async function handleLibraryMineJumpModal(interaction: ModalSubmitInteraction): Promise<void> {
+  const session = mineSessions.get(interaction.user.id);
+  if (!session || !interaction.isFromMessage()) {
+    await interaction.reply({
+      content: 'This list has expired — run `/library mine` again.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const target = resolveJumpTarget(interaction.fields.getTextInputValue('target'), session.pages);
+  if ('error' in target) {
+    await interaction.reply({ content: target.error, flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  session.pageIndex = target.pageIndex;
+  await interaction.update({
+    embeds: [buildMineEmbed(session.pages, target.pageIndex, session.totalGames)],
+    components: buildMineButtons(target.pageIndex, session.pages.length),
   });
 }
 

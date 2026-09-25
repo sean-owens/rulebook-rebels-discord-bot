@@ -19,6 +19,9 @@ import {
   buildBgStatsButtonUrl,
   buildBgStatsQrAttachment,
 } from './bgStats';
+import { GuestSeat, isGuestSeatId, guestDisplayName } from './guestSeats';
+import { findGamesNeedingTeacher, buildTeacherHostMessage } from './teaching';
+import { sendSnackReminders } from './snackReminders';
 
 export const LOCK_MESSAGE =
   "This event's lineup is locked ahead of the scheduled start — suggestions and seats can no longer change.";
@@ -1064,8 +1067,13 @@ export function buildScheduleEmbed(
   gn: Pick<GameNight, 'title' | 'startTimeISO' | 'greeters'>,
   games: Pick<SchedulableGame, 'id' | 'title' | 'seatedPlayers'>[],
   result: ScheduleResult,
+  guests: GuestSeat[] = [],
 ): EmbedBuilder {
   const gameById = new Map(games.map((g) => [g.id, g]));
+  // An empty owner-name map is deliberate: guestDisplayName falls back to a
+  // raw `<@ownerId}>` mention, which Discord renders correctly for the
+  // (real) owner — no async name-fetch needed just for this embed.
+  const mention = (id: string) => (isGuestSeatId(id) ? guestDisplayName(id, guests, {}) : `<@${id}>`);
 
   const embed = new EmbedBuilder()
     .setTitle(`🔒 Lineup Locked — ${gn.title ?? 'Game Night'}`)
@@ -1098,7 +1106,7 @@ export function buildScheduleEmbed(
       const repeatNote = a.playCount > 1 ? ` (${a.playCount}x)` : '';
       const playersNote =
         a.attendingPlayerIds.length > 0
-          ? ` — ${a.attendingPlayerIds.map((id) => `<@${id}>`).join(', ')}`
+          ? ` — ${a.attendingPlayerIds.map(mention).join(', ')}`
           : '';
       // Anyone signed up but not part of this quorum-based estimate (see
       // quorumThreshold) is still shown here, rather than silently vanishing
@@ -1106,7 +1114,7 @@ export function buildScheduleEmbed(
       const lateSigners = game ? game.seatedPlayers.filter((id) => !a.attendingPlayerIds.includes(id)) : [];
       const lateJoinersNote =
         lateSigners.length > 0
-          ? ` (+ ${lateSigners.map((id) => `<@${id}>`).join(', ')} can join once free)`
+          ? ` (+ ${lateSigners.map(mention).join(', ')} can join once free)`
           : '';
 
       const lateNote = a.mayNotFinish ? ' ⚠️' : '';
@@ -1137,7 +1145,7 @@ export function buildScheduleEmbed(
     const lines = result.walkUps.map((w) => {
       const game = gameById.get(w.gameId);
       const title = game?.title ?? 'Unknown game';
-      const playersNote = game && game.seatedPlayers.length > 0 ? ` — ${game.seatedPlayers.map((id) => `<@${id}>`).join(', ')}` : '';
+      const playersNote = game && game.seatedPlayers.length > 0 ? ` — ${game.seatedPlayers.map(mention).join(', ')}` : '';
       return `**${title}**${playersNote}`;
     });
     embed.addFields({
@@ -1149,7 +1157,7 @@ export function buildScheduleEmbed(
   if (result.playerWarnings.length > 0) {
     embed.addFields({
       name: '⚠️ May not get to play everything',
-      value: joinWithBudget(result.playerWarnings.map((w) => `<@${w.userId}> — ${w.reason}`)),
+      value: joinWithBudget(result.playerWarnings.map((w) => `${mention(w.userId)} — ${w.reason}`)),
     });
   }
 
@@ -1201,6 +1209,8 @@ async function postBgStatsButtons(
     attendingPlayerIds: string[];
     assignment?: ScheduleAssignment;
   }
+  // A guest has no BGG/BG Stats account — excluded from every session's
+  // roster entirely rather than logging a play against a phantom account.
   const sessions: Session[] = [];
   for (const a of result.assignments) {
     const realGame = gameById.get(baseGameId(a.gameId));
@@ -1209,7 +1219,7 @@ async function postBgStatsButtons(
       sessionId: a.gameId,
       realGame,
       title: resolvedById.get(a.gameId)?.title ?? realGame.title,
-      attendingPlayerIds: a.attendingPlayerIds,
+      attendingPlayerIds: a.attendingPlayerIds.filter((id) => !isGuestSeatId(id)),
       assignment: a,
     });
   }
@@ -1218,7 +1228,12 @@ async function postBgStatsButtons(
     if (!realGame) continue;
     // A walk-up game (see WalkUpGame) never gets a real assignment — fall
     // back to its lone seated signup rather than "no players."
-    sessions.push({ sessionId: w.gameId, realGame, title: realGame.title, attendingPlayerIds: realGame.seats });
+    sessions.push({
+      sessionId: w.gameId,
+      realGame,
+      title: realGame.title,
+      attendingPlayerIds: realGame.seats.filter((id) => !isGuestSeatId(id)),
+    });
   }
 
   const allPlayerIds = [...new Set(sessions.flatMap((s) => s.attendingPlayerIds))];
@@ -1492,10 +1507,13 @@ export async function lockAndScheduleEvent(
     await reconcileRequestCopies(client, gn.guildId, gn.rsvps, req, gn.date);
   }
 
+  await sendSnackReminders(client, gn);
+
   if (gn.eventChannelId) {
     try {
       const channel = (await client.channels.fetch(gn.eventChannelId)) as TextChannel;
-      await channel?.send({ embeds: [buildScheduleEmbed(gn, result.resolvedGames, result)] });
+      const guests = games.flatMap((g) => g.guests ?? []);
+      await channel?.send({ embeds: [buildScheduleEmbed(gn, result.resolvedGames, result, guests)] });
     } catch (err) {
       console.warn(`Could not post schedule for game night ${gn.id}:`, err);
     }
@@ -1503,6 +1521,16 @@ export async function lockAndScheduleEvent(
 
   if (config.postBgStatsLinks) {
     await postBgStatsButtons(client, gn, games, result);
+  }
+
+  const needTeacher = findGamesNeedingTeacher(games);
+  if (needTeacher.length > 0) {
+    try {
+      const host = await client.users.fetch(gn.createdBy);
+      await host.send(buildTeacherHostMessage(gn.title ?? 'your event', needTeacher));
+    } catch (err) {
+      console.warn(`Could not DM host about games needing a teacher for game night ${gn.id}:`, err);
+    }
   }
 
   console.log(
@@ -1561,7 +1589,8 @@ export async function previewSchedule(interaction: ChatInputCommandInteraction):
   );
   const result = scheduleGames(schedulable, tableCount, windowMinutes, config);
 
-  const embed = buildScheduleEmbed(gn, result.resolvedGames, result)
+  const guests = games.flatMap((g) => g.guests ?? []);
+  const embed = buildScheduleEmbed(gn, result.resolvedGames, result, guests)
     .setTitle(`🔍 Schedule Preview — ${gn.title ?? 'Game Night'}`)
     .setDescription(
       'Dry run only — suggestions are NOT locked, nothing is saved, and nothing is posted to the event channel.',
