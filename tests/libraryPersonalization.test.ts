@@ -32,6 +32,12 @@ describe('/library random and /library search — personalized to /myroles prefe
     await addGame(GUILD_ID, USER_ID, 'Gloomhaven');
     await upsertGameInfo({ gameName: 'Gloomhaven', tags: ['Co-op'], complexity: 'Heavy', updatedAt: '' });
 
+    // A second Heavy game so a Heavy-preference search yields a results list;
+    // exactly one match now opens the /library view card instead (see
+    // librarySearchTitle.test.ts).
+    await addGame(GUILD_ID, USER_ID, 'Twilight Imperium');
+    await upsertGameInfo({ gameName: 'Twilight Imperium', tags: ['Strategy'], complexity: 'Heavy', updatedAt: '' });
+
     await addGame(GUILD_ID, USER_ID, 'Chess');
     await upsertGameInfo({ gameName: 'Chess', tags: ['Abstract'], complexity: 'Medium', updatedAt: '' });
   });
@@ -53,6 +59,8 @@ describe('/library random and /library search — personalized to /myroles prefe
         getInteger: () => null,
       },
       reply: vi.fn(async () => {}),
+      deferReply: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
     };
     return interaction as any;
   }
@@ -107,7 +115,10 @@ describe('/library random and /library search — personalized to /myroles prefe
     expect(interaction.reply).toHaveBeenCalled();
     const embed = interaction.reply.mock.calls[0][0].embeds[0].toJSON();
     expect(embed.description).toContain('/myroles');
-    expect(embed.fields[0].value).toContain('Gloomhaven');
+    const body = embed.fields.map((f: any) => f.value).join('\n');
+    expect(body).toContain('Gloomhaven');
+    expect(body).toContain('Twilight Imperium');
+    expect(body).not.toContain('Codenames');
   });
 
   it('/library search still errors when the caller has no explicit filters and no /myroles preferences', async () => {
@@ -125,8 +136,10 @@ describe('/library random and /library search — personalized to /myroles prefe
     const interaction = makeInteractionWithRoles('search', ['role-heavy'], { tag: 'Party' });
     await execute(interaction);
 
-    const embed = interaction.reply.mock.calls[0][0].embeds[0].toJSON();
-    expect(embed.description).not.toContain('/myroles');
-    expect(embed.fields[0].value).toContain('Codenames');
+    // Party matches only Codenames, so the single result opens its /library view
+    // card. It being Codenames (not a Heavy game) proves the explicit tag won.
+    expect(interaction.reply).not.toHaveBeenCalled();
+    const embed = interaction.editReply.mock.calls[0][0].embeds[0].toJSON();
+    expect(embed.title).toBe('Codenames');
   });
 });
