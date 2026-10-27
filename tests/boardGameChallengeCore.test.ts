@@ -74,7 +74,7 @@ import {
   updateChallengeLeaderboardPin,
 } from '../src/utils/boardGameChallenge';
 import { BGGGame } from '../src/utils/bgg';
-import { _loadFromCsvText, _resetCatalog } from '../src/utils/bggCatalog';
+import { _loadFromCsvText, _resetCatalog, addCatalogEntry } from '../src/utils/bggCatalog';
 import { WeeklyChallenge } from '../src/utils/boardGameChallengeStorage';
 
 function makeGame(overrides: Partial<BGGGame> = {}): BGGGame {
@@ -292,6 +292,8 @@ describe('findDisambiguationCandidates', () => {
 6,"Star Wars: Rebellion",2016,120,,,,0,
 7,"Risk: Star Wars Edition",2005,,,,,0,
 8,Wingspan,2019,5,,,,0,
+9,"Ticket to Ride: Brand New Scenario Pack",2026,,,,,0,
+10,"Ticket to Ride: Promo Cards",2012,,,,,0,
 `;
 
   beforeEach(() => {
@@ -303,6 +305,26 @@ describe('findDisambiguationCandidates', () => {
   it('lists every non-expansion game sharing the guessed base, best-ranked first', () => {
     const result = findDisambiguationCandidates('ticket to ride', '2');
     expect(result.map((e) => e.id)).toEqual(['1', '2', '3']);
+  });
+
+  it('excludes unranked entries whose expansion flag is unreliable (new/unrated expansions and promos)', () => {
+    // 9 and 10 are listed is_expansion=0 with no rank, exactly how BGG's dump
+    // lists freshly announced expansions/promos (issue #115) — they must not
+    // show up as "which did you mean?" options.
+    const ids = findDisambiguationCandidates('ticket to ride', '2').map((e) => e.id);
+    expect(ids).not.toContain('9');
+    expect(ids).not.toContain('10');
+    expect(ids).not.toContain('4'); // flagged expansion
+  });
+
+  it('excludes live-search discoveries, which carry a placeholder isExpansion=false and no rank', () => {
+    addCatalogEntry({ id: '11', name: 'Ticket to Ride: Discovered Pack', year: 2026, isExpansion: false, rank: null });
+    expect(findDisambiguationCandidates('ticket to ride', '2').map((e) => e.id)).toEqual(['1', '2', '3']);
+  });
+
+  it('still includes the real answer even when the catalog has it unranked', () => {
+    // Game 5 is unranked in the fixture; as the answer it must remain a choice.
+    expect(findDisambiguationCandidates('star wars', '5').map((e) => e.id)).toContain('5');
   });
 
   it('only counts games whose own base matches, not ones that merely contain the words', () => {
