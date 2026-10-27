@@ -13,7 +13,12 @@ import {
 } from 'discord.js';
 import { randomUUID } from 'crypto';
 import { loadGameNights, findGameNight, upsertGameNight, GameNight } from '../utils/storage';
-import { buildGameNightEmbed, buildGameNightButtons } from '../utils/embeds';
+import {
+  buildGameNightEmbed,
+  buildGameNightButtons,
+  buildForumPostContent,
+  FORUM_POST_ALLOWED_MENTIONS,
+} from '../utils/embeds';
 import { cleanupCancelledNight } from './cancelHelper';
 import { getGuildConfig, updateGuildConfig, GuildConfig } from '../utils/config';
 import { isValidTimeZone, zonedTimeToUtc, todayInTimeZone } from '../utils/timezone';
@@ -338,9 +343,10 @@ export async function handleCreate(interaction: ChatInputCommandInteraction): Pr
         name: threadName,
         appliedTags: resolvedGameNightTag(tagIds, 'upcoming'),
         message: {
-          content: '@everyone',
+          content: buildForumPostContent(gn),
           embeds: [buildGameNightEmbed(gn, {})],
           components: [buildGameNightButtons(id)],
+          allowedMentions: FORUM_POST_ALLOWED_MENTIONS,
         },
       });
       gn.messageId = thread.id; // thread ID === starter message ID in Discord
@@ -558,7 +564,11 @@ export async function handleEdit(interaction: ChatInputCommandInteraction): Prom
         const thread = await interaction.client.channels.fetch(gn.messageId);
         if (thread?.isThread()) {
           const starter = await thread.fetchStarterMessage();
-          await starter?.edit({ embeds: [buildGameNightEmbed(gn, {})] });
+          await starter?.edit({
+            content: buildForumPostContent(gn),
+            embeds: [buildGameNightEmbed(gn, {})],
+            allowedMentions: FORUM_POST_ALLOWED_MENTIONS,
+          });
           await thread.setName(`${title} · ${date} · ${time}`.slice(0, 100));
         }
       } else {
