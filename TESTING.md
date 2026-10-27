@@ -2855,7 +2855,7 @@ These features are triggered by Discord events and scheduled timers rather than 
 
 ## 4.2 Delayed Channel Lock
 
-**What it does:** 7 days after archiving, the bot locks the channel by setting `SendMessages: false` for everyone.
+**What it does:** 7 days after archiving, the bot locks the channel by setting `SendMessages: false` (and `AddReactions: false`, when the bot has the Add Reactions permission) for everyone. The lock never changes who can *see* the channel — a private (RSVP-only) event channel stays hidden from non-attendees, an open one stays visible.
 
 **Prerequisites:** run 4.1 first so there's an archived event channel to lock.
 
@@ -2866,6 +2866,10 @@ These features are triggered by Discord events and scheduled timers rather than 
   - Members can no longer post in the channel
   - `locked: true` is saved to `gamenights.json`
 - [ ] Restart the bot with a past-due `lockAt` record — confirm the lock is applied on startup without waiting for the hourly check
+- [ ] Regression (#118): with the bot authorized via the current invite link (includes Add Reactions), lock an archived channel — confirm `@everyone` shows Send Messages ✗ and Add Reactions ✗, no `Missing Permissions` in the logs, and `locked: true` is saved
+- [ ] Regression (#118): with a bot that has NOT yet been re-authorized (no Add Reactions), lock an archived channel — confirm it still locks (Send Messages ✗, "now read-only" posted, `locked: true`), and the logs show a warning that it locked without blocking reactions because the bot lacks Add Reactions
+- [ ] Lock an archived **private** (RSVP-only) event channel — confirm a non-attendee still cannot see it afterward, and attendees can see it but can no longer post
+- [ ] Lock an archived **open** event channel — confirm everyone can still see it but nobody can post
 
 ## 4.3 Archived Channel Auto-Deletion
 

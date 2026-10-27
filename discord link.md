@@ -1,6 +1,6 @@
-DEV: https://discord.com/oauth2/authorize?client_id=1524058711222652958&permissions=2251825852181552&integration_type=0&scope=applications.commands+bot
+DEV: https://discord.com/oauth2/authorize?client_id=1524058711222652958&permissions=2251825852181616&integration_type=0&scope=applications.commands+bot
 
-PROD: https://discord.com/oauth2/authorize?client_id=1518299080932200458&permissions=2251825852181552&integration_type=0&scope=applications.commands+bot
+PROD: https://discord.com/oauth2/authorize?client_id=1518299080932200458&permissions=2251825852181616&integration_type=0&scope=applications.commands+bot
 
 --- Bot Invite Link Reference ---
 
@@ -19,6 +19,10 @@ Required permissions:
   Embed Links                — Send rich embeds (game cards, library views, RSVP embeds, BGG data)
   Attach Files               — Send the "Powered by BGG" logo as a file attachment
   Read Message History       — Read existing messages to update/edit embeds
+  Add Reactions              — React ❌ to wrong board game challenge guesses, and required to deny reactions when an
+                                archived event channel is locked (Discord rejects an overwrite edit for any permission
+                                the bot lacks, which failed the whole lock with 50013 — issue #118). Added 2026-10-27;
+                                DEV and PROD both need re-authorizing via the links above for it to take effect.
   Manage Messages            — Delete game cards on cancel
   Pin Messages               — Pin the Quick Actions/Game Lineup/Games to Bring/Snacks List messages. Split out from
                                 Manage Messages as its own permission (bit 51) — Manage Messages alone no longer
