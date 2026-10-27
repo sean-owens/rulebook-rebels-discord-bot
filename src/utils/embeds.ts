@@ -67,6 +67,43 @@ export function buildGameNightEmbed(gn: GameNight, nameMap: Record<string, strin
   return embed;
 }
 
+const FORUM_PREVIEW_DESCRIPTION_CHARS = 300;
+
+// Forum post cards only preview a message's text and attachments — never a bot's
+// embed — so a post whose text is just "@everyone" shows up as a huge empty card
+// (#112). This is the human-readable summary that goes under the ping so the card
+// has real content. It mirrors the embed's date/location/description, and the
+// embed stays the source of truth for RSVPs.
+//
+// Location and description are host-typed free text, and in message *content* (unlike
+// an embed field) a stray "@everyone" or "<@&role>" would really ping. Mentions are
+// defused with a zero-width space, and callers also pass allowedMentions limited to
+// the one deliberate leading @everyone (see FORUM_POST_ALLOWED_MENTIONS).
+function defuseMentions(text: string): string {
+  return text.replace(/@/g, '@​').replace(/<(@[!&]?|#)(\d+)>/g, '<​$1$2>');
+}
+
+export const FORUM_POST_ALLOWED_MENTIONS = { parse: ['everyone' as const] };
+
+export function buildForumPostContent(gn: GameNight): string {
+  const startUnix = Math.floor(new Date(gn.startTimeISO).getTime() / 1000);
+  const endUnix = gn.endTimeISO ? Math.floor(new Date(gn.endTimeISO).getTime() / 1000) : null;
+
+  const when = endUnix ? `<t:${startUnix}:F> – <t:${endUnix}:t>` : `<t:${startUnix}:F>`;
+  const lines = ['@everyone', `📅 ${when}`, `📍 ${defuseMentions(gn.location || 'TBD')}`];
+
+  const description = gn.description?.trim();
+  if (description) {
+    const short =
+      description.length > FORUM_PREVIEW_DESCRIPTION_CHARS
+        ? `${description.slice(0, FORUM_PREVIEW_DESCRIPTION_CHARS - 1).trimEnd()}…`
+        : description;
+    lines.push(defuseMentions(short));
+  }
+
+  return lines.join('\n');
+}
+
 export function buildGameNightButtons(
   gnId: string,
   disabled = false,

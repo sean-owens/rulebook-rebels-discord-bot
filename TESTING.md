@@ -1578,7 +1578,7 @@ No permission differences from a regular member (see 1.7o for the full checklist
 
 ### 2.8a `/host event create`
 
-**What it does:** Creates a Discord scheduled event, a text channel, and posts an RSVP embed in the configured announcements channel. If the announcements channel is a **Forum Channel**, the event becomes a forum thread instead of a plain message, tagged "Upcoming" (see 3.9a for eager tag creation).
+**What it does:** Creates a Discord scheduled event, a text channel, and posts an RSVP embed in the configured announcements channel. If the announcements channel is a **Forum Channel**, the event becomes a forum thread instead of a plain message, tagged "Upcoming" (see 3.9a for eager tag creation). The thread's text carries a short summary under the @everyone ping — the date/time, location, and (shortened) description — because forum cards only preview a post's text, not its embed; without it the card is a large empty box.
 
 - [ ] Create an event with required fields only: `/host event create title:Board Game Bash date:August 22 time:7pm` — confirm:
   - Discord scheduled event is created, named `Board Game Bash — <full date>`
@@ -1587,6 +1587,9 @@ No permission differences from a regular member (see 1.7o for the full checklist
   - Channel topic also ends with "Event ID: `<id>`" — confirm the ID matches the one shown in the RSVP embed footer, so the ID is visible from the event channel itself, not just the announcement post
   - RSVP embed is posted in the announcements channel, titled `Board Game Bash — <full date>`
 - [ ] With the announcements channel set to a Forum Channel (3.9a), create an event — confirm a new forum thread is posted with the "Upcoming" tag applied
+- [ ] Regression (#112): look at that thread in the forum's card/gallery view — confirm the card shows "@everyone", the 📅 date/time, and the 📍 location (plus the description, if you gave one) instead of a large empty box
+- [ ] Create a forum event whose `location` is `@everyone` and whose `description` is `@here <@&some-role-id>` — confirm the only ping is the single leading @everyone (no second ping, no role/user pinged), and the text still reads naturally
+- [ ] Create a forum event with a very long description — confirm the card text is cut off with "…" while the embed inside the thread still shows the full description
 - [ ] Attempt to create an event without `title` — confirm Discord rejects it as a missing required option
 - [ ] Create an event with all fields (end_time, location, link, description) — confirm all appear in the embed
 - [ ] Confirm date formats work: `aug 22`, `August 22`, `august 22, 2026`, `Sept 2nd` (regression: the 4-letter "Sept" abbreviation previously failed to parse — only 3-letter "Sep" and the full "September" worked)
@@ -1602,6 +1605,7 @@ No permission differences from a regular member (see 1.7o for the full checklist
 - [ ] Run `/host event edit id:<event-id>` with no other options — confirm "Provide at least one field to update" error
 - [ ] Run `/host event edit id:<event-id> location:New Venue` — confirm the RSVP embed updates to show the new location
 - [ ] Run `/host event edit id:<event-id> title:New Title` — confirm the event channel is renamed and re-topic'd, the Discord scheduled event's name updates, and the RSVP embed title updates
+- [ ] With a forum announcements channel, run `/host event edit id:<event-id> location:New Venue` — confirm the thread's text (📍 line) updates along with the embed, so the forum card never shows a stale location, and that editing does not re-ping @everyone
 - [ ] Run `/host event edit id:<event-id> date:<a new date>` with no `end_time` — confirm the event's overall duration is preserved (end time shifts by the same amount as the date/start time)
 - [ ] Run `/host event edit id:<event-id> end_time:<a new end time>` — confirm only the end time changes
 - [ ] Attempt to edit with an invalid ID — confirm "No event found" error
@@ -2393,7 +2397,7 @@ No permission differences from a regular member (see 1.3e2 for the full checklis
 
 ### 3.8a `/host event create`
 
-**What it does:** Creates a Discord scheduled event, a text channel, and posts an RSVP embed in the configured announcements channel. If the announcements channel is a **Forum Channel**, the event becomes a forum thread instead of a plain message, tagged "Upcoming" (see 3.9a for eager tag creation).
+**What it does:** Creates a Discord scheduled event, a text channel, and posts an RSVP embed in the configured announcements channel. If the announcements channel is a **Forum Channel**, the event becomes a forum thread instead of a plain message, tagged "Upcoming" (see 3.9a for eager tag creation). The thread's text carries a short summary under the @everyone ping — the date/time, location, and (shortened) description — because forum cards only preview a post's text, not its embed; without it the card is a large empty box.
 
 - [ ] Create an event with required fields only: `/host event create title:Board Game Bash date:August 22 time:7pm` — confirm:
   - Discord scheduled event is created, named `Board Game Bash — <full date>`
@@ -2402,6 +2406,9 @@ No permission differences from a regular member (see 1.3e2 for the full checklis
   - Channel topic also ends with "Event ID: `<id>`" — confirm the ID matches the one shown in the RSVP embed footer, so the ID is visible from the event channel itself, not just the announcement post
   - RSVP embed is posted in the announcements channel, titled `Board Game Bash — <full date>`
 - [ ] With the announcements channel set to a Forum Channel (3.9a), create an event — confirm a new forum thread is posted with the "Upcoming" tag applied
+- [ ] Regression (#112): look at that thread in the forum's card/gallery view — confirm the card shows "@everyone", the 📅 date/time, and the 📍 location (plus the description, if you gave one) instead of a large empty box
+- [ ] Create a forum event whose `location` is `@everyone` and whose `description` is `@here <@&some-role-id>` — confirm the only ping is the single leading @everyone (no second ping, no role/user pinged), and the text still reads naturally
+- [ ] Create a forum event with a very long description — confirm the card text is cut off with "…" while the embed inside the thread still shows the full description
 - [ ] Attempt to create an event without `title` — confirm Discord rejects it as a missing required option
 - [ ] Create an event with all fields (end_time, location, link, description) — confirm all appear in the embed
 - [ ] Confirm date formats work: `aug 22`, `August 22`, `august 22, 2026`, `Sept 2nd` (regression: the 4-letter "Sept" abbreviation previously failed to parse — only 3-letter "Sep" and the full "September" worked)
@@ -2417,6 +2424,7 @@ No permission differences from a regular member (see 1.3e2 for the full checklis
 - [ ] Run `/host event edit id:<event-id>` with no other options — confirm "Provide at least one field to update" error
 - [ ] Run `/host event edit id:<event-id> location:New Venue` — confirm the RSVP embed updates to show the new location
 - [ ] Run `/host event edit id:<event-id> title:New Title` — confirm the event channel is renamed and re-topic'd, the Discord scheduled event's name updates, and the RSVP embed title updates
+- [ ] With a forum announcements channel, run `/host event edit id:<event-id> location:New Venue` — confirm the thread's text (📍 line) updates along with the embed, so the forum card never shows a stale location, and that editing does not re-ping @everyone
 - [ ] Run `/host event edit id:<event-id> date:<a new date>` with no `end_time` — confirm the event's overall duration is preserved (end time shifts by the same amount as the date/start time)
 - [ ] Run `/host event edit id:<event-id> end_time:<a new end time>` — confirm only the end time changes
 - [ ] Attempt to edit with an invalid ID — confirm "No event found" error
