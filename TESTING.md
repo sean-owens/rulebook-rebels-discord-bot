@@ -474,8 +474,16 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.4l `/library search`
 
-**What it does:** Searches the library with filters for player count, tags, duration, and complexity. If no `tag`/`tag2`/`tag3` or `complexity` option is given, it defaults to your own `/myroles` preferences (1.5) instead of requiring you to type them every time.
+**What it does:** Searches the library with filters for title, player count, tags, duration, and complexity. `title` matches any game whose name contains the typed words (case-insensitive, word-prefix, small typos tolerated — the same matching as the "did you mean" picker in `/library view`), and leaves expansions out. When exactly one game matches, the bot skips the results list and shows that game's full `/library view` card instead. If no `tag`/`tag2`/`tag3`, `complexity`, or `title` option is given, it defaults to your own `/myroles` preferences (1.5) instead of requiring you to type them every time.
 
+- [ ] `/library search title:catan` with several matching games in the library (e.g. "Catan" and "Catan Junior") — confirm a results list of every game whose name matches, and the description reads "N games matching title **catan**"
+- [ ] `/library search title:ticket ride` (words out of the full name, wrong case) — confirm it still finds "Ticket to Ride"
+- [ ] `/library search title:` of a game with exactly one match — confirm no results list appears; instead the same full game card as `/library view <game>` is shown (owners, players, play time, etc.)
+- [ ] `/library search title:` of a base game whose expansion is also in the library — confirm the expansion does not appear in the results, so the base game alone resolves to its view card
+- [ ] `/library search title:catan tag:Family` — confirm title and tag combine (both must match)
+- [ ] With `/myroles` preferences set, run `/library search title:<a game outside your preferred genres>` — confirm the game is still found and there is no "(from your /myroles)" note (preferences never narrow a title search)
+- [ ] `/library search title:zzzzz` — confirm "No games found matching title **zzzzz**."
+- [ ] Run any `/library search` filter combination that matches exactly one game (e.g. `players:` + `tag:` narrowing to one) — confirm that single result is also shown as the full view card
 - [ ] `/library search players:4` — confirm results include games supporting 4 players, sorted by proximity to 4
 - [ ] `/library search players:2,4` (multiple counts) — confirm games matching either count appear
 - [ ] `/library search tag:Co-op` — confirm only Co-op tagged games appear
@@ -489,7 +497,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Combine filters (e.g. `players`, `tag`, and `complexity` together) — confirm all filters apply together (AND across filter types, OR within tag1/2/3)
 - [ ] Set genre/difficulty preferences via `/myroles` (1.5), then run `/library search` with no options at all — confirm it searches using those preferences instead of erroring, and the result description notes "(from your /myroles)"
 - [ ] With `/myroles` preferences set, run `/library search tag:Party` (a tag different from your preference) — confirm the explicit tag wins over your preferences, with no "(from your /myroles)" note
-- [ ] With no `/myroles` preferences set, run `/library search` with no options at all — confirm error: "Provide at least one valid filter: `players`, `tag`, or `duration` — or set your preferences with `/myroles` to search based on those."
+- [ ] With no `/myroles` preferences set, run `/library search` with no options at all — confirm error: "Provide at least one valid filter: `title`, `players`, `tag`, or `duration` — or set your preferences with `/myroles` to search based on those."
 - [ ] Search with valid filters but no matches — confirm "No games matched your filters"
 
 ### 1.4m `/library random`
@@ -1311,8 +1319,16 @@ No permission differences from a regular member (see 1.3e2 for the full checklis
 
 ### 2.4l `/library search`
 
-**What it does:** Searches the library with filters for player count, tags, duration, and complexity. If no `tag`/`tag2`/`tag3` or `complexity` option is given, it defaults to your own `/myroles` preferences (2.5) instead of requiring you to type them every time.
+**What it does:** Searches the library with filters for title, player count, tags, duration, and complexity. `title` matches any game whose name contains the typed words (case-insensitive, word-prefix, small typos tolerated — the same matching as the "did you mean" picker in `/library view`), and leaves expansions out. When exactly one game matches, the bot skips the results list and shows that game's full `/library view` card instead. If no `tag`/`tag2`/`tag3`, `complexity`, or `title` option is given, it defaults to your own `/myroles` preferences (2.5) instead of requiring you to type them every time.
 
+- [ ] `/library search title:catan` with several matching games in the library (e.g. "Catan" and "Catan Junior") — confirm a results list of every game whose name matches, and the description reads "N games matching title **catan**"
+- [ ] `/library search title:ticket ride` (words out of the full name, wrong case) — confirm it still finds "Ticket to Ride"
+- [ ] `/library search title:` of a game with exactly one match — confirm no results list appears; instead the same full game card as `/library view <game>` is shown (owners, players, play time, etc.)
+- [ ] `/library search title:` of a base game whose expansion is also in the library — confirm the expansion does not appear in the results, so the base game alone resolves to its view card
+- [ ] `/library search title:catan tag:Family` — confirm title and tag combine (both must match)
+- [ ] With `/myroles` preferences set, run `/library search title:<a game outside your preferred genres>` — confirm the game is still found and there is no "(from your /myroles)" note (preferences never narrow a title search)
+- [ ] `/library search title:zzzzz` — confirm "No games found matching title **zzzzz**."
+- [ ] Run any `/library search` filter combination that matches exactly one game (e.g. `players:` + `tag:` narrowing to one) — confirm that single result is also shown as the full view card
 - [ ] `/library search players:4` — confirm results include games supporting 4 players, sorted by proximity to 4
 - [ ] `/library search players:2,4` (multiple counts) — confirm games matching either count appear
 - [ ] `/library search tag:Co-op` — confirm only Co-op tagged games appear
@@ -1326,7 +1342,7 @@ No permission differences from a regular member (see 1.3e2 for the full checklis
 - [ ] Combine filters (e.g. `players`, `tag`, and `complexity` together) — confirm all filters apply together (AND across filter types, OR within tag1/2/3)
 - [ ] Set genre/difficulty preferences via `/myroles` (2.5), then run `/library search` with no options at all — confirm it searches using those preferences instead of erroring, and the result description notes "(from your /myroles)"
 - [ ] With `/myroles` preferences set, run `/library search tag:Party` (a tag different from your preference) — confirm the explicit tag wins over your preferences, with no "(from your /myroles)" note
-- [ ] With no `/myroles` preferences set, run `/library search` with no options at all — confirm error: "Provide at least one valid filter: `players`, `tag`, or `duration` — or set your preferences with `/myroles` to search based on those."
+- [ ] With no `/myroles` preferences set, run `/library search` with no options at all — confirm error: "Provide at least one valid filter: `title`, `players`, `tag`, or `duration` — or set your preferences with `/myroles` to search based on those."
 - [ ] Search with valid filters but no matches — confirm "No games matched your filters"
 
 ### 2.4m `/library random`
@@ -2147,8 +2163,16 @@ No permission differences from a regular member (see 1.3e2 for the full checklis
 
 ### 3.4l `/library search`
 
-**What it does:** Searches the library with filters for player count, tags, duration, and complexity. If no `tag`/`tag2`/`tag3` or `complexity` option is given, it defaults to your own `/myroles` preferences (3.5) instead of requiring you to type them every time.
+**What it does:** Searches the library with filters for title, player count, tags, duration, and complexity. `title` matches any game whose name contains the typed words (case-insensitive, word-prefix, small typos tolerated — the same matching as the "did you mean" picker in `/library view`), and leaves expansions out. When exactly one game matches, the bot skips the results list and shows that game's full `/library view` card instead. If no `tag`/`tag2`/`tag3`, `complexity`, or `title` option is given, it defaults to your own `/myroles` preferences (3.5) instead of requiring you to type them every time.
 
+- [ ] `/library search title:catan` with several matching games in the library (e.g. "Catan" and "Catan Junior") — confirm a results list of every game whose name matches, and the description reads "N games matching title **catan**"
+- [ ] `/library search title:ticket ride` (words out of the full name, wrong case) — confirm it still finds "Ticket to Ride"
+- [ ] `/library search title:` of a game with exactly one match — confirm no results list appears; instead the same full game card as `/library view <game>` is shown (owners, players, play time, etc.)
+- [ ] `/library search title:` of a base game whose expansion is also in the library — confirm the expansion does not appear in the results, so the base game alone resolves to its view card
+- [ ] `/library search title:catan tag:Family` — confirm title and tag combine (both must match)
+- [ ] With `/myroles` preferences set, run `/library search title:<a game outside your preferred genres>` — confirm the game is still found and there is no "(from your /myroles)" note (preferences never narrow a title search)
+- [ ] `/library search title:zzzzz` — confirm "No games found matching title **zzzzz**."
+- [ ] Run any `/library search` filter combination that matches exactly one game (e.g. `players:` + `tag:` narrowing to one) — confirm that single result is also shown as the full view card
 - [ ] `/library search players:4` — confirm results include games supporting 4 players, sorted by proximity to 4
 - [ ] `/library search players:2,4` (multiple counts) — confirm games matching either count appear
 - [ ] `/library search tag:Co-op` — confirm only Co-op tagged games appear
@@ -2162,7 +2186,7 @@ No permission differences from a regular member (see 1.3e2 for the full checklis
 - [ ] Combine filters (e.g. `players`, `tag`, and `complexity` together) — confirm all filters apply together (AND across filter types, OR within tag1/2/3)
 - [ ] Set genre/difficulty preferences via `/myroles` (3.5), then run `/library search` with no options at all — confirm it searches using those preferences instead of erroring, and the result description notes "(from your /myroles)"
 - [ ] With `/myroles` preferences set, run `/library search tag:Party` (a tag different from your preference) — confirm the explicit tag wins over your preferences, with no "(from your /myroles)" note
-- [ ] With no `/myroles` preferences set, run `/library search` with no options at all — confirm error: "Provide at least one valid filter: `players`, `tag`, or `duration` — or set your preferences with `/myroles` to search based on those."
+- [ ] With no `/myroles` preferences set, run `/library search` with no options at all — confirm error: "Provide at least one valid filter: `title`, `players`, `tag`, or `duration` — or set your preferences with `/myroles` to search based on those."
 - [ ] Search with valid filters but no matches — confirm "No games matched your filters"
 
 ### 3.4m `/library random`

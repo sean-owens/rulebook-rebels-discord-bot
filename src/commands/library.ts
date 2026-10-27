@@ -65,6 +65,7 @@ import { getGuildConfig } from '../utils/config';
 import {
   searchCatalog,
   searchCatalogWithFallback,
+  matchesFuzzy,
   isCatalogLoaded,
   normalizeName,
   getTopRankedGames,
@@ -302,7 +303,13 @@ export const data = new SlashCommandBuilder()
     sub
       .setName('search')
       .setDescription(
-        'Find games by player count, tag, or play time (all filters optional but at least one required)',
+        'Find games by title, players, tag, or play time (all optional, at least one required)',
+      )
+      .addStringOption((opt) =>
+        opt
+          .setName('title')
+          .setDescription('Part of the game\'s name (e.g. "catan" or "ticket ride")')
+          .setRequired(false),
       )
       .addStringOption((opt) =>
         opt
@@ -3385,6 +3392,7 @@ function parseInts(raw: string): number[] {
 }
 
 async function handleSearch(interaction: ChatInputCommandInteraction): Promise<void> {
+  const titleQuery = interaction.options.getString('title')?.trim() || undefined;
   const playersRaw = interaction.options.getString('players') ?? undefined;
   let tags = [
     interaction.options.getString('tag'),
@@ -3399,8 +3407,11 @@ async function handleSearch(interaction: ChatInputCommandInteraction): Promise<v
   const playerCounts = playersRaw ? parseInts(playersRaw) : [];
   const durations = durationRaw ? parseInts(durationRaw) : [];
 
+  // /myroles preferences only fill in when the caller gave no filter of their own;
+  // a title search is an explicit "find this game", so it must not be silently
+  // narrowed by the caller's favourite genres.
   let personalized = false;
-  if (tags.length === 0 && !complexity) {
+  if (tags.length === 0 && !complexity && !titleQuery) {
     const member = await interaction.guild!.members.fetch(interaction.user.id);
     const prefs = await getMemberPreferences(interaction.guildId!, member);
     if (prefs.tags.length > 0 || prefs.complexity) {
@@ -3411,6 +3422,7 @@ async function handleSearch(interaction: ChatInputCommandInteraction): Promise<v
   }
 
   if (
+    !titleQuery &&
     playerCounts.length === 0 &&
     tags.length === 0 &&
     durations.length === 0 &&
@@ -3420,7 +3432,7 @@ async function handleSearch(interaction: ChatInputCommandInteraction): Promise<v
   ) {
     await interaction.reply({
       content:
-        'Provide at least one valid filter: `players`, `tag`, or `duration` — or set your preferences with `/myroles` to search based on those.',
+        'Provide at least one valid filter: `title`, `players`, `tag`, or `duration` — or set your preferences with `/myroles` to search based on those.',
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -3436,6 +3448,11 @@ async function handleSearch(interaction: ChatInputCommandInteraction): Promise<v
     const key = entry.gameName.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
+
+    // Same matcher as /library view's "did you mean" picker. Expansions are left
+    // out of title matches so searching a base game by name ("wingspan") isn't
+    // diluted by its own expansions, which would stop it resolving to one result.
+    if (titleQuery && (entry.isExpansion || !matchesFuzzy(titleQuery, entry.gameName))) continue;
 
     const gameInfo = infos.find((i) => i.gameName.toLowerCase() === key);
 
@@ -3489,6 +3506,7 @@ async function handleSearch(interaction: ChatInputCommandInteraction): Promise<v
       ? `**${minDuration ?? 0}–${maxDuration ?? '∞'} min**`
       : '';
   const filterParts = [
+    titleQuery ? `title **${titleQuery}**` : '',
     playerCounts.length > 0 ? `**${playerCounts.join(' or ')} players**` : '',
     tags.length > 0 ? `tag **${tags.join(' or ')}**${personalized ? ' (from your /myroles)' : ''}` : '',
     durations.length > 0 ? `**${durations.join(' or ')} min** (±15 min)` : '',
@@ -3503,6 +3521,13 @@ async function handleSearch(interaction: ChatInputCommandInteraction): Promise<v
       content: `No games found matching ${filterParts}.`,
       flags: MessageFlags.Ephemeral,
     });
+    return;
+  }
+
+  // A lone match is almost certainly the game they were after — skip the one-row
+  // results list and show the full /library view card instead.
+  if (matches.length === 1) {
+    await resolveViewFlow(interaction, matches[0].displayName);
     return;
   }
 

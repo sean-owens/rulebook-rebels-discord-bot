@@ -44,7 +44,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
           '`list` — Browse the full library',
           '`view` — Look up a specific game',
           '`random` — Get 3 random picks, filtered by tag/complexity — defaults to your `/myroles` preferences if set',
-          '`search` — Find games by player count, tag, duration, or complexity — also defaults to your `/myroles` preferences',
+          '`search` — Find games by title, players, tag, time, or complexity (one match opens its card) — defaults to your `/myroles`',
           '`edit` — Update details on one of your games (players, play time, tags, complexity)',
           '`clear` — Remove all your own games at once',
           '`link` — Share your library with another member so they can view, request, and bring it too',
