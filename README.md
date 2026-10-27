@@ -133,6 +133,7 @@ Each Discord application has its own invite link; the development and production
 | Embed Links | Send rich embeds |
 | Attach Files | Send the "Powered by BGG" logo and CSV templates |
 | Read Message History | Update and edit existing embeds |
+| Add Reactions | React ❌ to wrong challenge guesses; needed to block reactions when an archived event channel is locked (without it the channel still locks, but members can keep reacting) |
 | Manage Messages | Delete game cards |
 | Pin Messages | Pin the Quick Actions, lineup, requests, snacks and leaderboard messages (a separate permission from Manage Messages) |
 | Manage Threads | Archive marketplace forum threads when a listing is closed |
