@@ -279,7 +279,7 @@ You can export your BGG collection at: `boardgamegeek.com → My Collection → 
 
 Link your BoardGameGeek account once, then import the games and expansions you own. After that first import the bot keeps your library fresh for you: about once a week it checks your BGG collection and adds anything **new** since the last check. You'll get a short DM listing what was added (and nothing at all if nothing changed).
 
-- The automatic check only ever **adds** games — it never removes anything.
+- The automatic check never removes a game on its own. If a game you owned has since left your BGG collection (sold, traded, given away), you'll get a DM asking whether to take it off the library too — tap **Remove** or **Keep**. Nothing changes unless you tap Remove, and you're only asked once per game.
 - If you remove a game from the library with `/library remove`, it stays removed, even though you still own it on BGG. (Running `/library import bgg` yourself will add everything back.)
 - To stop automatic updates, unlink your account with `/bgg unlink`.
 

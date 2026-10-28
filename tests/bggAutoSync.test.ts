@@ -120,7 +120,15 @@ describe('BGG library auto-resync (#116)', () => {
   // ── DM text ──────────────────────────────────────────────────────────────────
 
   describe('buildAutoSyncDm', () => {
-    const empty = { addedGames: 0, addedExpansions: 0, skipped: 5, addedGameNames: [], addedExpansionNames: [] };
+    const empty = {
+      addedGames: 0,
+      addedExpansions: 0,
+      skipped: 5,
+      addedGameNames: [],
+      addedExpansionNames: [],
+      noLongerOnBgg: [],
+      heldBack: false,
+    };
 
     it('says nothing when nothing was added', () => {
       expect(buildAutoSyncDm(empty)).toBeNull();

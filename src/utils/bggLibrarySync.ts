@@ -1,5 +1,6 @@
 import type { BGGCollectionGame } from './bgg';
-import { addGamesBulk, loadGameInfos, upsertGameInfosBulk, GameInfo } from './libraryStorage';
+import { addGamesBulk, loadGameInfos, loadLibraryForGuild, upsertGameInfosBulk, GameInfo } from './libraryStorage';
+import type { ProposedRemoval } from './bggRemovalStorage';
 import { getUserCollection, mergeUserCollection, UserCollectionEntry } from './userCollectionStorage';
 
 // 'all'      — every game in the collection is offered to the library (duplicates are
@@ -19,6 +20,42 @@ export interface BggSyncSummary {
   skipped: number;
   addedGameNames: string[];
   addedExpansionNames: string[];
+  // Games that were in the member's last BGG snapshot, are gone from this fetch, and are
+  // still in their library — only ever filled in 'new-only' mode. These are PROPOSALS,
+  // never acted on here: the caller asks the member before anything is removed.
+  noLongerOnBgg: ProposedRemoval[];
+  // True when the fetch came back empty although the member's last snapshot wasn't. BGG
+  // can return a 200 with nothing in it (still preparing the collection, a privacy
+  // flip), and believing it would wipe the stored snapshot — after which every game
+  // looks "new" and ones the member had removed would be re-added. In that case
+  // NOTHING is written; the sync just waits for the next cycle.
+  heldBack: boolean;
+}
+
+// Games the member used to own on BGG that have now left their collection AND are still
+// in the group library. Matching is by BGG id on the library entry, so an entry the
+// member added by hand (no id) — or one they already removed — is never proposed; only
+// a game that demonstrably came from BGG can be asked about.
+async function findNoLongerOnBgg(
+  guildId: string,
+  userId: string,
+  previous: UserCollectionEntry[],
+  fetched: BGGCollectionGame[],
+): Promise<ProposedRemoval[]> {
+  if (previous.length === 0) return [];
+  const fetchedIds = new Set(fetched.map((g) => g.bggGameId));
+  const gone = previous.filter((e) => !fetchedIds.has(e.bggGameId));
+  if (gone.length === 0) return [];
+
+  const library = (await loadLibraryForGuild(guildId)).filter((e) => e.userId === userId && e.objectid);
+  const proposals: ProposedRemoval[] = [];
+  for (const entry of gone) {
+    const inLibrary = library.find((l) => l.objectid === entry.bggGameId);
+    if (inLibrary) {
+      proposals.push({ bggGameId: entry.bggGameId, gameName: inLibrary.gameName, isExpansion: !!inLibrary.isExpansion });
+    }
+  }
+  return proposals;
 }
 
 // Applies a fetched BGG collection to one member's library, game info cache, and
@@ -33,9 +70,23 @@ export async function applyBggCollectionToLibrary(
 ): Promise<BggSyncSummary> {
   const validGames = games.filter((g) => !!g.gameName);
 
-  // Read the previous snapshot BEFORE it's overwritten below — it's what defines "new".
-  const previousIds =
-    mode === 'new-only' ? new Set((await getUserCollection(guildId, userId)).map((e) => e.bggGameId)) : null;
+  // Read the previous snapshot BEFORE it's overwritten below — it's what defines "new"
+  // (and, from the other side, what a game "no longer on BGG" is measured against).
+  const previousEntries = mode === 'new-only' ? await getUserCollection(guildId, userId) : [];
+  const previousIds = mode === 'new-only' ? new Set(previousEntries.map((e) => e.bggGameId)) : null;
+
+  if (mode === 'new-only' && validGames.length === 0 && previousEntries.length > 0) {
+    return {
+      addedGames: 0,
+      addedExpansions: 0,
+      skipped: 0,
+      addedGameNames: [],
+      addedExpansionNames: [],
+      noLongerOnBgg: [],
+      heldBack: true,
+    };
+  }
+
   const candidates = previousIds ? validGames.filter((g) => !previousIds.has(g.bggGameId)) : validGames;
 
   const addResults = await addGamesBulk(
@@ -53,6 +104,8 @@ export async function applyBggCollectionToLibrary(
     skipped: validGames.length - candidates.length,
     addedGameNames: [],
     addedExpansionNames: [],
+    noLongerOnBgg: await findNoLongerOnBgg(guildId, userId, previousEntries, validGames),
+    heldBack: false,
   };
   const infosToUpsert: GameInfo[] = [];
 

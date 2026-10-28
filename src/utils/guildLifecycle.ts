@@ -10,6 +10,7 @@ const ARRAY_FILES = [
   'games.json',
   'privateRooms.json',
   'commandUsage.json',
+  'bgg_removal_proposals.json',
 ] as const;
 
 const KEYED_FILES = [
