@@ -2,6 +2,8 @@ import { Client } from 'discord.js';
 import { BggAccount, listAllBggAccounts, recordBggSyncAttempt } from './bggAccountStorage';
 import { fetchBggOwnedCollection } from './bgg';
 import { applyBggCollectionToLibrary, BggSyncSummary } from './bggLibrarySync';
+import { createRemovalProposal } from './bggRemovalStorage';
+import { sendRemovalProposalDm } from './bggRemovalDm';
 import { bggAutoSyncDaysFor, getGuildConfig } from './config';
 import { getUserCollection } from './userCollectionStorage';
 
@@ -104,13 +106,28 @@ export async function syncAccountFromBgg(
   }
 
   const summary = await applyBggCollectionToLibrary(guildId, account.userId, games, 'new-only');
+  // Counted as checked even when held back, so a persistently empty response waits a
+  // full interval instead of hitting BGG every back-off period.
   await recordBggSyncAttempt(guildId, account.userId, { at: attemptedAt, success: true });
+
+  if (summary.heldBack) {
+    console.warn(
+      `[BggAutoSync] BGG returned an empty collection for ${account.bggUsername} (guild ${guildId}) though they had games last time — leaving everything untouched`,
+    );
+    return summary;
+  }
 
   const dm = buildAutoSyncDm(summary);
   if (dm) await sendAutoSyncDm(client, account.userId, dm);
 
+  // Games that left BGG are only ever ASKED about — the member decides (see bggRemoval.ts).
+  if (summary.noLongerOnBgg.length > 0) {
+    const proposal = await createRemovalProposal(guildId, account.userId, summary.noLongerOnBgg);
+    await sendRemovalProposalDm(client, proposal);
+  }
+
   console.log(
-    `[BggAutoSync] ${account.bggUsername} (guild ${guildId}): +${summary.addedGames} games, +${summary.addedExpansions} expansions`,
+    `[BggAutoSync] ${account.bggUsername} (guild ${guildId}): +${summary.addedGames} games, +${summary.addedExpansions} expansions, ${summary.noLongerOnBgg.length} proposed for removal`,
   );
   return summary;
 }
