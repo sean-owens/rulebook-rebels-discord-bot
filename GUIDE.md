@@ -100,7 +100,7 @@ Once an event is created, members can suggest games to play using `/game`. These
 ```
 
 **Optional:**
-- `with_expansions` — Set to `true` if you want to include expansions for this game.
+- `with_expansions` — Set to `true` if you want to include expansions for this game. The expansions you pick are passed on to the "bring this game" request, so when the lineup locks the bot asks an owner who actually has them (not just anyone with the base game). If nobody attending owns them all, the base game is still requested and you'll be told.
 
 **How the suggestion flow works:**
 

@@ -7,7 +7,8 @@ import {
   findGamesByName,
   resolveAttendingOwnerIds,
   pickPreferredOwner,
-  buildExpansionNote,
+  findOwnersCoveringExpansions,
+  buildRequestExpansionNote,
 } from './libraryStorage';
 import { findGamesByEvent } from './gameStorage';
 
@@ -119,22 +120,34 @@ export async function reconcileRequestCopies(
       (g) => g.title.toLowerCase() === req.gameName.toLowerCase(),
     )?.createdBy;
 
+    // When the requester named expansions (#114), only owners who own all of them
+    // are asked while any such owner is still untried; once those are exhausted
+    // (declined, or none ever existed) the remaining attending owners are asked
+    // for the base game rather than leaving it unbrought — their DM flags what
+    // they're missing. With no expansions named, every attending owner qualifies,
+    // which is exactly the original behaviour.
+    const coveringOwnerIds = await findOwnersCoveringExpansions(guildId, attendingOwnerIds, req.requiredExpansions);
+
     let toAsk = neededPending - req.pendingAsks.length;
     while (toAsk > 0) {
-      // Priority: an explicit copy-select owner pick (req.preferredOwnerId, a
-      // specific/specialized copy), then the game's suggester if they own it,
-      // then fairness for every other slot (and any further copy, or a
-      // fallback if the earlier choices were already tried/ineligible).
-      const eligible = (id: string | undefined): id is string =>
-        !!id && !tried.has(id) && attendingOwnerIds.includes(id);
+      const untried = (ids: string[]) => ids.filter((id) => !tried.has(id));
+      const coveringLeft = untried(coveringOwnerIds);
+      const pool = coveringLeft.length > 0 ? coveringLeft : untried(attendingOwnerIds);
+
+      // Priority within the pool: an explicit copy-select owner pick
+      // (req.preferredOwnerId, a specific/specialized copy), then the game's
+      // suggester if they own it, then fairness for every other slot (and any
+      // further copy, or a fallback if the earlier choices were already
+      // tried/ineligible).
+      const eligible = (id: string | undefined): id is string => !!id && pool.includes(id);
       const ownerId = eligible(req.preferredOwnerId)
         ? req.preferredOwnerId
         : eligible(suggesterId)
           ? suggesterId
-          : await pickPreferredOwner(req.eventId, attendingOwnerIds, [...tried]);
+          : await pickPreferredOwner(req.eventId, pool, [...tried]);
       if (!ownerId) break; // no more eligible owners left to ask
       tried.add(ownerId);
-      const expansionNote = await buildExpansionNote(guildId, ownerId, req.gameName);
+      const expansionNote = await buildRequestExpansionNote(guildId, ownerId, req);
       await sendBringRequestDm(client, req, ownerId, eventDate, expansionNote);
       toAsk -= 1;
     }
