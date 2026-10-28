@@ -19,6 +19,7 @@ import {
   handleBackfillTopRanked as handleLibraryBackfillTopRanked,
 } from './library';
 import { findGameNamesByPartial, loadLibraryForGuild } from '../utils/libraryStorage';
+import { handleAutoSyncConfig } from './autoSyncConfig';
 import {
   handleAdd as handleTagAdd,
   handleRemove as handleTagRemove,
@@ -258,6 +259,19 @@ export const data = new SlashCommandBuilder()
               .setName('force')
               .setDescription('Overwrite existing data (default: true). False only fills in missing fields')
               .setRequired(false),
+          ),
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('autosync')
+          .setDescription("View or set how often members' linked BGG collections are re-synced automatically")
+          .addIntegerOption((opt) =>
+            opt
+              .setName('days')
+              .setDescription('Days between automatic re-syncs (0 = off, default 7). Leave blank to just view')
+              .setRequired(false)
+              .setMinValue(0)
+              .setMaxValue(365),
           ),
       )
       .addSubcommand((sub) =>
@@ -588,6 +602,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     if (sub === 'clear') await handleAdminLibraryClear(interaction);
     else if (sub === 'sync') await handleLibrarySync(interaction);
     else if (sub === 'syncall') await handleLibrarySyncAll(interaction);
+    else if (sub === 'autosync') await handleAutoSyncConfig(interaction);
     else if (sub === 'backfilltop') await handleLibraryBackfillTopRanked(interaction);
   } else if (group === 'tags') {
     if (sub === 'add') await handleTagAdd(interaction);
