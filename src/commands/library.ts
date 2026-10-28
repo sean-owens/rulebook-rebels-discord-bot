@@ -43,6 +43,7 @@ import {
   confirmBring,
   declineBring,
   buildExpansionNote,
+  buildRequestExpansionNote,
   resolveAttendingOwnerIds,
   GameRequest,
 } from '../utils/libraryStorage';
@@ -391,8 +392,11 @@ async function buildBringLines(
     const copies = req.copiesNeeded ?? 1;
     const confirmed = req.confirmations.some((c) => c.ownerId === userId) ? ' ✅ confirmed' : '';
     const copiesNote = copies > 1 ? ` *(${req.confirmations.length}/${copies} copies confirmed)*` : '';
-    const expansionNote =
-      req.preferredOwnerId && effectiveOwnerIds.includes(req.preferredOwnerId)
+    // A request that names expansions shows what this owner has of them; otherwise
+    // the expansion note only appears when this owner was explicitly picked.
+    const expansionNote = req.requiredExpansions?.length
+      ? await buildRequestExpansionNote(guildId, userId, req)
+      : req.preferredOwnerId && effectiveOwnerIds.includes(req.preferredOwnerId)
         ? await buildExpansionNote(guildId, userId, req.gameName)
         : '';
     lines.push(`• **${req.gameName}**${expansionNote}${copiesNote}${confirmed}`);
@@ -488,11 +492,7 @@ async function handleBring(interaction: ChatInputCommandInteraction): Promise<vo
     }
 
     // result.status === 'confirmed'
-    const expansionNote = await buildExpansionNote(
-      interaction.guildId!,
-      interaction.user.id,
-      match.gameName,
-    );
+    const expansionNote = await buildRequestExpansionNote(interaction.guildId!, interaction.user.id, match);
     await interaction.reply({
       content: `✅ Got it — you're confirmed to bring **${match.gameName}**${expansionNote} to the event on ${event.date}!`,
       flags: MessageFlags.Ephemeral,
@@ -595,7 +595,7 @@ export async function handleLibraryConfirmBring(
   }
 
   // result.status === 'confirmed'
-  const expansionNote = await buildExpansionNote(gameNight.guildId, interaction.user.id, req.gameName);
+  const expansionNote = await buildRequestExpansionNote(gameNight.guildId, interaction.user.id, req);
   await interaction.update({
     content: `✅ Confirmed — you're bringing **${req.gameName}**${expansionNote} to the event on ${gameNight.date}!`,
     components: [],

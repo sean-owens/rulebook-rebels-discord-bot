@@ -17,10 +17,13 @@ export async function buildRequestEmbed(
 
   for (const req of requests) {
     const copies = req.copiesNeeded ?? 1;
+    const expansionSuffix = req.requiredExpansions?.length
+      ? ` *(+ ${req.requiredExpansions.map((e) => e.name).join(', ')})*`
+      : '';
     const label =
       copies > 1
-        ? `${req.gameName} *(${req.confirmations.length}/${copies} copies confirmed)*`
-        : `${req.gameName}${req.confirmations.length > 0 ? ' ✅' : ''}`;
+        ? `${req.gameName}${expansionSuffix} *(${req.confirmations.length}/${copies} copies confirmed)*`
+        : `${req.gameName}${expansionSuffix}${req.confirmations.length > 0 ? ' ✅' : ''}`;
     const owners = [
       ...new Set(
         library
