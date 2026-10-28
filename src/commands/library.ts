@@ -62,7 +62,8 @@ import AdmZip from 'adm-zip';
 import { getBGGGame, getBGGGamesBatch, BGGGame, weightTag, fetchBggOwnedCollection } from '../utils/bgg';
 import { getLastScheduledAt } from '../utils/gameStorage';
 import { weightedSampleWithoutReplacement } from '../utils/weightedRandom';
-import { getGuildConfig } from '../utils/config';
+import { getGuildConfig, bggAutoSyncDaysFor } from '../utils/config';
+import { applyBggCollectionToLibrary } from '../utils/bggLibrarySync';
 import {
   searchCatalog,
   searchCatalogWithFallback,
@@ -72,7 +73,7 @@ import {
   getTopRankedGames,
   BGGCatalogEntry,
 } from '../utils/bggCatalog';
-import { getBggAccount } from '../utils/bggAccountStorage';
+import { getBggAccount, recordBggSyncAttempt } from '../utils/bggAccountStorage';
 import { mergeUserCollection, UserCollectionEntry } from '../utils/userCollectionStorage';
 import { GENRE_TAG_DEFINITIONS } from '../utils/tagDefinitions';
 import { resolveJumpTarget } from '../utils/pageJump';
@@ -2795,71 +2796,28 @@ export async function handleImportBgg(
     return;
   }
 
-  const validGames = games.filter((g) => !!g.gameName);
-
-  // Batch the library-add and game-info upserts into one read + one write
-  // each, rather than one round trip per game — with a large BGG collection
-  // (100s of games) that per-game pattern made this command take minutes.
-  const addResults = await addGamesBulk(
+  // Shared with the automatic re-sync (see bggAutoSync.ts) so both paths stay in step.
+  // 'all' mode: the member asked for this, so every owned game is offered to the library.
+  const { addedGames, addedExpansions, skipped } = await applyBggCollectionToLibrary(
     guildId,
     userId,
-    validGames.map((g) => ({ gameName: g.gameName, objectid: g.bggGameId, isExpansion: g.isExpansion })),
+    games,
+    'all',
   );
-
-  const existingInfos = await loadGameInfos();
-  const existingByName = new Map(existingInfos.map((i) => [i.gameName.toLowerCase(), i]));
-
-  let addedGames = 0;
-  let addedExpansions = 0;
-  let skipped = 0;
-  const collectionEntries: UserCollectionEntry[] = [];
-  const infosToUpsert: GameInfo[] = [];
-
-  for (let i = 0; i < validGames.length; i++) {
-    const game = validGames[i];
-    if (addResults[i] === 'added') {
-      if (game.isExpansion) addedExpansions++;
-      else addedGames++;
-    } else {
-      skipped++;
-    }
-
-    const existing = existingByName.get(game.gameName.toLowerCase());
-    infosToUpsert.push({
-      gameName: game.gameName,
-      objectid: game.bggGameId,
-      minPlayers: existing?.minPlayers ?? game.minPlayers ?? undefined,
-      maxPlayers: existing?.maxPlayers ?? game.maxPlayers ?? undefined,
-      playTime: existing?.playTime ?? game.playingTime ?? undefined,
-      weight: existing?.weight,
-      complexity: existing?.complexity,
-      tags: existing?.tags,
-      expansions: existing?.expansions,
-      updatedAt: new Date().toISOString(),
-    });
-
-    collectionEntries.push({
-      bggGameId: game.bggGameId,
-      gameName: game.gameName,
-      bggOwn: game.own,
-      bggForTrade: game.forTrade,
-      bggWantToPlay: game.wantToPlay,
-      bggWishlisted: game.wishlisted,
-      bggUserRating: game.userRating,
-      bggNumPlays: game.numPlays,
-      bggSyncedAt: new Date().toISOString(),
-    });
-  }
-
-  await upsertGameInfosBulk(infosToUpsert);
-  await mergeUserCollection(guildId, userId, collectionEntries);
+  await recordBggSyncAttempt(guildId, userId, { at: new Date().toISOString(), success: true });
 
   const parts: string[] = [];
   if (addedGames > 0) parts.push(`**${addedGames}** game${addedGames !== 1 ? 's' : ''} added`);
   if (addedExpansions > 0)
     parts.push(`**${addedExpansions}** expansion${addedExpansions !== 1 ? 's' : ''} added`);
   if (skipped > 0) parts.push(`**${skipped}** already in your library`);
-  await interaction.editReply(`BoardGameGeek import complete — ${parts.join(', ')}.`);
+  // Tell the member this isn't a one-off: new games they add on BGG will be picked up on their own.
+  const autoSyncDays = bggAutoSyncDaysFor(await getGuildConfig(guildId));
+  const autoSyncNote =
+    autoSyncDays > 0
+      ? `\n-# New games you add on BoardGameGeek will be picked up automatically every ${autoSyncDays} day${autoSyncDays !== 1 ? 's' : ''}. Run \`/bgg unlink\` to stop that.`
+      : '';
+  await interaction.editReply(`BoardGameGeek import complete — ${parts.join(', ')}.${autoSyncNote}`);
 }
 
 async function handleImportCsv(interaction: ChatInputCommandInteraction): Promise<void> {

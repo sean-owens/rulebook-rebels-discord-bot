@@ -150,6 +150,21 @@ export interface GuildConfig {
   // edited in place every time someone guesses correctly (not just at the
   // reveal), same pin-tracking pattern as generalHubPinMessageId above.
   challengeLeaderboardPinMessageId?: string;
+  // How often members' linked BoardGameGeek collections are automatically
+  // re-synced into the library (see src/utils/bggAutoSync.ts), in days. 0 = off.
+  // Optional because guild records saved before this existed don't have it —
+  // read it via bggAutoSyncDaysFor() so those servers get the default rather than
+  // an undefined that would silently disable the feature.
+  bggAutoSyncDays?: number;
+}
+
+// On by default: a member who linked BGG and imported once expects their library to
+// keep up without re-running the import. Admins can change or disable it per server
+// via /admin library autosync.
+export const DEFAULT_BGG_AUTO_SYNC_DAYS = 7;
+
+export function bggAutoSyncDaysFor(config: Pick<GuildConfig, 'bggAutoSyncDays'>): number {
+  return config.bggAutoSyncDays ?? DEFAULT_BGG_AUTO_SYNC_DAYS;
 }
 
 const DEFAULT_CONFIG: GuildConfig = {

@@ -270,6 +270,21 @@ You can export your BGG collection at: `boardgamegeek.com → My Collection → 
 
 ---
 
+### Importing from BoardGameGeek, and Keeping It Up to Date
+
+```
+/bgg link username:<your BGG username>
+/library import bgg
+```
+
+Link your BoardGameGeek account once, then import the games and expansions you own. After that first import the bot keeps your library fresh for you: about once a week it checks your BGG collection and adds anything **new** since the last check. You'll get a short DM listing what was added (and nothing at all if nothing changed).
+
+- The automatic check only ever **adds** games — it never removes anything.
+- If you remove a game from the library with `/library remove`, it stays removed, even though you still own it on BGG. (Running `/library import bgg` yourself will add everything back.)
+- To stop automatic updates, unlink your account with `/bgg unlink`.
+
+---
+
 ### Clearing Your Library *(admin can clear others)*
 
 ```
@@ -358,6 +373,16 @@ Creates a single new tag. The `color` option accepts a hex code (e.g. `#5865F2`)
 /gametags remove name:<tag name>
 ```
 Deletes a tag and its associated Discord role.
+
+---
+
+### Automatic BGG Library Updates
+
+```
+/admin library autosync [days:<number>]
+```
+
+Sets how often members' linked BoardGameGeek collections are re-synced into the library automatically. The default is every **7 days**; `days:0` turns it off for the server; leaving `days` out just shows the current setting. Only members who have linked a BGG account **and** imported at least once are ever synced.
 
 ---
 

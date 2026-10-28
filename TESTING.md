@@ -466,11 +466,13 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 #### `/library import bgg`
 
-**What it does:** Imports all owned games and expansions from your linked BoardGameGeek collection. The "Import my library now" button shown after `/bgg link` (1.6a/2.6a/3.6a) triggers this same import.
+**What it does:** Imports all owned games and expansions from your linked BoardGameGeek collection. The "Import my library now" button shown after `/bgg link` (1.6a/2.6a/3.6a) triggers this same import. When it finishes, the reply ends with a small note that new games you add on BoardGameGeek will now be picked up automatically every N days (see 4.10) — left out if an admin has turned that off (`/admin library autosync`, 3.9e1) — and the import counts as a sync, so the automatic one waits a full interval before its first run.
 
 - [ ] Run without a linked BGG account — confirm "You don't have a BoardGameGeek account linked" error
 - [ ] Run with a linked account — confirm success message with game/expansion counts
 - [ ] Run a second time — confirm all entries show as "already in your library" (no duplicates)
+- [ ] After a successful import, confirm the reply ends with "New games you add on BoardGameGeek will be picked up automatically every 7 days. Run `/bgg unlink` to stop that." — and that the note is absent once an admin runs `/admin library autosync days:0`
+- [ ] After importing, add a new game to your BGG collection and confirm it is NOT in the library until the next automatic sync (4.10) or a manual `/library import bgg`
 
 #### `/library import csv`
 
@@ -1319,11 +1321,13 @@ No permission differences from a regular member (see 1.3e2 for the full checklis
 
 #### `/library import bgg`
 
-**What it does:** Imports all owned games and expansions from your linked BoardGameGeek collection. The "Import my library now" button shown after `/bgg link` (1.6a/2.6a/3.6a) triggers this same import.
+**What it does:** Imports all owned games and expansions from your linked BoardGameGeek collection. The "Import my library now" button shown after `/bgg link` (1.6a/2.6a/3.6a) triggers this same import. When it finishes, the reply ends with a small note that new games you add on BoardGameGeek will now be picked up automatically every N days (see 4.10) — left out if an admin has turned that off (`/admin library autosync`, 3.9e1) — and the import counts as a sync, so the automatic one waits a full interval before its first run.
 
 - [ ] Run without a linked BGG account — confirm "You don't have a BoardGameGeek account linked" error
 - [ ] Run with a linked account — confirm success message with game/expansion counts
 - [ ] Run a second time — confirm all entries show as "already in your library" (no duplicates)
+- [ ] After a successful import, confirm the reply ends with "New games you add on BoardGameGeek will be picked up automatically every 7 days. Run `/bgg unlink` to stop that." — and that the note is absent once an admin runs `/admin library autosync days:0`
+- [ ] After importing, add a new game to your BGG collection and confirm it is NOT in the library until the next automatic sync (4.10) or a manual `/library import bgg`
 
 #### `/library import csv`
 
@@ -2175,11 +2179,13 @@ No permission differences from a regular member (see 1.3e2 for the full checklis
 
 #### `/library import bgg`
 
-**What it does:** Imports all owned games and expansions from your linked BoardGameGeek collection. The "Import my library now" button shown after `/bgg link` (1.6a/2.6a/3.6a) triggers this same import.
+**What it does:** Imports all owned games and expansions from your linked BoardGameGeek collection. The "Import my library now" button shown after `/bgg link` (1.6a/2.6a/3.6a) triggers this same import. When it finishes, the reply ends with a small note that new games you add on BoardGameGeek will now be picked up automatically every N days (see 4.10) — left out if an admin has turned that off (`/admin library autosync`, 3.9e1) — and the import counts as a sync, so the automatic one waits a full interval before its first run.
 
 - [ ] Run without a linked BGG account — confirm "You don't have a BoardGameGeek account linked" error
 - [ ] Run with a linked account — confirm success message with game/expansion counts
 - [ ] Run a second time — confirm all entries show as "already in your library" (no duplicates)
+- [ ] After a successful import, confirm the reply ends with "New games you add on BoardGameGeek will be picked up automatically every 7 days. Run `/bgg unlink` to stop that." — and that the note is absent once an admin runs `/admin library autosync days:0`
+- [ ] After importing, add a new game to your BGG collection and confirm it is NOT in the library until the next automatic sync (4.10) or a manual `/library import bgg`
 
 #### `/library import csv`
 
@@ -2610,6 +2616,18 @@ See 2.8j for the full checklist — this Admin-tier pass just confirms Admins re
 - [ ] Confirm a top-ranked game that's already in someone's library (and already fully enriched) is skipped under the default `force:false`, not double-counted or re-fetched
 - [ ] Confirm the command does not time out or double-reply for a larger `count` (should defer/edit the reply while backfilling, same as `syncall`)
 - [ ] After backfilling a small `count`, force `getBGGGame` to fail (or simulate a BGG outage) and let the weekly challenge's random pick land outside that backfilled set — confirm the challenge still degrades gracefully (per 4.9) rather than assuming backfilltop guarantees full coverage of every possible pick
+
+### 3.9e1 `/admin library autosync`
+
+**What it does:** Shows, or sets, how often members' linked BoardGameGeek collections are automatically re-synced into the library on this server (see 4.10). `days` is the number of days between syncs; **0 turns automatic re-sync off**; leaving it blank just shows the current setting. Defaults to **7 days** (on) for every server, including servers configured before this setting existed. Admin-only (Manage Server) — hidden from members. Members can still run `/library import bgg` themselves whatever this is set to.
+
+- [ ] Run `/admin library autosync` with no options on a server that never touched it — confirm "Automatic BoardGameGeek library re-sync: every **7 days**." with a hint on how to change it, and nothing is changed
+- [ ] Run `/admin library autosync days:3` — confirm the confirmation reads "every **3 days**", and a later no-option run shows 3
+- [ ] Run `/admin library autosync days:1` — confirm singular wording ("every **1 day**")
+- [ ] Run `/admin library autosync days:0` — confirm it says re-sync is **off**, and that no automatic sync happens afterward (4.10)
+- [ ] Run `/admin library autosync days:-1` and `days:400` — confirm Discord rejects both (valid range is 0–365)
+- [ ] Run `/admin library autosync` as a non-admin — confirm the command is not offered / is refused
+- [ ] Set a different value on a second server the bot is in — confirm each server keeps its own interval
 
 ### 3.9e `/admin tags add`
 
@@ -3221,6 +3239,30 @@ The effective table count used at lock time is `max(headcount floor, preference-
 - [ ] With `cleanup_old_posts:true`, manually delete one of the previous cycle's messages yourself before the new cycle starts — confirm the bot logs a warning for that one message and still successfully starts the new cycle (doesn't get stuck or skip hint 1)
 - [ ] Turn `cleanup_old_posts:true` on for a server with several past (un-cleaned-up) cycles already in its history — confirm only the single most recent cycle's messages are deleted when the next new cycle starts, not every past cycle at once
 
+## 4.10 BGG Library Auto-Resync
+
+**What it does:** Every hour the bot looks for members whose linked BoardGameGeek collection is due for a re-sync (default every 7 days, per server — see `/admin library autosync`, 3.9e1) and pulls it in, adding any games or expansions that are **new since their last sync** to the group library. It only ever adds: nothing is removed, and a game a member deliberately removed with `/library remove` stays removed (it was already in their last BGG snapshot, so it isn't "new"). Only members who linked BGG **and have imported at least once** are synced — linking alone never fills a library. If something was added, the member gets a DM listing it; if nothing is new, or the sync fails, they hear nothing. It paces itself for BGG: at most 5 members per hourly run with a pause between them, longest-overdue first, and a failing member is retried after about 6 hours rather than every hour. Check Railway logs for `[BggAutoSync]` lines.
+
+**Prerequisites:** a test member with a linked BGG account (1.6a) who has run `/library import bgg` at least once. To avoid waiting a week: set `/admin library autosync days:1`, edit that member's record in `bgg_accounts.json` so `lastSyncedAt` (and `lastSyncAttemptAt`) is 2+ days ago — or remove `lastSyncedAt` entirely — then add a game to their BGG collection and restart the bot (the sweep also runs on startup) or wait for the top of the hour.
+
+- [ ] With the member due and a new game on their BGG shelf — confirm the game appears in `/library mine`, the member gets a DM naming it (with how to `/library remove` it and `/bgg unlink` to stop), `bgg_accounts.json` shows a fresh `lastSyncedAt`, and the logs show `[BggAutoSync] <user> (guild <id>): +1 games`
+- [ ] Add a new **expansion** on BGG and sync — confirm it is added as an expansion (listed separately in the DM, absent from `/library list`)
+- [ ] Sync again with nothing new on BGG — confirm no DM is sent, nothing is duplicated, and `lastSyncedAt` still advances
+- [ ] `/library remove` a game you still own on BGG, then let the next sync run — confirm it is **not** re-added. Then run `/library import bgg` — confirm that one does bring it back (a manual import always offers everything)
+- [ ] Remove a game from your BGG collection and sync — confirm it is **not** removed from the library
+- [ ] A member who linked BGG with `/bgg link` but never imported — confirm their library is never touched and no BGG request is made for them
+- [ ] A member who imported **before** this feature shipped (stored BGG snapshot, but no `lastSyncedAt`) — confirm they are picked up on the next run
+- [ ] A member whose last sync was less than the interval ago — confirm nothing happens for them (no BGG request)
+- [ ] Set `/admin library autosync days:0` — confirm no member on that server is synced, however overdue; set it back and confirm syncing resumes
+- [ ] On a server whose saved config predates the setting (never ran `/admin library autosync`) — confirm syncing still happens at the 7-day default rather than being silently off
+- [ ] Make BGG fail for one member (e.g. block BGG or use a deliberately bad username) — confirm a warning is logged, `lastSyncedAt` is unchanged, no DM is sent, and the same member is **not** retried on the next hourly run but is after ~6 hours; confirm other members in the same run still sync
+- [ ] Have more than 5 members due at once — confirm only 5 are synced in one run (longest-overdue first, ~5 seconds apart) and the rest follow in later hourly runs
+- [ ] Have a due member leave the server — confirm no BGG request is made for them
+- [ ] Disable DMs from server members on a due member — confirm their library is still updated and `lastSyncedAt` still advances, with only a warning in the logs
+- [ ] Restart the bot right as the hourly check fires — confirm overlapping runs do not double-sync anyone (a second run is skipped while one is in flight)
+- [ ] Run `/bgg unlink` for a synced member — confirm they are no longer synced
+
+---
 ---
 
 # Part 6 — General Edge Cases (Any Role)

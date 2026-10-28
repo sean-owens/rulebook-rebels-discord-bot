@@ -162,7 +162,7 @@ Permission column: **Admin** = Manage Server, **Host** = Manage Events (Admins a
 | `/game suggest / list / cancel / bgstats` | Everyone | Suggest a game (you're asked how well you know it; others can volunteer to teach), see the lineup, remove your suggestion, log a play in BG Stats |
 | `/library …` | Everyone | Your group game library: `list`, `mine`, `add`, `remove`, `edit`, `clear`, `view`, `random`, `search`, `request`, `bring`, `unrequest`, `link`/`unlink` (share a library with another member), `import bgg` / `import csv` |
 | `/myroles` | Everyone | Set your genre and difficulty preferences |
-| `/bgg link / unlink / profile` | Everyone | Link your BoardGameGeek account |
+| `/bgg link / unlink / profile` | Everyone | Link your BoardGameGeek account. After you import your collection once, new games you add on BGG are picked up automatically (`unlink` stops that) |
 | `/marketplace …` | Everyone | Buy/sell/trade: `post sell`, `post trade`, `browse`, `my`, `close`, `reopen`, `edit`, `price`, `conditions`, `import` (bulk from a CSV), `template` (sample CSV) |
 | `/room create / close / persist / invite / kick` | Everyone | Private channels for you and the people you invite |
 | `/snacks add / list / remove` | Everyone | Track who is bringing which snack for an event or room |
@@ -172,7 +172,7 @@ Permission column: **Admin** = Manage Server, **Host** = Manage Events (Admins a
 | `/host library unrequest` | Host | Remove any game request from an event |
 | `/host challenge points` | Host | Adjust a member's challenge points |
 | `/admin event config / preview` | Admin | Server-wide event defaults; dry-run the lineup schedule |
-| `/admin library clear / sync / syncall / backfilltop` | Admin | Library maintenance and BGG re-sync |
+| `/admin library clear / sync / syncall / autosync / backfilltop` | Admin | Library maintenance and BGG re-sync; `autosync` sets how often members' linked BGG collections are re-synced automatically (default 7 days, 0 = off) |
 | `/admin tags add / remove / list / sync / clear` | Admin | Game genre tags and their roles |
 | `/admin welcome config / test / greet` | Admin | The new-member welcome message |
 | `/admin marketplace config / purge` | Admin | Marketplace channel and negotiation mode; cleanup |
@@ -207,7 +207,7 @@ All persisted data is JSON, and every record is scoped to a guild (`guildId`) so
 | `library_requests.json` | "Bring this game" requests per event |
 | `library_links.json` | Library sharing links between members |
 | `game_info.json` | Shared BGG game metadata cache (not guild-scoped) |
-| `bgg_accounts.json` | Linked BGG accounts |
+| `bgg_accounts.json` | Linked BGG accounts, plus when each was last synced into the library (drives the automatic re-sync) |
 | `user_collections.json` | Imported BGG collection data |
 | `bgg_discovered_entries.json` | Games found via live BGG search and folded into the local catalog |
 | `gameroles.json` | Genre/difficulty tag roles |
