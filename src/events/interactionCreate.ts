@@ -55,6 +55,8 @@ import {
   handleHubBringButton,
   handleRequestSuggestConfirm,
 } from '../commands/library';
+import { handleBggRemovalConfirm, handleBggRemovalKeep } from '../commands/bggRemoval';
+import { BGG_REMOVE_YES_PREFIX, BGG_REMOVE_NO_PREFIX } from '../utils/bggRemovalDm';
 import { Complexity } from '../utils/libraryStorage';
 import { execute as executeBgg, handleBggLinkImportButton } from '../commands/bgg';
 import {
@@ -327,6 +329,10 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handleLibraryConfirmBring(interaction, id.slice('library_confirmbring_'.length));
       } else if (id.startsWith('library_declinebring_')) {
         await handleLibraryDeclineBring(interaction, id.slice('library_declinebring_'.length));
+      } else if (id.startsWith(BGG_REMOVE_YES_PREFIX)) {
+        await handleBggRemovalConfirm(interaction, id.slice(BGG_REMOVE_YES_PREFIX.length));
+      } else if (id.startsWith(BGG_REMOVE_NO_PREFIX)) {
+        await handleBggRemovalKeep(interaction, id.slice(BGG_REMOVE_NO_PREFIX.length));
       } else if (id === 'hub_suggest') {
         await handleHubSuggestButton(interaction);
       } else if (id === 'hub_request') {

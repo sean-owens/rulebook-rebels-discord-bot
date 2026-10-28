@@ -208,6 +208,7 @@ All persisted data is JSON, and every record is scoped to a guild (`guildId`) so
 | `library_links.json` | Library sharing links between members |
 | `game_info.json` | Shared BGG game metadata cache (not guild-scoped) |
 | `bgg_accounts.json` | Linked BGG accounts, plus when each was last synced into the library (drives the automatic re-sync) |
+| `bgg_removal_proposals.json` | Pending "these left your BGG collection — remove them from the library?" questions sent by DM; purged after 30 days or when answered |
 | `user_collections.json` | Imported BGG collection data |
 | `bgg_discovered_entries.json` | Games found via live BGG search and folded into the local catalog |
 | `gameroles.json` | Genre/difficulty tag roles |
