@@ -6,6 +6,7 @@ import { cleanupExpiredShortLinks } from '../utils/shortLinkStorage';
 import { hydrateSellDrafts } from '../commands/marketplace';
 import { checkBggCatalogReminder } from '../utils/bggCatalogReminder';
 import { checkAndAdvanceChallengeSchedule } from '../utils/boardGameChallenge';
+import { checkBggAutoSync } from '../utils/bggAutoSync';
 
 // Pure so it can be tested against a fixed `now` instead of the real wall clock.
 export function msUntilNextHour(now: Date): number {
@@ -24,6 +25,7 @@ function runHourlyChecks(client: Client): void {
   cleanupExpiredShortLinks().catch((err) => console.warn('Short link cleanup failed:', err));
   checkBggCatalogReminder(client).catch((err) => console.warn('BGG catalog reminder check failed:', err));
   checkAndAdvanceChallengeSchedule(client).catch((err) => console.warn('Board game challenge schedule check failed:', err));
+  checkBggAutoSync(client).catch((err) => console.warn('BGG library auto-sync failed:', err));
 }
 
 // Runs on the hour, every hour, instead of a fixed 60-minute interval
@@ -54,6 +56,7 @@ export function handleReady(client: Client): void {
   hydrateSellDrafts().catch((err) => console.warn('Sell draft recovery failed on startup:', err));
   checkBggCatalogReminder(client).catch((err) => console.warn('BGG catalog reminder check failed on startup:', err));
   checkAndAdvanceChallengeSchedule(client).catch((err) => console.warn('Board game challenge schedule check failed on startup:', err));
+  checkBggAutoSync(client).catch((err) => console.warn('BGG library auto-sync failed on startup:', err));
 
   scheduleHourlyChecks(client);
 }

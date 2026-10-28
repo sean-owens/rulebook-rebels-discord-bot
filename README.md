@@ -65,7 +65,17 @@ Railway does **not** register slash commands on deploy. Whenever a command's nam
 npm run deploy
 ```
 
-It registers the commands for whichever bot the local `.env` credentials belong to (to `DISCORD_GUILD_ID` if set, otherwise globally). Before running it, make sure `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, and `DISCORD_GUILD_ID` in `.env` all belong to the *same* bot — they can drift apart — and that it is the bot you mean to update. Do it once for the development bot after a change lands on `main`, and once for the production bot when that change is promoted. If commands look wrong even after a successful deploy, check for stale commands registered in the *other* scope (global vs. guild).
+It registers the commands for whichever bot the local `.env` credentials belong to. Before running it, make sure `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, and `DISCORD_GUILD_ID` in `.env` all belong to the *same* bot — they can drift apart — and that it is the bot you mean to update. Do it once for the development bot after a change lands on `main`, and once for the production bot when that change is promoted.
+
+**Always deploy guild-scoped (with `DISCORD_GUILD_ID` set).** Without it the script registers *global* commands, which Discord shows alongside the server-scoped ones — every command appears twice, and the global copy goes stale because it isn't refreshed by later guild-scoped deploys. Both bots ended up in exactly this state once (14 global + 14 server-scoped commands each) and had to be cleaned up.
+
+To update the production bot without touching your local `.env`, run the deploy with production's variables injected (this runs on your machine; it does not change any Railway configuration) and the production server's ID:
+
+```
+DISCORD_GUILD_ID=<production server id> railway run -e production npm run deploy
+```
+
+**Checking for duplicates.** If commands look doubled or out of date even after a successful deploy, list both scopes for the bot — `GET /applications/{clientId}/commands` (global) and `GET /applications/{clientId}/guilds/{guildId}/commands` (server) — with the bot's token. Global should be empty. To clear a stray global set, `PUT` an empty array (`[]`) to the global endpoint; the server-scoped commands are unaffected and the global set can always be re-registered later.
 
 ### Verifying a deploy
 
@@ -123,6 +133,7 @@ Each Discord application has its own invite link; the development and production
 | Embed Links | Send rich embeds |
 | Attach Files | Send the "Powered by BGG" logo and CSV templates |
 | Read Message History | Update and edit existing embeds |
+| Add Reactions | React ❌ to wrong challenge guesses; needed to block reactions when an archived event channel is locked (without it the channel still locks, but members can keep reacting) |
 | Manage Messages | Delete game cards |
 | Pin Messages | Pin the Quick Actions, lineup, requests, snacks and leaderboard messages (a separate permission from Manage Messages) |
 | Manage Threads | Archive marketplace forum threads when a listing is closed |
@@ -151,7 +162,7 @@ Permission column: **Admin** = Manage Server, **Host** = Manage Events (Admins a
 | `/game suggest / list / cancel / bgstats` | Everyone | Suggest a game (you're asked how well you know it; others can volunteer to teach), see the lineup, remove your suggestion, log a play in BG Stats |
 | `/library …` | Everyone | Your group game library: `list`, `mine`, `add`, `remove`, `edit`, `clear`, `view`, `random`, `search`, `request`, `bring`, `unrequest`, `link`/`unlink` (share a library with another member), `import bgg` / `import csv` |
 | `/myroles` | Everyone | Set your genre and difficulty preferences |
-| `/bgg link / unlink / profile` | Everyone | Link your BoardGameGeek account |
+| `/bgg link / unlink / profile` | Everyone | Link your BoardGameGeek account. After you import your collection once, new games you add on BGG are picked up automatically (`unlink` stops that) |
 | `/marketplace …` | Everyone | Buy/sell/trade: `post sell`, `post trade`, `browse`, `my`, `close`, `reopen`, `edit`, `price`, `conditions`, `import` (bulk from a CSV), `template` (sample CSV) |
 | `/room create / close / persist / invite / kick` | Everyone | Private channels for you and the people you invite |
 | `/snacks add / list / remove` | Everyone | Track who is bringing which snack for an event or room |
@@ -161,7 +172,7 @@ Permission column: **Admin** = Manage Server, **Host** = Manage Events (Admins a
 | `/host library unrequest` | Host | Remove any game request from an event |
 | `/host challenge points` | Host | Adjust a member's challenge points |
 | `/admin event config / preview` | Admin | Server-wide event defaults; dry-run the lineup schedule |
-| `/admin library clear / sync / syncall / backfilltop` | Admin | Library maintenance and BGG re-sync |
+| `/admin library clear / sync / syncall / autosync / backfilltop` | Admin | Library maintenance and BGG re-sync; `autosync` sets how often members' linked BGG collections are re-synced automatically (default 7 days, 0 = off) |
 | `/admin tags add / remove / list / sync / clear` | Admin | Game genre tags and their roles |
 | `/admin welcome config / test / greet` | Admin | The new-member welcome message |
 | `/admin marketplace config / purge` | Admin | Marketplace channel and negotiation mode; cleanup |
@@ -196,7 +207,7 @@ All persisted data is JSON, and every record is scoped to a guild (`guildId`) so
 | `library_requests.json` | "Bring this game" requests per event |
 | `library_links.json` | Library sharing links between members |
 | `game_info.json` | Shared BGG game metadata cache (not guild-scoped) |
-| `bgg_accounts.json` | Linked BGG accounts |
+| `bgg_accounts.json` | Linked BGG accounts, plus when each was last synced into the library (drives the automatic re-sync) |
 | `user_collections.json` | Imported BGG collection data |
 | `bgg_discovered_entries.json` | Games found via live BGG search and folded into the local catalog |
 | `gameroles.json` | Genre/difficulty tag roles |

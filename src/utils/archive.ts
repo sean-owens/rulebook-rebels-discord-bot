@@ -1,4 +1,4 @@
-import { Client, ChannelType, ForumChannel, TextChannel } from 'discord.js';
+import { Client, ChannelType, ForumChannel, PermissionFlagsBits, TextChannel } from 'discord.js';
 import { GameNight, loadGameNights, upsertGameNight } from './storage';
 import { getGuildConfig } from './config';
 import { ensureGameNightTags, resolvedGameNightTag } from './gameNightTags';
@@ -79,6 +79,18 @@ export async function archiveEventChannel(client: Client, gn: GameNight): Promis
   console.log(`Archived channel for game night ${gn.id}, will lock on ${lockDateStr}`);
 }
 
+// The @everyone overwrite that makes an archived channel read-only. Deliberately
+// leaves ViewChannel alone so the channel keeps whatever visibility it already
+// had — a private (RSVP-only) event channel must not become visible to the whole
+// server just because it was locked. AddReactions is only denied when the bot
+// holds it itself: Discord rejects (50013 Missing Permissions) any overwrite edit
+// touching a permission the editing bot doesn't have, which used to fail the
+// entire lock (issue #118). SendMessages is what actually makes it read-only, so
+// the lock still applies without the reaction block.
+export function buildLockOverwrite(botCanDenyReactions: boolean): { SendMessages: false; AddReactions?: false } {
+  return botCanDenyReactions ? { SendMessages: false, AddReactions: false } : { SendMessages: false };
+}
+
 export async function lockEventChannel(client: Client, gn: GameNight): Promise<void> {
   if (!gn.eventChannelId || gn.locked) return;
 
@@ -86,11 +98,16 @@ export async function lockEventChannel(client: Client, gn: GameNight): Promise<v
     const guild = await client.guilds.fetch(gn.guildId);
     const channel = (await client.channels.fetch(gn.eventChannelId)) as TextChannel;
 
-    await channel.permissionOverwrites.create(guild.roles.everyone, {
-      ViewChannel: true,
-      SendMessages: false,
-      AddReactions: false,
-    });
+    const me = await guild.members.fetchMe();
+    const botCanDenyReactions = channel.permissionsFor(me)?.has(PermissionFlagsBits.AddReactions) ?? false;
+    if (!botCanDenyReactions) {
+      console.warn(
+        `Locking channel for game night ${gn.id} without blocking reactions: the bot lacks the Add Reactions permission. ` +
+          `Re-authorize the bot with the current invite link (see discord link.md) to enable it.`,
+      );
+    }
+
+    await channel.permissionOverwrites.create(guild.roles.everyone, buildLockOverwrite(botCanDenyReactions));
 
     await channel.send('*This channel is now read-only.*');
 

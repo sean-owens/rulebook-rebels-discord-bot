@@ -6,6 +6,7 @@ import {
   isCatalogLoaded,
   normalizeName,
   getCatalogEntryById,
+  getTopRankedGames,
   _loadFromCsvText,
   _resetCatalog,
 } from '../src/utils/bggCatalog';
@@ -31,6 +32,31 @@ const TEST_CSV = `id,name,yearpublished,rank,bayesaverage,average,usersrated,is_
 999,"Pandemic Legacy: Season 1",2015,3,8.34,8.50,57510,0,
 888,"Arkham Horror: The Card Game",2016,20,7.89,8.10,40000,0,
 777,"Arkham Horror",2005,150,6.90,7.30,25000,0,`;
+
+describe('getTopRankedGames', () => {
+  beforeEach(() => {
+    _resetCatalog();
+    _loadFromCsvText(`${TEST_CSV}
+555,"Arkham Horror: New Scenario Pack",2026,,,,,0,
+556,"Ranked Expansion Mistake",2020,7,,,,1,`);
+  });
+
+  it('returns only ranked non-expansion entries, best-ranked first', () => {
+    const ids = getTopRankedGames(500).map((e) => e.id);
+    expect(ids).toEqual(['224517', '342942', '999', '174430', '266192', '888', '13', '777']);
+  });
+
+  it('excludes expansions and unranked entries (challenge answers are never expansions/promos)', () => {
+    const ids = getTopRankedGames(500).map((e) => e.id);
+    expect(ids).not.toContain('266192001'); // expansion
+    expect(ids).not.toContain('555'); // unranked, unreliable expansion flag
+    expect(ids).not.toContain('556'); // flagged expansion even though ranked
+  });
+
+  it('caps the pool at the requested limit', () => {
+    expect(getTopRankedGames(2).map((e) => e.id)).toEqual(['224517', '342942']);
+  });
+});
 
 describe('normalizeName', () => {
   it('lowercases and strips special characters', () => {

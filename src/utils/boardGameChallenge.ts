@@ -258,6 +258,13 @@ export function isCorrectGuess(guess: string, title: string): boolean {
 // an empty/single-element array when the guess isn't actually ambiguous (no
 // catalog loaded, or the current answer is the only game with that base) —
 // callers should only treat 2+ results as needing a clarification prompt.
+// Only ranked, non-expansion entries are offered. An unranked entry's
+// is_expansion flag can't be trusted — BGG's dump lists brand-new or unrated
+// expansions/promos (e.g. a freshly announced scenario pack) as is_expansion=0
+// with no rank, and live-search discoveries carry a placeholder
+// isExpansion=false — so letting them through put expansions and promos in the
+// "which did you mean?" dropdown. The weekly answer is always a ranked base
+// game (see getTopRankedGames), so nothing legitimate is lost.
 // Deliberately guarantees the real answer's entry is included whenever the
 // catalog knows about it at all, even on the off chance the base-text search
 // itself somehow missed it, so the correct option is always one of the
@@ -268,7 +275,7 @@ export function findDisambiguationCandidates(guess: string, correctBggId: string
   const guessBase = splitTitle(guess).base;
   if (!guessBase) return [];
 
-  const results = searchCatalog(guessBase, 50, { skipExact: true }).filter((e) => !e.isExpansion);
+  const results = searchCatalog(guessBase, 50, { skipExact: true }).filter((e) => !e.isExpansion && e.rank !== null);
   const matches = results.filter((e) => {
     const { base } = splitTitle(e.name);
     return candidateMatches(base, guessBase) || candidateMatches(sortedWords(base), sortedWords(guessBase));

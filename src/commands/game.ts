@@ -43,6 +43,7 @@ import { greeterSeatViolation } from '../utils/greeters';
 import { findRoomByChannel, PrivateRoom } from '../utils/roomStorage';
 import {
   findGamesByName,
+  loadLibraryForGuild,
   findGameNamesByPartial,
   getGameInfo,
   upsertGameInfo,
@@ -52,6 +53,8 @@ import {
   getRequestsForEvent,
   removeRequests,
   confirmBring,
+  resolveAttendingOwnerIds,
+  findOwnersCoveringExpansions,
   GameInfo,
   GAME_TAGS,
 } from '../utils/libraryStorage';
@@ -1099,9 +1102,15 @@ async function showLibraryExpansionPicker(
 
   pendingLibraryGame.set(interaction.user.id, { gameName, info, ownerIds });
 
-  const options = bggGame.expansions.map((exp) =>
-    new StringSelectMenuOptionBuilder().setLabel(exp.name.slice(0, 100)).setValue(exp.id),
-  );
+  // Flag the expansions someone in the group actually owns — the ones picked here are
+  // passed on to the bring request, so an owner who has them is the one asked.
+  const guildLibrary = await loadLibraryForGuild(interaction.guildId!);
+  const norm = (n: string) => n.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const options = bggGame.expansions.map((exp) => {
+    const owned = guildLibrary.some((e) => (e.objectid && e.objectid === exp.id) || norm(e.gameName) === norm(exp.name));
+    const option = new StringSelectMenuOptionBuilder().setLabel(exp.name.slice(0, 100)).setValue(exp.id);
+    return owned ? option.setDescription('In the group library') : option;
+  });
   const select = new StringSelectMenuBuilder()
     .setCustomId(`game_exp_lib_${info.objectid}`)
     .setPlaceholder('Select one or more expansions...')
@@ -1109,7 +1118,7 @@ async function showLibraryExpansionPicker(
     .setMaxValues(options.length)
     .addOptions(options);
   await interaction.editReply({
-    content: `**${gameName}** has **${bggGame.expansions.length}** expansion(s). Select any to include:`,
+    content: `**${gameName}** has **${bggGame.expansions.length}** expansion(s). Select any to include — an owner who has them will be asked to bring it:`,
     components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
   });
 }
@@ -1271,8 +1280,20 @@ export async function postLibraryGame(
 
   // "Bring to event"/lineup-pin tracking doesn't apply to a private room — it's an ad-hoc
   // space happening now, not a future event to request games for.
+  let expansionCoverageNote = '';
   if (!isRoomGameNight(gameNight)) {
-    await addRequest(gameNight.id, gameName, interaction.user.id);
+    // The expansions picked here ride along on the bring request so the bot asks an
+    // owner who actually has them (see reconcileRequestCopies), not just any copy.
+    const requiredExpansions = expansions.map((e) => ({ id: e.id, name: e.name }));
+    await addRequest(gameNight.id, gameName, interaction.user.id, undefined, requiredExpansions);
+    if (requiredExpansions.length > 0) {
+      const attendingOwnerIds = await resolveAttendingOwnerIds(interaction.guildId!, ownerIds, gameNight.rsvps);
+      const covering = await findOwnersCoveringExpansions(interaction.guildId!, attendingOwnerIds, requiredExpansions);
+      if (covering.length === 0) {
+        expansionCoverageNote = `
+⚠️ No attending owner has all of: ${requiredExpansions.map((e) => e.name).join(', ')}. An owner will still be asked to bring the base game.`;
+      }
+    }
     try {
       await updateRequestPin(interaction.client, gameNight.id);
     } catch {
@@ -1288,12 +1309,12 @@ export async function postLibraryGame(
 
   if (!game.tags?.length) {
     await interaction.editReply({
-      content: `**${gameName}** has been added! Optionally tag the game type to help players find it:`,
+      content: `**${gameName}** has been added! Optionally tag the game type to help players find it:${expansionCoverageNote}`,
       components: buildTagPickerComponents(id),
     });
   } else {
     await interaction.editReply({
-      content: `**${gameName}** has been added to the lineup!`,
+      content: `**${gameName}** has been added to the lineup!${expansionCoverageNote}`,
       components: [],
     });
   }

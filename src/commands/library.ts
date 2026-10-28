@@ -43,6 +43,7 @@ import {
   confirmBring,
   declineBring,
   buildExpansionNote,
+  buildRequestExpansionNote,
   resolveAttendingOwnerIds,
   GameRequest,
 } from '../utils/libraryStorage';
@@ -61,16 +62,18 @@ import AdmZip from 'adm-zip';
 import { getBGGGame, getBGGGamesBatch, BGGGame, weightTag, fetchBggOwnedCollection } from '../utils/bgg';
 import { getLastScheduledAt } from '../utils/gameStorage';
 import { weightedSampleWithoutReplacement } from '../utils/weightedRandom';
-import { getGuildConfig } from '../utils/config';
+import { getGuildConfig, bggAutoSyncDaysFor } from '../utils/config';
+import { applyBggCollectionToLibrary } from '../utils/bggLibrarySync';
 import {
   searchCatalog,
   searchCatalogWithFallback,
+  matchesFuzzy,
   isCatalogLoaded,
   normalizeName,
   getTopRankedGames,
   BGGCatalogEntry,
 } from '../utils/bggCatalog';
-import { getBggAccount } from '../utils/bggAccountStorage';
+import { getBggAccount, recordBggSyncAttempt } from '../utils/bggAccountStorage';
 import { mergeUserCollection, UserCollectionEntry } from '../utils/userCollectionStorage';
 import { GENRE_TAG_DEFINITIONS } from '../utils/tagDefinitions';
 import { resolveJumpTarget } from '../utils/pageJump';
@@ -302,7 +305,13 @@ export const data = new SlashCommandBuilder()
     sub
       .setName('search')
       .setDescription(
-        'Find games by player count, tag, or play time (all filters optional but at least one required)',
+        'Find games by title, players, tag, or play time (all optional, at least one required)',
+      )
+      .addStringOption((opt) =>
+        opt
+          .setName('title')
+          .setDescription('Part of the game\'s name (e.g. "catan" or "ticket ride")')
+          .setRequired(false),
       )
       .addStringOption((opt) =>
         opt
@@ -384,8 +393,11 @@ async function buildBringLines(
     const copies = req.copiesNeeded ?? 1;
     const confirmed = req.confirmations.some((c) => c.ownerId === userId) ? ' ✅ confirmed' : '';
     const copiesNote = copies > 1 ? ` *(${req.confirmations.length}/${copies} copies confirmed)*` : '';
-    const expansionNote =
-      req.preferredOwnerId && effectiveOwnerIds.includes(req.preferredOwnerId)
+    // A request that names expansions shows what this owner has of them; otherwise
+    // the expansion note only appears when this owner was explicitly picked.
+    const expansionNote = req.requiredExpansions?.length
+      ? await buildRequestExpansionNote(guildId, userId, req)
+      : req.preferredOwnerId && effectiveOwnerIds.includes(req.preferredOwnerId)
         ? await buildExpansionNote(guildId, userId, req.gameName)
         : '';
     lines.push(`• **${req.gameName}**${expansionNote}${copiesNote}${confirmed}`);
@@ -481,11 +493,7 @@ async function handleBring(interaction: ChatInputCommandInteraction): Promise<vo
     }
 
     // result.status === 'confirmed'
-    const expansionNote = await buildExpansionNote(
-      interaction.guildId!,
-      interaction.user.id,
-      match.gameName,
-    );
+    const expansionNote = await buildRequestExpansionNote(interaction.guildId!, interaction.user.id, match);
     await interaction.reply({
       content: `✅ Got it — you're confirmed to bring **${match.gameName}**${expansionNote} to the event on ${event.date}!`,
       flags: MessageFlags.Ephemeral,
@@ -588,7 +596,7 @@ export async function handleLibraryConfirmBring(
   }
 
   // result.status === 'confirmed'
-  const expansionNote = await buildExpansionNote(gameNight.guildId, interaction.user.id, req.gameName);
+  const expansionNote = await buildRequestExpansionNote(gameNight.guildId, interaction.user.id, req);
   await interaction.update({
     content: `✅ Confirmed — you're bringing **${req.gameName}**${expansionNote} to the event on ${gameNight.date}!`,
     components: [],
@@ -2788,71 +2796,28 @@ export async function handleImportBgg(
     return;
   }
 
-  const validGames = games.filter((g) => !!g.gameName);
-
-  // Batch the library-add and game-info upserts into one read + one write
-  // each, rather than one round trip per game — with a large BGG collection
-  // (100s of games) that per-game pattern made this command take minutes.
-  const addResults = await addGamesBulk(
+  // Shared with the automatic re-sync (see bggAutoSync.ts) so both paths stay in step.
+  // 'all' mode: the member asked for this, so every owned game is offered to the library.
+  const { addedGames, addedExpansions, skipped } = await applyBggCollectionToLibrary(
     guildId,
     userId,
-    validGames.map((g) => ({ gameName: g.gameName, objectid: g.bggGameId, isExpansion: g.isExpansion })),
+    games,
+    'all',
   );
-
-  const existingInfos = await loadGameInfos();
-  const existingByName = new Map(existingInfos.map((i) => [i.gameName.toLowerCase(), i]));
-
-  let addedGames = 0;
-  let addedExpansions = 0;
-  let skipped = 0;
-  const collectionEntries: UserCollectionEntry[] = [];
-  const infosToUpsert: GameInfo[] = [];
-
-  for (let i = 0; i < validGames.length; i++) {
-    const game = validGames[i];
-    if (addResults[i] === 'added') {
-      if (game.isExpansion) addedExpansions++;
-      else addedGames++;
-    } else {
-      skipped++;
-    }
-
-    const existing = existingByName.get(game.gameName.toLowerCase());
-    infosToUpsert.push({
-      gameName: game.gameName,
-      objectid: game.bggGameId,
-      minPlayers: existing?.minPlayers ?? game.minPlayers ?? undefined,
-      maxPlayers: existing?.maxPlayers ?? game.maxPlayers ?? undefined,
-      playTime: existing?.playTime ?? game.playingTime ?? undefined,
-      weight: existing?.weight,
-      complexity: existing?.complexity,
-      tags: existing?.tags,
-      expansions: existing?.expansions,
-      updatedAt: new Date().toISOString(),
-    });
-
-    collectionEntries.push({
-      bggGameId: game.bggGameId,
-      gameName: game.gameName,
-      bggOwn: game.own,
-      bggForTrade: game.forTrade,
-      bggWantToPlay: game.wantToPlay,
-      bggWishlisted: game.wishlisted,
-      bggUserRating: game.userRating,
-      bggNumPlays: game.numPlays,
-      bggSyncedAt: new Date().toISOString(),
-    });
-  }
-
-  await upsertGameInfosBulk(infosToUpsert);
-  await mergeUserCollection(guildId, userId, collectionEntries);
+  await recordBggSyncAttempt(guildId, userId, { at: new Date().toISOString(), success: true });
 
   const parts: string[] = [];
   if (addedGames > 0) parts.push(`**${addedGames}** game${addedGames !== 1 ? 's' : ''} added`);
   if (addedExpansions > 0)
     parts.push(`**${addedExpansions}** expansion${addedExpansions !== 1 ? 's' : ''} added`);
   if (skipped > 0) parts.push(`**${skipped}** already in your library`);
-  await interaction.editReply(`BoardGameGeek import complete — ${parts.join(', ')}.`);
+  // Tell the member this isn't a one-off: new games they add on BGG will be picked up on their own.
+  const autoSyncDays = bggAutoSyncDaysFor(await getGuildConfig(guildId));
+  const autoSyncNote =
+    autoSyncDays > 0
+      ? `\n-# New games you add on BoardGameGeek will be picked up automatically every ${autoSyncDays} day${autoSyncDays !== 1 ? 's' : ''}. Run \`/bgg unlink\` to stop that.`
+      : '';
+  await interaction.editReply(`BoardGameGeek import complete — ${parts.join(', ')}.${autoSyncNote}`);
 }
 
 async function handleImportCsv(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -3385,6 +3350,7 @@ function parseInts(raw: string): number[] {
 }
 
 async function handleSearch(interaction: ChatInputCommandInteraction): Promise<void> {
+  const titleQuery = interaction.options.getString('title')?.trim() || undefined;
   const playersRaw = interaction.options.getString('players') ?? undefined;
   let tags = [
     interaction.options.getString('tag'),
@@ -3399,8 +3365,11 @@ async function handleSearch(interaction: ChatInputCommandInteraction): Promise<v
   const playerCounts = playersRaw ? parseInts(playersRaw) : [];
   const durations = durationRaw ? parseInts(durationRaw) : [];
 
+  // /myroles preferences only fill in when the caller gave no filter of their own;
+  // a title search is an explicit "find this game", so it must not be silently
+  // narrowed by the caller's favourite genres.
   let personalized = false;
-  if (tags.length === 0 && !complexity) {
+  if (tags.length === 0 && !complexity && !titleQuery) {
     const member = await interaction.guild!.members.fetch(interaction.user.id);
     const prefs = await getMemberPreferences(interaction.guildId!, member);
     if (prefs.tags.length > 0 || prefs.complexity) {
@@ -3411,6 +3380,7 @@ async function handleSearch(interaction: ChatInputCommandInteraction): Promise<v
   }
 
   if (
+    !titleQuery &&
     playerCounts.length === 0 &&
     tags.length === 0 &&
     durations.length === 0 &&
@@ -3420,7 +3390,7 @@ async function handleSearch(interaction: ChatInputCommandInteraction): Promise<v
   ) {
     await interaction.reply({
       content:
-        'Provide at least one valid filter: `players`, `tag`, or `duration` — or set your preferences with `/myroles` to search based on those.',
+        'Provide at least one valid filter: `title`, `players`, `tag`, or `duration` — or set your preferences with `/myroles` to search based on those.',
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -3436,6 +3406,11 @@ async function handleSearch(interaction: ChatInputCommandInteraction): Promise<v
     const key = entry.gameName.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
+
+    // Same matcher as /library view's "did you mean" picker. Expansions are left
+    // out of title matches so searching a base game by name ("wingspan") isn't
+    // diluted by its own expansions, which would stop it resolving to one result.
+    if (titleQuery && (entry.isExpansion || !matchesFuzzy(titleQuery, entry.gameName))) continue;
 
     const gameInfo = infos.find((i) => i.gameName.toLowerCase() === key);
 
@@ -3489,6 +3464,7 @@ async function handleSearch(interaction: ChatInputCommandInteraction): Promise<v
       ? `**${minDuration ?? 0}–${maxDuration ?? '∞'} min**`
       : '';
   const filterParts = [
+    titleQuery ? `title **${titleQuery}**` : '',
     playerCounts.length > 0 ? `**${playerCounts.join(' or ')} players**` : '',
     tags.length > 0 ? `tag **${tags.join(' or ')}**${personalized ? ' (from your /myroles)' : ''}` : '',
     durations.length > 0 ? `**${durations.join(' or ')} min** (±15 min)` : '',
@@ -3503,6 +3479,13 @@ async function handleSearch(interaction: ChatInputCommandInteraction): Promise<v
       content: `No games found matching ${filterParts}.`,
       flags: MessageFlags.Ephemeral,
     });
+    return;
+  }
+
+  // A lone match is almost certainly the game they were after — skip the one-row
+  // results list and show the full /library view card instead.
+  if (matches.length === 1) {
+    await resolveViewFlow(interaction, matches[0].displayName);
     return;
   }
 

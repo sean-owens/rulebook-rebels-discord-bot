@@ -147,6 +147,14 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Select the game from BGG results — confirm expansion selection dropdown appears
 - [ ] Select expansions and confirm — confirm game card shows expansions
 - [ ] If a game has no expansions — confirm it posts directly without the expansion step
+- [ ] Run `/game suggest title:<a game in the library that has expansions> with_expansions:True` — confirm the expansion dropdown says "an owner who has them will be asked to bring it", and expansions someone in the group owns show "In the group library" beside them
+- [ ] Pick an expansion that exactly one attending owner has (and at least one other attending owner has the base game only) — confirm the suggestion posts normally and the "Games to Bring" pin lists the game as "<game> *(+ <expansion>)*"
+- [ ] Lock the lineup — confirm only the owner who has that expansion is DMed (not every base-game owner), the DM reads "…bring **<game>** (with <expansion>)…", and the other base-game owner gets nothing
+- [ ] Have that owner tap **❌ Can't bring it** — confirm the next attending base-game owner is DMed next, and that DM includes "⚠️ you don't have the requested <expansion>"
+- [ ] Pick an expansion that no attending owner has — confirm the "added to the lineup" reply ends with "⚠️ No attending owner has all of: <expansion>. An owner will still be asked to bring the base game.", and at lock one base-game owner is still DMed with the missing-expansion heads-up
+- [ ] Pick two expansions owned by different attending owners (neither owns both) — confirm the no-owner-has-all warning appears, since a single owner is asked to bring them together
+- [ ] Suggest with `with_expansions:True` but select no expansions — confirm behaviour is identical to a normal suggest (no warning, pin shows no "(+ …)", lock-time ask is by the usual fairness/suggester rules)
+- [ ] Run `/library bring` as the owner who has the picked expansion — confirm the game shows "(with <expansion>)"; as another base-game owner, confirm it shows the "⚠️ you don't have…" note instead. Confirm bringing as either — confirm the "you're confirmed" message uses the same wording
 
 #### Manual entry
 - [ ] Select "None of these — enter details manually" from the BGG dropdown
@@ -398,7 +406,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.4h `/library request`
 
-**What it does:** Requests a specific game be brought to an event. No "please bring this" DM goes out yet — asking is deferred until the event's lineup locks (4.7), so the bot can pick fairly from each owner's *final* confirmed-brings count instead of an early, mostly-arbitrary snapshot. At lock, the request is asked of the owner the copy-select assigned it to (an explicit pick), or — when no copy-select is shown, or **Bot decides** was selected — the owner who suggested the game (if they own a copy and are attending), otherwise whichever attending owner currently has the fewest confirmed-or-pending asks for that event, with "🎲 ... ✅ Confirm bringing" and "❌ Can't bring it" buttons. Confirming behaves the same as `/library bring game:<name>`; declining cascades the same DM to the next eligible attending owner (see "Declining via the DM button" below). If the waitlist for a suggested game grows enough to need a second copy (1.3e/2.3e/3.3e), that just updates how many owners get asked at lock — it doesn't trigger an ask itself. A request made *after* the lineup is already locked has no future lock to wait for, so it's asked immediately instead.
+**What it does:** Requests a specific game be brought to an event. No "please bring this" DM goes out yet — asking is deferred until the event's lineup locks (4.7), so the bot can pick fairly from each owner's *final* confirmed-brings count instead of an early, mostly-arbitrary snapshot. At lock, the request is asked of the owner the copy-select assigned it to (an explicit pick), or — when no copy-select is shown, or **Bot decides** was selected — the owner who suggested the game (if they own a copy and are attending), otherwise whichever attending owner currently has the fewest confirmed-or-pending asks for that event, with "🎲 ... ✅ Confirm bringing" and "❌ Can't bring it" buttons. Confirming behaves the same as `/library bring game:<name>`; declining cascades the same DM to the next eligible attending owner (see "Declining via the DM button" below). **Games suggested with expansions:** when a game is suggested with `with_expansions:True` and the suggester picks expansions (1.3a), those expansions are saved on the game's bring request, shown as "(+ Expansion)" next to the game in the "Games to Bring" pin, and the lock-time ask goes first to an attending owner who owns *every* picked expansion — ahead of the suggester and ahead of fairness. If none of them can (nobody attending owns them all, or they all decline), the remaining attending owners are asked for the base game instead so it isn't left unbrought; their DM says which requested expansions they don't have. If the waitlist for a suggested game grows enough to need a second copy (1.3e/2.3e/3.3e), that just updates how many owners get asked at lock — it doesn't trigger an ask itself. A request made *after* the lineup is already locked has no future lock to wait for, so it's asked immediately instead.
 
 **Prerequisites:** an active event must exist, and the game being requested must already be in the library, owned by someone who has RSVP'd (see 1.4a/2.4a/3.4a to add a game first).
 
@@ -458,11 +466,13 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 #### `/library import bgg`
 
-**What it does:** Imports all owned games and expansions from your linked BoardGameGeek collection. The "Import my library now" button shown after `/bgg link` (1.6a/2.6a/3.6a) triggers this same import.
+**What it does:** Imports all owned games and expansions from your linked BoardGameGeek collection. The "Import my library now" button shown after `/bgg link` (1.6a/2.6a/3.6a) triggers this same import. When it finishes, the reply ends with a small note that new games you add on BoardGameGeek will now be picked up automatically every N days (see 4.10) — left out if an admin has turned that off (`/admin library autosync`, 3.9e1) — and the import counts as a sync, so the automatic one waits a full interval before its first run.
 
 - [ ] Run without a linked BGG account — confirm "You don't have a BoardGameGeek account linked" error
 - [ ] Run with a linked account — confirm success message with game/expansion counts
 - [ ] Run a second time — confirm all entries show as "already in your library" (no duplicates)
+- [ ] After a successful import, confirm the reply ends with "New games you add on BoardGameGeek will be picked up automatically every 7 days. Run `/bgg unlink` to stop that." — and that the note is absent once an admin runs `/admin library autosync days:0`
+- [ ] After importing, add a new game to your BGG collection and confirm it is NOT in the library until the next automatic sync (4.10) or a manual `/library import bgg`
 
 #### `/library import csv`
 
@@ -474,8 +484,16 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.4l `/library search`
 
-**What it does:** Searches the library with filters for player count, tags, duration, and complexity. If no `tag`/`tag2`/`tag3` or `complexity` option is given, it defaults to your own `/myroles` preferences (1.5) instead of requiring you to type them every time.
+**What it does:** Searches the library with filters for title, player count, tags, duration, and complexity. `title` matches any game whose name contains the typed words (case-insensitive, word-prefix, small typos tolerated — the same matching as the "did you mean" picker in `/library view`), and leaves expansions out. When exactly one game matches, the bot skips the results list and shows that game's full `/library view` card instead. If no `tag`/`tag2`/`tag3`, `complexity`, or `title` option is given, it defaults to your own `/myroles` preferences (1.5) instead of requiring you to type them every time.
 
+- [ ] `/library search title:catan` with several matching games in the library (e.g. "Catan" and "Catan Junior") — confirm a results list of every game whose name matches, and the description reads "N games matching title **catan**"
+- [ ] `/library search title:ticket ride` (words out of the full name, wrong case) — confirm it still finds "Ticket to Ride"
+- [ ] `/library search title:` of a game with exactly one match — confirm no results list appears; instead the same full game card as `/library view <game>` is shown (owners, players, play time, etc.)
+- [ ] `/library search title:` of a base game whose expansion is also in the library — confirm the expansion does not appear in the results, so the base game alone resolves to its view card
+- [ ] `/library search title:catan tag:Family` — confirm title and tag combine (both must match)
+- [ ] With `/myroles` preferences set, run `/library search title:<a game outside your preferred genres>` — confirm the game is still found and there is no "(from your /myroles)" note (preferences never narrow a title search)
+- [ ] `/library search title:zzzzz` — confirm "No games found matching title **zzzzz**."
+- [ ] Run any `/library search` filter combination that matches exactly one game (e.g. `players:` + `tag:` narrowing to one) — confirm that single result is also shown as the full view card
 - [ ] `/library search players:4` — confirm results include games supporting 4 players, sorted by proximity to 4
 - [ ] `/library search players:2,4` (multiple counts) — confirm games matching either count appear
 - [ ] `/library search tag:Co-op` — confirm only Co-op tagged games appear
@@ -489,7 +507,7 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Combine filters (e.g. `players`, `tag`, and `complexity` together) — confirm all filters apply together (AND across filter types, OR within tag1/2/3)
 - [ ] Set genre/difficulty preferences via `/myroles` (1.5), then run `/library search` with no options at all — confirm it searches using those preferences instead of erroring, and the result description notes "(from your /myroles)"
 - [ ] With `/myroles` preferences set, run `/library search tag:Party` (a tag different from your preference) — confirm the explicit tag wins over your preferences, with no "(from your /myroles)" note
-- [ ] With no `/myroles` preferences set, run `/library search` with no options at all — confirm error: "Provide at least one valid filter: `players`, `tag`, or `duration` — or set your preferences with `/myroles` to search based on those."
+- [ ] With no `/myroles` preferences set, run `/library search` with no options at all — confirm error: "Provide at least one valid filter: `title`, `players`, `tag`, or `duration` — or set your preferences with `/myroles` to search based on those."
 - [ ] Search with valid filters but no matches — confirm "No games matched your filters"
 
 ### 1.4m `/library random`
@@ -942,13 +960,14 @@ All `/game` commands should be used inside an active event channel unless otherw
 
 ### 1.12c Guessing (plain messages in the configured channel)
 
-**What it does:** Reply with your guess as a normal message in the configured channel. A guess is matched against the game's title after normalizing case/punctuation (apostrophes are dropped entirely, e.g. "Captain's" → "captains") and leading articles, with typo tolerance for small misspellings. The guess can include or omit a colon/parenthetical subtitle on either side — matching against the base title alone, the subtitle alone, or the two combined — and word order doesn't matter (e.g. for "Star Trek: Captain's Chair", "captains chair", "star trek captains chair", and "captains chair star trek" are all accepted, as is a squashed-together variant like "ThunderRoad Vendetta" for "Thunder Road: Vendetta"). A correct guess is deleted immediately (so the answer never sits visible for others to copy), a public "🎉 \<user\> guessed it! (+N points)" message posts in the channel so the win is obviously visible (without revealing the title), the guesser is separately DMed their exact points/running total, and the pinned leaderboard message updates immediately to reflect it (see 4.9's live-updating leaderboard pin note); an incorrect guess is left in place with a ❌ reaction. **Ambiguous base-only guesses:** if the guess only matches the title's base (no subtitle) *and* the BGG catalog has other games sharing that same base (e.g. "Ticket to Ride" for "Ticket to Ride: Europe", or "Star Wars" for "Star Wars: A Queen's Gambit"), the bot doesn't score it right away — it replies with a "which game did you mean?" dropdown listing those games (best-ranked first, max 25). Only the person who guessed can use the dropdown (anyone else clicking gets a private "This isn't your guess to answer."). Picking the right game scores exactly like a normal correct guess; picking a wrong one replaces the prompt with "❌ Not quite — try guessing again in the channel!" and they can keep guessing. If the catalog has no other game with that base, a base-only guess is still accepted instantly. Points are 100 (guessed after hint 1), 80 (after hint 2), or 50 (after hint 3) — everyone who guesses correctly scores, not just the first person, and each person can only score once per cycle.
+**What it does:** Reply with your guess as a normal message in the configured channel. A guess is matched against the game's title after normalizing case/punctuation (apostrophes are dropped entirely, e.g. "Captain's" → "captains") and leading articles, with typo tolerance for small misspellings. The guess can include or omit a colon/parenthetical subtitle on either side — matching against the base title alone, the subtitle alone, or the two combined — and word order doesn't matter (e.g. for "Star Trek: Captain's Chair", "captains chair", "star trek captains chair", and "captains chair star trek" are all accepted, as is a squashed-together variant like "ThunderRoad Vendetta" for "Thunder Road: Vendetta"). A correct guess is deleted immediately (so the answer never sits visible for others to copy), a public "🎉 \<user\> guessed it! (+N points)" message posts in the channel so the win is obviously visible (without revealing the title), the guesser is separately DMed their exact points/running total, and the pinned leaderboard message updates immediately to reflect it (see 4.9's live-updating leaderboard pin note); an incorrect guess is left in place with a ❌ reaction. **Ambiguous base-only guesses:** if the guess only matches the title's base (no subtitle) *and* the BGG catalog has other games sharing that same base (e.g. "Ticket to Ride" for "Ticket to Ride: Europe", or "Star Wars" for "Star Wars: A Queen's Gambit"), the bot doesn't score it right away — it replies with a "which game did you mean?" dropdown listing those games (best-ranked first, max 25) — only ranked base games appear, never expansions, promos, or unranked/brand-new BGG entries (their expansion flag can't be trusted, so they're left out entirely; the real answer is always included). Only the person who guessed can use the dropdown (anyone else clicking gets a private "This isn't your guess to answer."). Picking the right game scores exactly like a normal correct guess; picking a wrong one replaces the prompt with "❌ Not quite — try guessing again in the channel!" and they can keep guessing. If the catalog has no other game with that base, a base-only guess is still accepted instantly. Points are 100 (guessed after hint 1), 80 (after hint 2), or 50 (after hint 3) — everyone who guesses correctly scores, not just the first person, and each person can only score once per cycle.
 
 - [ ] Post an obviously wrong guess after hint 1 — confirm it's reacted with ❌ and stays visible, and the pinned leaderboard is untouched
 - [ ] Post the exact title (any case/punctuation) — confirm the message is deleted, a public "guessed it! (+100 points)" message posts in the channel (without the title), you're DMed your points and running total, and the pinned leaderboard message updates to show it (without needing a new correct guess or the reveal)
 - [ ] Post a close typo of the title — confirm it's still accepted as correct
 - [ ] For a game with a colon subtitle (e.g. "Thunder Road: Vendetta"), post just the base title with no subtitle — confirm it's accepted instantly if no other BGG game shares that base, otherwise confirm the "which game did you mean?" dropdown appears (see next bullets)
 - [ ] When the dropdown appears (e.g. guessing "Ticket to Ride" when the answer is "Ticket to Ride: Europe"), confirm the list includes the real answer and other same-base games (no expansions), and nothing has been scored yet
+- [ ] Regression (#115): with a game that has a huge expansion/promo catalog as the answer (e.g. "Arkham Horror: The Card Game (Revised Core Set)"), guess just "Arkham Horror" — confirm the dropdown lists only ranked base games (e.g. the Card Game, Revised Core Set, Third Edition, Arkham Horror) and no scenario packs, mythos packs, promo cards, or other expansions
 - [ ] Pick the correct game from the dropdown — confirm the prompt changes to "✅ Correct!", a public "guessed it!" message posts (without the title), you're DMed your points, and the pinned leaderboard updates
 - [ ] Pick a wrong game from the dropdown — confirm "❌ Not quite — try guessing again in the channel!", no points awarded, and you can post another guess
 - [ ] As a different person, try the dropdown that was sent for someone else's guess — confirm a private "This isn't your guess to answer." and nothing is scored
@@ -1049,6 +1068,14 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Select the game from BGG results — confirm expansion selection dropdown appears
 - [ ] Select expansions and confirm — confirm game card shows expansions
 - [ ] If a game has no expansions — confirm it posts directly without the expansion step
+- [ ] Run `/game suggest title:<a game in the library that has expansions> with_expansions:True` — confirm the expansion dropdown says "an owner who has them will be asked to bring it", and expansions someone in the group owns show "In the group library" beside them
+- [ ] Pick an expansion that exactly one attending owner has (and at least one other attending owner has the base game only) — confirm the suggestion posts normally and the "Games to Bring" pin lists the game as "<game> *(+ <expansion>)*"
+- [ ] Lock the lineup — confirm only the owner who has that expansion is DMed (not every base-game owner), the DM reads "…bring **<game>** (with <expansion>)…", and the other base-game owner gets nothing
+- [ ] Have that owner tap **❌ Can't bring it** — confirm the next attending base-game owner is DMed next, and that DM includes "⚠️ you don't have the requested <expansion>"
+- [ ] Pick an expansion that no attending owner has — confirm the "added to the lineup" reply ends with "⚠️ No attending owner has all of: <expansion>. An owner will still be asked to bring the base game.", and at lock one base-game owner is still DMed with the missing-expansion heads-up
+- [ ] Pick two expansions owned by different attending owners (neither owns both) — confirm the no-owner-has-all warning appears, since a single owner is asked to bring them together
+- [ ] Suggest with `with_expansions:True` but select no expansions — confirm behaviour is identical to a normal suggest (no warning, pin shows no "(+ …)", lock-time ask is by the usual fairness/suggester rules)
+- [ ] Run `/library bring` as the owner who has the picked expansion — confirm the game shows "(with <expansion>)"; as another base-game owner, confirm it shows the "⚠️ you don't have…" note instead. Confirm bringing as either — confirm the "you're confirmed" message uses the same wording
 
 #### Manual entry
 - [ ] Select "None of these — enter details manually" from the BGG dropdown
@@ -1241,7 +1268,7 @@ No permission differences from a regular member (see 1.3e2 for the full checklis
 
 ### 2.4h `/library request`
 
-**What it does:** Requests a specific game be brought to an event. No "please bring this" DM goes out yet — asking is deferred until the event's lineup locks (4.7), so the bot can pick fairly from each owner's *final* confirmed-brings count instead of an early, mostly-arbitrary snapshot. At lock, the request is asked of the owner the copy-select assigned it to (an explicit pick), or — when no copy-select is shown, or **Bot decides** was selected — the owner who suggested the game (if they own a copy and are attending), otherwise whichever attending owner currently has the fewest confirmed-or-pending asks for that event, with "🎲 ... ✅ Confirm bringing" and "❌ Can't bring it" buttons. Confirming behaves the same as `/library bring game:<name>`; declining cascades the same DM to the next eligible attending owner (see "Declining via the DM button" below). If the waitlist for a suggested game grows enough to need a second copy (1.3e/2.3e/3.3e), that just updates how many owners get asked at lock — it doesn't trigger an ask itself. A request made *after* the lineup is already locked has no future lock to wait for, so it's asked immediately instead.
+**What it does:** Requests a specific game be brought to an event. No "please bring this" DM goes out yet — asking is deferred until the event's lineup locks (4.7), so the bot can pick fairly from each owner's *final* confirmed-brings count instead of an early, mostly-arbitrary snapshot. At lock, the request is asked of the owner the copy-select assigned it to (an explicit pick), or — when no copy-select is shown, or **Bot decides** was selected — the owner who suggested the game (if they own a copy and are attending), otherwise whichever attending owner currently has the fewest confirmed-or-pending asks for that event, with "🎲 ... ✅ Confirm bringing" and "❌ Can't bring it" buttons. Confirming behaves the same as `/library bring game:<name>`; declining cascades the same DM to the next eligible attending owner (see "Declining via the DM button" below). **Games suggested with expansions:** when a game is suggested with `with_expansions:True` and the suggester picks expansions (1.3a), those expansions are saved on the game's bring request, shown as "(+ Expansion)" next to the game in the "Games to Bring" pin, and the lock-time ask goes first to an attending owner who owns *every* picked expansion — ahead of the suggester and ahead of fairness. If none of them can (nobody attending owns them all, or they all decline), the remaining attending owners are asked for the base game instead so it isn't left unbrought; their DM says which requested expansions they don't have. If the waitlist for a suggested game grows enough to need a second copy (1.3e/2.3e/3.3e), that just updates how many owners get asked at lock — it doesn't trigger an ask itself. A request made *after* the lineup is already locked has no future lock to wait for, so it's asked immediately instead.
 
 **Prerequisites:** an active event must exist, and the game being requested must already be in the library, owned by someone who has RSVP'd (see 1.4a/2.4a/3.4a to add a game first).
 
@@ -1294,11 +1321,13 @@ No permission differences from a regular member (see 1.3e2 for the full checklis
 
 #### `/library import bgg`
 
-**What it does:** Imports all owned games and expansions from your linked BoardGameGeek collection. The "Import my library now" button shown after `/bgg link` (1.6a/2.6a/3.6a) triggers this same import.
+**What it does:** Imports all owned games and expansions from your linked BoardGameGeek collection. The "Import my library now" button shown after `/bgg link` (1.6a/2.6a/3.6a) triggers this same import. When it finishes, the reply ends with a small note that new games you add on BoardGameGeek will now be picked up automatically every N days (see 4.10) — left out if an admin has turned that off (`/admin library autosync`, 3.9e1) — and the import counts as a sync, so the automatic one waits a full interval before its first run.
 
 - [ ] Run without a linked BGG account — confirm "You don't have a BoardGameGeek account linked" error
 - [ ] Run with a linked account — confirm success message with game/expansion counts
 - [ ] Run a second time — confirm all entries show as "already in your library" (no duplicates)
+- [ ] After a successful import, confirm the reply ends with "New games you add on BoardGameGeek will be picked up automatically every 7 days. Run `/bgg unlink` to stop that." — and that the note is absent once an admin runs `/admin library autosync days:0`
+- [ ] After importing, add a new game to your BGG collection and confirm it is NOT in the library until the next automatic sync (4.10) or a manual `/library import bgg`
 
 #### `/library import csv`
 
@@ -1310,8 +1339,16 @@ No permission differences from a regular member (see 1.3e2 for the full checklis
 
 ### 2.4l `/library search`
 
-**What it does:** Searches the library with filters for player count, tags, duration, and complexity. If no `tag`/`tag2`/`tag3` or `complexity` option is given, it defaults to your own `/myroles` preferences (2.5) instead of requiring you to type them every time.
+**What it does:** Searches the library with filters for title, player count, tags, duration, and complexity. `title` matches any game whose name contains the typed words (case-insensitive, word-prefix, small typos tolerated — the same matching as the "did you mean" picker in `/library view`), and leaves expansions out. When exactly one game matches, the bot skips the results list and shows that game's full `/library view` card instead. If no `tag`/`tag2`/`tag3`, `complexity`, or `title` option is given, it defaults to your own `/myroles` preferences (2.5) instead of requiring you to type them every time.
 
+- [ ] `/library search title:catan` with several matching games in the library (e.g. "Catan" and "Catan Junior") — confirm a results list of every game whose name matches, and the description reads "N games matching title **catan**"
+- [ ] `/library search title:ticket ride` (words out of the full name, wrong case) — confirm it still finds "Ticket to Ride"
+- [ ] `/library search title:` of a game with exactly one match — confirm no results list appears; instead the same full game card as `/library view <game>` is shown (owners, players, play time, etc.)
+- [ ] `/library search title:` of a base game whose expansion is also in the library — confirm the expansion does not appear in the results, so the base game alone resolves to its view card
+- [ ] `/library search title:catan tag:Family` — confirm title and tag combine (both must match)
+- [ ] With `/myroles` preferences set, run `/library search title:<a game outside your preferred genres>` — confirm the game is still found and there is no "(from your /myroles)" note (preferences never narrow a title search)
+- [ ] `/library search title:zzzzz` — confirm "No games found matching title **zzzzz**."
+- [ ] Run any `/library search` filter combination that matches exactly one game (e.g. `players:` + `tag:` narrowing to one) — confirm that single result is also shown as the full view card
 - [ ] `/library search players:4` — confirm results include games supporting 4 players, sorted by proximity to 4
 - [ ] `/library search players:2,4` (multiple counts) — confirm games matching either count appear
 - [ ] `/library search tag:Co-op` — confirm only Co-op tagged games appear
@@ -1325,7 +1362,7 @@ No permission differences from a regular member (see 1.3e2 for the full checklis
 - [ ] Combine filters (e.g. `players`, `tag`, and `complexity` together) — confirm all filters apply together (AND across filter types, OR within tag1/2/3)
 - [ ] Set genre/difficulty preferences via `/myroles` (2.5), then run `/library search` with no options at all — confirm it searches using those preferences instead of erroring, and the result description notes "(from your /myroles)"
 - [ ] With `/myroles` preferences set, run `/library search tag:Party` (a tag different from your preference) — confirm the explicit tag wins over your preferences, with no "(from your /myroles)" note
-- [ ] With no `/myroles` preferences set, run `/library search` with no options at all — confirm error: "Provide at least one valid filter: `players`, `tag`, or `duration` — or set your preferences with `/myroles` to search based on those."
+- [ ] With no `/myroles` preferences set, run `/library search` with no options at all — confirm error: "Provide at least one valid filter: `title`, `players`, `tag`, or `duration` — or set your preferences with `/myroles` to search based on those."
 - [ ] Search with valid filters but no matches — confirm "No games matched your filters"
 
 ### 2.4m `/library random`
@@ -1561,7 +1598,7 @@ No permission differences from a regular member (see 1.7o for the full checklist
 
 ### 2.8a `/host event create`
 
-**What it does:** Creates a Discord scheduled event, a text channel, and posts an RSVP embed in the configured announcements channel. If the announcements channel is a **Forum Channel**, the event becomes a forum thread instead of a plain message, tagged "Upcoming" (see 3.9a for eager tag creation).
+**What it does:** Creates a Discord scheduled event, a text channel, and posts an RSVP embed in the configured announcements channel. If the announcements channel is a **Forum Channel**, the event becomes a forum thread instead of a plain message, tagged "Upcoming" (see 3.9a for eager tag creation). The thread's text carries a short summary under the @everyone ping — the date/time, location, and (shortened) description — because forum cards only preview a post's text, not its embed; without it the card is a large empty box.
 
 - [ ] Create an event with required fields only: `/host event create title:Board Game Bash date:August 22 time:7pm` — confirm:
   - Discord scheduled event is created, named `Board Game Bash — <full date>`
@@ -1570,6 +1607,9 @@ No permission differences from a regular member (see 1.7o for the full checklist
   - Channel topic also ends with "Event ID: `<id>`" — confirm the ID matches the one shown in the RSVP embed footer, so the ID is visible from the event channel itself, not just the announcement post
   - RSVP embed is posted in the announcements channel, titled `Board Game Bash — <full date>`
 - [ ] With the announcements channel set to a Forum Channel (3.9a), create an event — confirm a new forum thread is posted with the "Upcoming" tag applied
+- [ ] Regression (#112): look at that thread in the forum's card/gallery view — confirm the card shows "@everyone", the 📅 date/time, and the 📍 location (plus the description, if you gave one) instead of a large empty box
+- [ ] Create a forum event whose `location` is `@everyone` and whose `description` is `@here <@&some-role-id>` — confirm the only ping is the single leading @everyone (no second ping, no role/user pinged), and the text still reads naturally
+- [ ] Create a forum event with a very long description — confirm the card text is cut off with "…" while the embed inside the thread still shows the full description
 - [ ] Attempt to create an event without `title` — confirm Discord rejects it as a missing required option
 - [ ] Create an event with all fields (end_time, location, link, description) — confirm all appear in the embed
 - [ ] Confirm date formats work: `aug 22`, `August 22`, `august 22, 2026`, `Sept 2nd` (regression: the 4-letter "Sept" abbreviation previously failed to parse — only 3-letter "Sep" and the full "September" worked)
@@ -1585,6 +1625,7 @@ No permission differences from a regular member (see 1.7o for the full checklist
 - [ ] Run `/host event edit id:<event-id>` with no other options — confirm "Provide at least one field to update" error
 - [ ] Run `/host event edit id:<event-id> location:New Venue` — confirm the RSVP embed updates to show the new location
 - [ ] Run `/host event edit id:<event-id> title:New Title` — confirm the event channel is renamed and re-topic'd, the Discord scheduled event's name updates, and the RSVP embed title updates
+- [ ] With a forum announcements channel, run `/host event edit id:<event-id> location:New Venue` — confirm the thread's text (📍 line) updates along with the embed, so the forum card never shows a stale location, and that editing does not re-ping @everyone
 - [ ] Run `/host event edit id:<event-id> date:<a new date>` with no `end_time` — confirm the event's overall duration is preserved (end time shifts by the same amount as the date/start time)
 - [ ] Run `/host event edit id:<event-id> end_time:<a new end time>` — confirm only the end time changes
 - [ ] Attempt to edit with an invalid ID — confirm "No event found" error
@@ -1886,6 +1927,14 @@ All `/game` commands should be used inside an active event channel unless otherw
 - [ ] Select the game from BGG results — confirm expansion selection dropdown appears
 - [ ] Select expansions and confirm — confirm game card shows expansions
 - [ ] If a game has no expansions — confirm it posts directly without the expansion step
+- [ ] Run `/game suggest title:<a game in the library that has expansions> with_expansions:True` — confirm the expansion dropdown says "an owner who has them will be asked to bring it", and expansions someone in the group owns show "In the group library" beside them
+- [ ] Pick an expansion that exactly one attending owner has (and at least one other attending owner has the base game only) — confirm the suggestion posts normally and the "Games to Bring" pin lists the game as "<game> *(+ <expansion>)*"
+- [ ] Lock the lineup — confirm only the owner who has that expansion is DMed (not every base-game owner), the DM reads "…bring **<game>** (with <expansion>)…", and the other base-game owner gets nothing
+- [ ] Have that owner tap **❌ Can't bring it** — confirm the next attending base-game owner is DMed next, and that DM includes "⚠️ you don't have the requested <expansion>"
+- [ ] Pick an expansion that no attending owner has — confirm the "added to the lineup" reply ends with "⚠️ No attending owner has all of: <expansion>. An owner will still be asked to bring the base game.", and at lock one base-game owner is still DMed with the missing-expansion heads-up
+- [ ] Pick two expansions owned by different attending owners (neither owns both) — confirm the no-owner-has-all warning appears, since a single owner is asked to bring them together
+- [ ] Suggest with `with_expansions:True` but select no expansions — confirm behaviour is identical to a normal suggest (no warning, pin shows no "(+ …)", lock-time ask is by the usual fairness/suggester rules)
+- [ ] Run `/library bring` as the owner who has the picked expansion — confirm the game shows "(with <expansion>)"; as another base-game owner, confirm it shows the "⚠️ you don't have…" note instead. Confirm bringing as either — confirm the "you're confirmed" message uses the same wording
 
 #### Manual entry
 - [ ] Select "None of these — enter details manually" from the BGG dropdown
@@ -2078,7 +2127,7 @@ No permission differences from a regular member (see 1.3e2 for the full checklis
 
 ### 3.4h `/library request`
 
-**What it does:** Requests a specific game be brought to an event. No "please bring this" DM goes out yet — asking is deferred until the event's lineup locks (4.7), so the bot can pick fairly from each owner's *final* confirmed-brings count instead of an early, mostly-arbitrary snapshot. At lock, the request is asked of the owner the copy-select assigned it to (an explicit pick), or — when no copy-select is shown, or **Bot decides** was selected — the owner who suggested the game (if they own a copy and are attending), otherwise whichever attending owner currently has the fewest confirmed-or-pending asks for that event, with "🎲 ... ✅ Confirm bringing" and "❌ Can't bring it" buttons. Confirming behaves the same as `/library bring game:<name>`; declining cascades the same DM to the next eligible attending owner (see "Declining via the DM button" below). If the waitlist for a suggested game grows enough to need a second copy (1.3e/2.3e/3.3e), that just updates how many owners get asked at lock — it doesn't trigger an ask itself. A request made *after* the lineup is already locked has no future lock to wait for, so it's asked immediately instead.
+**What it does:** Requests a specific game be brought to an event. No "please bring this" DM goes out yet — asking is deferred until the event's lineup locks (4.7), so the bot can pick fairly from each owner's *final* confirmed-brings count instead of an early, mostly-arbitrary snapshot. At lock, the request is asked of the owner the copy-select assigned it to (an explicit pick), or — when no copy-select is shown, or **Bot decides** was selected — the owner who suggested the game (if they own a copy and are attending), otherwise whichever attending owner currently has the fewest confirmed-or-pending asks for that event, with "🎲 ... ✅ Confirm bringing" and "❌ Can't bring it" buttons. Confirming behaves the same as `/library bring game:<name>`; declining cascades the same DM to the next eligible attending owner (see "Declining via the DM button" below). **Games suggested with expansions:** when a game is suggested with `with_expansions:True` and the suggester picks expansions (1.3a), those expansions are saved on the game's bring request, shown as "(+ Expansion)" next to the game in the "Games to Bring" pin, and the lock-time ask goes first to an attending owner who owns *every* picked expansion — ahead of the suggester and ahead of fairness. If none of them can (nobody attending owns them all, or they all decline), the remaining attending owners are asked for the base game instead so it isn't left unbrought; their DM says which requested expansions they don't have. If the waitlist for a suggested game grows enough to need a second copy (1.3e/2.3e/3.3e), that just updates how many owners get asked at lock — it doesn't trigger an ask itself. A request made *after* the lineup is already locked has no future lock to wait for, so it's asked immediately instead.
 
 **Prerequisites:** an active event must exist, and the game being requested must already be in the library, owned by someone who has RSVP'd (see 1.4a/2.4a/3.4a to add a game first).
 
@@ -2130,11 +2179,13 @@ No permission differences from a regular member (see 1.3e2 for the full checklis
 
 #### `/library import bgg`
 
-**What it does:** Imports all owned games and expansions from your linked BoardGameGeek collection. The "Import my library now" button shown after `/bgg link` (1.6a/2.6a/3.6a) triggers this same import.
+**What it does:** Imports all owned games and expansions from your linked BoardGameGeek collection. The "Import my library now" button shown after `/bgg link` (1.6a/2.6a/3.6a) triggers this same import. When it finishes, the reply ends with a small note that new games you add on BoardGameGeek will now be picked up automatically every N days (see 4.10) — left out if an admin has turned that off (`/admin library autosync`, 3.9e1) — and the import counts as a sync, so the automatic one waits a full interval before its first run.
 
 - [ ] Run without a linked BGG account — confirm "You don't have a BoardGameGeek account linked" error
 - [ ] Run with a linked account — confirm success message with game/expansion counts
 - [ ] Run a second time — confirm all entries show as "already in your library" (no duplicates)
+- [ ] After a successful import, confirm the reply ends with "New games you add on BoardGameGeek will be picked up automatically every 7 days. Run `/bgg unlink` to stop that." — and that the note is absent once an admin runs `/admin library autosync days:0`
+- [ ] After importing, add a new game to your BGG collection and confirm it is NOT in the library until the next automatic sync (4.10) or a manual `/library import bgg`
 
 #### `/library import csv`
 
@@ -2146,8 +2197,16 @@ No permission differences from a regular member (see 1.3e2 for the full checklis
 
 ### 3.4l `/library search`
 
-**What it does:** Searches the library with filters for player count, tags, duration, and complexity. If no `tag`/`tag2`/`tag3` or `complexity` option is given, it defaults to your own `/myroles` preferences (3.5) instead of requiring you to type them every time.
+**What it does:** Searches the library with filters for title, player count, tags, duration, and complexity. `title` matches any game whose name contains the typed words (case-insensitive, word-prefix, small typos tolerated — the same matching as the "did you mean" picker in `/library view`), and leaves expansions out. When exactly one game matches, the bot skips the results list and shows that game's full `/library view` card instead. If no `tag`/`tag2`/`tag3`, `complexity`, or `title` option is given, it defaults to your own `/myroles` preferences (3.5) instead of requiring you to type them every time.
 
+- [ ] `/library search title:catan` with several matching games in the library (e.g. "Catan" and "Catan Junior") — confirm a results list of every game whose name matches, and the description reads "N games matching title **catan**"
+- [ ] `/library search title:ticket ride` (words out of the full name, wrong case) — confirm it still finds "Ticket to Ride"
+- [ ] `/library search title:` of a game with exactly one match — confirm no results list appears; instead the same full game card as `/library view <game>` is shown (owners, players, play time, etc.)
+- [ ] `/library search title:` of a base game whose expansion is also in the library — confirm the expansion does not appear in the results, so the base game alone resolves to its view card
+- [ ] `/library search title:catan tag:Family` — confirm title and tag combine (both must match)
+- [ ] With `/myroles` preferences set, run `/library search title:<a game outside your preferred genres>` — confirm the game is still found and there is no "(from your /myroles)" note (preferences never narrow a title search)
+- [ ] `/library search title:zzzzz` — confirm "No games found matching title **zzzzz**."
+- [ ] Run any `/library search` filter combination that matches exactly one game (e.g. `players:` + `tag:` narrowing to one) — confirm that single result is also shown as the full view card
 - [ ] `/library search players:4` — confirm results include games supporting 4 players, sorted by proximity to 4
 - [ ] `/library search players:2,4` (multiple counts) — confirm games matching either count appear
 - [ ] `/library search tag:Co-op` — confirm only Co-op tagged games appear
@@ -2161,7 +2220,7 @@ No permission differences from a regular member (see 1.3e2 for the full checklis
 - [ ] Combine filters (e.g. `players`, `tag`, and `complexity` together) — confirm all filters apply together (AND across filter types, OR within tag1/2/3)
 - [ ] Set genre/difficulty preferences via `/myroles` (3.5), then run `/library search` with no options at all — confirm it searches using those preferences instead of erroring, and the result description notes "(from your /myroles)"
 - [ ] With `/myroles` preferences set, run `/library search tag:Party` (a tag different from your preference) — confirm the explicit tag wins over your preferences, with no "(from your /myroles)" note
-- [ ] With no `/myroles` preferences set, run `/library search` with no options at all — confirm error: "Provide at least one valid filter: `players`, `tag`, or `duration` — or set your preferences with `/myroles` to search based on those."
+- [ ] With no `/myroles` preferences set, run `/library search` with no options at all — confirm error: "Provide at least one valid filter: `title`, `players`, `tag`, or `duration` — or set your preferences with `/myroles` to search based on those."
 - [ ] Search with valid filters but no matches — confirm "No games matched your filters"
 
 ### 3.4m `/library random`
@@ -2368,7 +2427,7 @@ No permission differences from a regular member (see 1.3e2 for the full checklis
 
 ### 3.8a `/host event create`
 
-**What it does:** Creates a Discord scheduled event, a text channel, and posts an RSVP embed in the configured announcements channel. If the announcements channel is a **Forum Channel**, the event becomes a forum thread instead of a plain message, tagged "Upcoming" (see 3.9a for eager tag creation).
+**What it does:** Creates a Discord scheduled event, a text channel, and posts an RSVP embed in the configured announcements channel. If the announcements channel is a **Forum Channel**, the event becomes a forum thread instead of a plain message, tagged "Upcoming" (see 3.9a for eager tag creation). The thread's text carries a short summary under the @everyone ping — the date/time, location, and (shortened) description — because forum cards only preview a post's text, not its embed; without it the card is a large empty box.
 
 - [ ] Create an event with required fields only: `/host event create title:Board Game Bash date:August 22 time:7pm` — confirm:
   - Discord scheduled event is created, named `Board Game Bash — <full date>`
@@ -2377,6 +2436,9 @@ No permission differences from a regular member (see 1.3e2 for the full checklis
   - Channel topic also ends with "Event ID: `<id>`" — confirm the ID matches the one shown in the RSVP embed footer, so the ID is visible from the event channel itself, not just the announcement post
   - RSVP embed is posted in the announcements channel, titled `Board Game Bash — <full date>`
 - [ ] With the announcements channel set to a Forum Channel (3.9a), create an event — confirm a new forum thread is posted with the "Upcoming" tag applied
+- [ ] Regression (#112): look at that thread in the forum's card/gallery view — confirm the card shows "@everyone", the 📅 date/time, and the 📍 location (plus the description, if you gave one) instead of a large empty box
+- [ ] Create a forum event whose `location` is `@everyone` and whose `description` is `@here <@&some-role-id>` — confirm the only ping is the single leading @everyone (no second ping, no role/user pinged), and the text still reads naturally
+- [ ] Create a forum event with a very long description — confirm the card text is cut off with "…" while the embed inside the thread still shows the full description
 - [ ] Attempt to create an event without `title` — confirm Discord rejects it as a missing required option
 - [ ] Create an event with all fields (end_time, location, link, description) — confirm all appear in the embed
 - [ ] Confirm date formats work: `aug 22`, `August 22`, `august 22, 2026`, `Sept 2nd` (regression: the 4-letter "Sept" abbreviation previously failed to parse — only 3-letter "Sep" and the full "September" worked)
@@ -2392,6 +2454,7 @@ No permission differences from a regular member (see 1.3e2 for the full checklis
 - [ ] Run `/host event edit id:<event-id>` with no other options — confirm "Provide at least one field to update" error
 - [ ] Run `/host event edit id:<event-id> location:New Venue` — confirm the RSVP embed updates to show the new location
 - [ ] Run `/host event edit id:<event-id> title:New Title` — confirm the event channel is renamed and re-topic'd, the Discord scheduled event's name updates, and the RSVP embed title updates
+- [ ] With a forum announcements channel, run `/host event edit id:<event-id> location:New Venue` — confirm the thread's text (📍 line) updates along with the embed, so the forum card never shows a stale location, and that editing does not re-ping @everyone
 - [ ] Run `/host event edit id:<event-id> date:<a new date>` with no `end_time` — confirm the event's overall duration is preserved (end time shifts by the same amount as the date/start time)
 - [ ] Run `/host event edit id:<event-id> end_time:<a new end time>` — confirm only the end time changes
 - [ ] Attempt to edit with an invalid ID — confirm "No event found" error
@@ -2553,6 +2616,18 @@ See 2.8j for the full checklist — this Admin-tier pass just confirms Admins re
 - [ ] Confirm a top-ranked game that's already in someone's library (and already fully enriched) is skipped under the default `force:false`, not double-counted or re-fetched
 - [ ] Confirm the command does not time out or double-reply for a larger `count` (should defer/edit the reply while backfilling, same as `syncall`)
 - [ ] After backfilling a small `count`, force `getBGGGame` to fail (or simulate a BGG outage) and let the weekly challenge's random pick land outside that backfilled set — confirm the challenge still degrades gracefully (per 4.9) rather than assuming backfilltop guarantees full coverage of every possible pick
+
+### 3.9e1 `/admin library autosync`
+
+**What it does:** Shows, or sets, how often members' linked BoardGameGeek collections are automatically re-synced into the library on this server (see 4.10). `days` is the number of days between syncs; **0 turns automatic re-sync off**; leaving it blank just shows the current setting. Defaults to **7 days** (on) for every server, including servers configured before this setting existed. Admin-only (Manage Server) — hidden from members. Members can still run `/library import bgg` themselves whatever this is set to.
+
+- [ ] Run `/admin library autosync` with no options on a server that never touched it — confirm "Automatic BoardGameGeek library re-sync: every **7 days**." with a hint on how to change it, and nothing is changed
+- [ ] Run `/admin library autosync days:3` — confirm the confirmation reads "every **3 days**", and a later no-option run shows 3
+- [ ] Run `/admin library autosync days:1` — confirm singular wording ("every **1 day**")
+- [ ] Run `/admin library autosync days:0` — confirm it says re-sync is **off**, and that no automatic sync happens afterward (4.10)
+- [ ] Run `/admin library autosync days:-1` and `days:400` — confirm Discord rejects both (valid range is 0–365)
+- [ ] Run `/admin library autosync` as a non-admin — confirm the command is not offered / is refused
+- [ ] Set a different value on a second server the bot is in — confirm each server keeps its own interval
 
 ### 3.9e `/admin tags add`
 
@@ -2854,7 +2929,7 @@ These features are triggered by Discord events and scheduled timers rather than 
 
 ## 4.2 Delayed Channel Lock
 
-**What it does:** 7 days after archiving, the bot locks the channel by setting `SendMessages: false` for everyone.
+**What it does:** 7 days after archiving, the bot locks the channel by setting `SendMessages: false` (and `AddReactions: false`, when the bot has the Add Reactions permission) for everyone. The lock never changes who can *see* the channel — a private (RSVP-only) event channel stays hidden from non-attendees, an open one stays visible.
 
 **Prerequisites:** run 4.1 first so there's an archived event channel to lock.
 
@@ -2865,6 +2940,10 @@ These features are triggered by Discord events and scheduled timers rather than 
   - Members can no longer post in the channel
   - `locked: true` is saved to `gamenights.json`
 - [ ] Restart the bot with a past-due `lockAt` record — confirm the lock is applied on startup without waiting for the hourly check
+- [ ] Regression (#118): with the bot authorized via the current invite link (includes Add Reactions), lock an archived channel — confirm `@everyone` shows Send Messages ✗ and Add Reactions ✗, no `Missing Permissions` in the logs, and `locked: true` is saved
+- [ ] Regression (#118): with a bot that has NOT yet been re-authorized (no Add Reactions), lock an archived channel — confirm it still locks (Send Messages ✗, "now read-only" posted, `locked: true`), and the logs show a warning that it locked without blocking reactions because the bot lacks Add Reactions
+- [ ] Lock an archived **private** (RSVP-only) event channel — confirm a non-attendee still cannot see it afterward, and attendees can see it but can no longer post
+- [ ] Lock an archived **open** event channel — confirm everyone can still see it but nobody can post
 
 ## 4.3 Archived Channel Auto-Deletion
 
@@ -3160,6 +3239,30 @@ The effective table count used at lock time is `max(headcount floor, preference-
 - [ ] With `cleanup_old_posts:true`, manually delete one of the previous cycle's messages yourself before the new cycle starts — confirm the bot logs a warning for that one message and still successfully starts the new cycle (doesn't get stuck or skip hint 1)
 - [ ] Turn `cleanup_old_posts:true` on for a server with several past (un-cleaned-up) cycles already in its history — confirm only the single most recent cycle's messages are deleted when the next new cycle starts, not every past cycle at once
 
+## 4.10 BGG Library Auto-Resync
+
+**What it does:** Every hour the bot looks for members whose linked BoardGameGeek collection is due for a re-sync (default every 7 days, per server — see `/admin library autosync`, 3.9e1) and pulls it in, adding any games or expansions that are **new since their last sync** to the group library. It only ever adds: nothing is removed, and a game a member deliberately removed with `/library remove` stays removed (it was already in their last BGG snapshot, so it isn't "new"). Only members who linked BGG **and have imported at least once** are synced — linking alone never fills a library. If something was added, the member gets a DM listing it; if nothing is new, or the sync fails, they hear nothing. It paces itself for BGG: at most 5 members per hourly run with a pause between them, longest-overdue first, and a failing member is retried after about 6 hours rather than every hour. Check Railway logs for `[BggAutoSync]` lines.
+
+**Prerequisites:** a test member with a linked BGG account (1.6a) who has run `/library import bgg` at least once. To avoid waiting a week: set `/admin library autosync days:1`, edit that member's record in `bgg_accounts.json` so `lastSyncedAt` (and `lastSyncAttemptAt`) is 2+ days ago — or remove `lastSyncedAt` entirely — then add a game to their BGG collection and restart the bot (the sweep also runs on startup) or wait for the top of the hour.
+
+- [ ] With the member due and a new game on their BGG shelf — confirm the game appears in `/library mine`, the member gets a DM naming it (with how to `/library remove` it and `/bgg unlink` to stop), `bgg_accounts.json` shows a fresh `lastSyncedAt`, and the logs show `[BggAutoSync] <user> (guild <id>): +1 games`
+- [ ] Add a new **expansion** on BGG and sync — confirm it is added as an expansion (listed separately in the DM, absent from `/library list`)
+- [ ] Sync again with nothing new on BGG — confirm no DM is sent, nothing is duplicated, and `lastSyncedAt` still advances
+- [ ] `/library remove` a game you still own on BGG, then let the next sync run — confirm it is **not** re-added. Then run `/library import bgg` — confirm that one does bring it back (a manual import always offers everything)
+- [ ] Remove a game from your BGG collection and sync — confirm it is **not** removed from the library
+- [ ] A member who linked BGG with `/bgg link` but never imported — confirm their library is never touched and no BGG request is made for them
+- [ ] A member who imported **before** this feature shipped (stored BGG snapshot, but no `lastSyncedAt`) — confirm they are picked up on the next run
+- [ ] A member whose last sync was less than the interval ago — confirm nothing happens for them (no BGG request)
+- [ ] Set `/admin library autosync days:0` — confirm no member on that server is synced, however overdue; set it back and confirm syncing resumes
+- [ ] On a server whose saved config predates the setting (never ran `/admin library autosync`) — confirm syncing still happens at the 7-day default rather than being silently off
+- [ ] Make BGG fail for one member (e.g. block BGG or use a deliberately bad username) — confirm a warning is logged, `lastSyncedAt` is unchanged, no DM is sent, and the same member is **not** retried on the next hourly run but is after ~6 hours; confirm other members in the same run still sync
+- [ ] Have more than 5 members due at once — confirm only 5 are synced in one run (longest-overdue first, ~5 seconds apart) and the rest follow in later hourly runs
+- [ ] Have a due member leave the server — confirm no BGG request is made for them
+- [ ] Disable DMs from server members on a due member — confirm their library is still updated and `lastSyncedAt` still advances, with only a warning in the logs
+- [ ] Restart the bot right as the hourly check fires — confirm overlapping runs do not double-sync anyone (a second run is skipped while one is in flight)
+- [ ] Run `/bgg unlink` for a synced member — confirm they are no longer synced
+
+---
 ---
 
 # Part 6 — General Edge Cases (Any Role)

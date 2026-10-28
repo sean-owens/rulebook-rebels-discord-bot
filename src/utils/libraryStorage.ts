@@ -30,6 +30,13 @@ export interface RequestAsk {
   askedAt: string;
 }
 
+// An expansion the requester wants brought along with the base game, as picked in
+// /game suggest's expansion picker (ids/names come from BGG).
+export interface RequestedExpansion {
+  id: string;
+  name: string;
+}
+
 export interface GameRequest {
   id: string;
   eventId: string;
@@ -37,6 +44,10 @@ export interface GameRequest {
   requestedBy: string;
   createdAt: string;
   copiesNeeded?: number;
+  // Expansions the requester specifically wants included (#114). When set, owners
+  // who own every one of them are asked to bring the game ahead of base-game-only
+  // owners — see reconcileRequestCopies. Unset/empty means "base game, any copy".
+  requiredExpansions?: RequestedExpansion[];
   // Explicit copy-select target (still only ever set once, at creation) —
   // restricts which owner's /library bring view shows this request. Distinct
   // from confirmations/pendingAsks below, which track the multi-copy
@@ -188,6 +199,7 @@ export async function addRequest(
   gameName: string,
   requestedBy: string,
   preferredOwnerId?: string,
+  requiredExpansions?: RequestedExpansion[],
 ): Promise<GameRequest | 'duplicate'> {
   const requests = await loadRequests();
   const exists = requests.some(
@@ -205,6 +217,7 @@ export async function addRequest(
     pendingAsks: [],
   };
   if (preferredOwnerId) req.preferredOwnerId = preferredOwnerId;
+  if (requiredExpansions?.length) req.requiredExpansions = requiredExpansions;
   requests.push(req);
   await saveRequests(requests);
   return req;
@@ -486,6 +499,63 @@ export async function buildExpansionNote(
   const ownedExps = info.bggExpansions.filter((name) => userExpNames.has(norm(name)));
   if (ownedExps.length === 0) return '';
   return ` (with ${ownedExps.join(', ')})`;
+}
+
+const normalizeExpansionName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+// Which of the requested expansions userId (or a linked delegate's library) owns,
+// and which they don't. A library entry counts as a match by BGG id when it has one,
+// otherwise by name ignoring case/punctuation — the same loose name match
+// buildExpansionNote uses, since expansions added by hand carry no BGG id.
+export async function matchRequestedExpansions(
+  guildId: string,
+  userId: string,
+  required: RequestedExpansion[],
+): Promise<{ owned: RequestedExpansion[]; missing: RequestedExpansion[] }> {
+  const effectiveOwnerIds = await getEffectiveOwnerIds(guildId, userId);
+  const entries = (await loadLibraryForGuild(guildId)).filter((e) => effectiveOwnerIds.includes(e.userId));
+  const owned: RequestedExpansion[] = [];
+  const missing: RequestedExpansion[] = [];
+  for (const exp of required) {
+    const has = entries.some(
+      (e) => (e.objectid && e.objectid === exp.id) || normalizeExpansionName(e.gameName) === normalizeExpansionName(exp.name),
+    );
+    (has ? owned : missing).push(exp);
+  }
+  return { owned, missing };
+}
+
+// The subset of ownerIds who own EVERY requested expansion (the owners a request
+// with requiredExpansions should be sent to first). With nothing required, everyone
+// qualifies, so callers can use this unconditionally.
+export async function findOwnersCoveringExpansions(
+  guildId: string,
+  ownerIds: string[],
+  required: RequestedExpansion[] | undefined,
+): Promise<string[]> {
+  if (!required?.length) return ownerIds;
+  const covering: string[] = [];
+  for (const ownerId of ownerIds) {
+    if ((await matchRequestedExpansions(guildId, ownerId, required)).missing.length === 0) covering.push(ownerId);
+  }
+  return covering;
+}
+
+// The "(with …)" note shown next to a request for a specific owner. For a request
+// that names expansions it reports those — what the owner actually has of what was
+// asked for, plus a heads-up for any they lack — rather than every expansion they own.
+// Requests without named expansions keep the original behaviour (buildExpansionNote).
+export async function buildRequestExpansionNote(
+  guildId: string,
+  userId: string,
+  req: Pick<GameRequest, 'gameName' | 'requiredExpansions'>,
+): Promise<string> {
+  if (!req.requiredExpansions?.length) return buildExpansionNote(guildId, userId, req.gameName);
+  const { owned, missing } = await matchRequestedExpansions(guildId, userId, req.requiredExpansions);
+  const withPart = owned.length > 0 ? ` (with ${owned.map((e) => e.name).join(', ')})` : '';
+  const missingPart =
+    missing.length > 0 ? ` — ⚠️ you don't have the requested ${missing.map((e) => e.name).join(', ')}` : '';
+  return `${withPart}${missingPart}`;
 }
 
 export async function upsertGameInfo(info: GameInfo): Promise<void> {
